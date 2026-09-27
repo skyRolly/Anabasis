@@ -457,6 +457,30 @@ rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStradd
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
 
+**Addendum (2026-09-27, TEST-001) — the editor tick is tested, and every test was made to fail
+first.** Code: `refreshFromModel()` is the whole 24 Hz tick body, public; `timerCallback` calls it.
+Behaviour-neutral seams only (identical statements in identical order; no parameter, state, DSP,
+latency, threading or macro change): component IDs `outLufsValue`, `editedDot`, `compGrMeter`,
+`limGrMeter`, `dimOverlay` (none a look-and-feel key — those branch on `bypass`, `ghost`, `presetname`,
+`presetnav`, `icon`); `GrMiniMeter::shownDb` / `isMono`; `GatedTooltipWindow::gateOpen` (De Morgan of
+the old test) behind `tooltipGateOpen()`; `learnClockMs` behind `setLearnClockForTest`, the default
+being the same clock both Learn reads used. Eleven tests, 89 checks (state suite 1429 → 1518). **The
+mutation table, each run against the full state suite** — every one KILLED by the check it targets:
+T0 delete the flag consumer; T1 delete the hover loop / hard-wire hovered = true; T6 drop the
+settings refresh; T7 drop the preset display; T8 delete the dim edge (killed only by the RAW-store
+check — a notified write reaches the dim through T0 too, which is why the audit's end-to-end
+criterion would not have caught it); T9 delete the out-LUFS write / move the −99 guard; T10 delete
+the countdown / the accent / the stop-pending block, invert `! moved`, force the flash compare true,
+drop the 5 s minimum; T11 drop the undo refresh / swap undo and redo; T12 delete the lane writes,
+swap stages, swap channels, invert `advanced`; T13 drop the ceiling refresh; T14 delete the flip /
+hard-code the SPEC seed false; T15 delete the dot block, drop `! advanced &&`, delete the
+else-if; the tooltip gate: delete its wiring, delete the mirror write, bind `onClick` instead of
+`onStateChange` — 29 of 29. Rows engaged: **New/changed test** — `procedures/TESTING.md` (the tick
+hook, the seams, the synchronous `Value` delivery), this file (the ADR-0025 disclosure annotated:
+the tooltip gate's predicate and wiring left it; `getTipFor`'s early return stays). Citations
+re-anchored by `check-citations.py --fix` (`THREAD_MODEL.md`, ADR-0027: the editor lines moved).
+**Drift:** none beyond the moved anchors.
+
 **Addendum (2026-09-27, Phase 0 closure, still 0.2.13) — the closure record.** New dated report
 `docs/reports/2026-09-27-phase0-closure.md`: the three decisions, the PR #42 review closed item by
 item (the engagement leak `FIXED — verified`, with each check re-run on the accepted tree), the Phase 0
@@ -1471,7 +1495,10 @@ consequently unprotected: a future edit to the shield's z-order, its interceptio
 menu-tracking hooks or the focus ordering can regress silently. INC-005 is defended by the build's
 own fail-closed assertions plus the A/B probe that proves those assertions can fire. The exception
 lapses for any of these the day the suites gain a driven-input fixture (the closest prior art is
-the X11/XTEST probe recorded under `worklogs/` for KI-012).
+the X11/XTEST probe recorded under `worklogs/` for KI-012). *(2026-09-27, TEST-001: the tooltip gate
+left this list in part — its predicate and its wiring to the switch are pinned by
+`testTheTooltipSwitchGatesEveryTip`; only `getTipFor`'s one-line early return and tip timing stay
+under it, because JUCE returns no tip to a process that is not in the foreground.)*
 
 **Suites: `AnabasisTests` 296 + `AnabasisStateTests` 845 = 1141 checks green**, up 102 on 0.1.3's
 1039 — ten new state tests (`testANoOpPresetApplyIsNotAUserAction`,

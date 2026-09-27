@@ -211,6 +211,22 @@ why a `juce::Value` change (asynchronous through that loop) and anything requiri
 are outside what this target can reach, and are carried in `DEPENDENCY_POLICY.md`'s JUCE-internals
 register instead.
 
+**The editor's 24 Hz tick is driven directly** (TEST-001, 2026-09-27). With no message loop the
+timer never fires, so the tick body is the public `refreshFromModel()`, which `timerCallback` is one
+line calling — the WHOLE body, so a direction added to the tick later is reachable the day it lands.
+The `testTheTick…` cases each check a PREMISE that the widget has not moved before calling it, so a
+pass means the tick did the work; each was run against a mutation that deletes or inverts its
+branch (29 of 29 killed, `DOCUMENTATION_COVERAGE.md`). Their handles are test-only seams that change
+no behaviour: component IDs on the out-LUFS label, the edited dot, the two GR mini-meters and the
+bypass dim; `GrMiniMeter::shownDb` / `isMono`; `tooltipGateOpen()` (the tooltip switch's predicate —
+a check through `getTipFor` would be vacuous, because JUCE returns no tip to a background process);
+and `setLearnClockForTest`, which replaces the Learn button's wall clock so the 5 s minimum pass and
+the 1.5 s empty-pass flash are stepped rather than slept. A stored-value change can be delivered
+synchronously where a test needs the load path — `Value::getValueSource().sendChangeMessage (true)`
+is the message loop's own delivery (`testTheTooltipSwitchGatesEveryTip`). The tick's pop-up
+housekeeping is inert with nothing open and stays under ADR-0025, as does a hovered = true combo
+flag, which needs a pointer.
+
 A view's own ARITHMETIC is reached a different way, and 0.1.6 is the case that shows why both are
 needed. `GrHistoryView` publishes the parts of its draw that carry a correctness argument as pure
 statics — `windowEntries`, `buckets`, `bucketX`, `drawsZeroRegion`, since 0.1.6 `grY`, and since

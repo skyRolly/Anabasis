@@ -622,7 +622,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     learnButton.onClick = [this]
     {
         const auto& a = proc.adaptiveReadout();
-        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        const double nowMs = learnClockMs();
         if (! a.isLearning())
         {
             proc.startLearn();
@@ -652,11 +652,16 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     outLufsValue.setFont (juce::Font (juce::FontOptions (15.0f)));
     outLufsValue.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (outLufsValue);
+    // Component IDs below are for the headless suite only (TEST-001), after the
+    // `popupShield` precedent: nothing reads them at run time, none is a
+    // look-and-feel key, and JUCE's accessibility layer does not expose them.
+    outLufsValue.setComponentID ("outLufsValue");
 
     editedDot.setTooltip (tidyTip (
         "Advanced edits took knobs off the macros - click to return to the macro sound"));
     editedDot.onClick = [this] { proc.resetToMacro(); };
     addChildComponent (editedDot);
+    editedDot.setComponentID ("editedDot");
 
     meterView    = std::make_unique<LoudnessMeterView> (proc);
     grView       = std::make_unique<GrHistoryView> (proc);
@@ -667,6 +672,8 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     addChildComponent (*eqCurve);
     addChildComponent (compGrMeter);
     addChildComponent (limGrMeter);
+    compGrMeter.setComponentID ("compGrMeter");
+    limGrMeter.setComponentID ("limGrMeter");
     addAndMakeVisible (*meterView);
     // The two modes of the shared graph well (both views, both editor modes) —
     // `int_spectrumOn` picks one; every layout pass and the 24 Hz tick keep the
@@ -676,6 +683,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
 
     // -- overlays ------------------------------------------------------------
     addChildComponent (dimOverlay);
+    dimOverlay.setComponentID ("dimOverlay");
     dimOverlay.setInterceptsMouseClicks (false, false);
     dimOverlay.setAlwaysOnTop (true);
 
@@ -1971,6 +1979,11 @@ void AnabasisAudioProcessorEditor::handleAsyncUpdate()
 
 void AnabasisAudioProcessorEditor::timerCallback()
 {
+    refreshFromModel();
+}
+
+void AnabasisAudioProcessorEditor::refreshFromModel()
+{
     // The off-message-thread half of parameterChanged (see there) — and the
     // only consumer of that flag, since the on-thread half posts normally.
     if (uiRefreshPending.exchange (false, std::memory_order_relaxed))
@@ -2046,7 +2059,7 @@ void AnabasisAudioProcessorEditor::timerCallback()
     // -- Learn button state (§5.4 grammar) -----------------------------------
     {
         const auto& a = proc.adaptiveReadout();
-        const double nowMs = juce::Time::getMillisecondCounterHiRes();
+        const double nowMs = learnClockMs();
         juce::String text ("LEARN");
         if (a.isLearning())
         {
@@ -2485,11 +2498,12 @@ void AnabasisAudioProcessorEditor::healGhostTrackedPopupMenus()
     // prunes the last tracked window and does not refresh leaves the shield up
     // and INTERCEPTING with no pop-up on screen, which is the editor accepting no
     // clicks: the exact failure `PopupShield`'s own comment says the mechanism
-    // must never cause. It is safe today only because `timerCallback` calls the
-    // two in sequence and is the sole caller. A second caller — a dismissal path,
-    // a visibility change — would inherit that obligation silently, so the
-    // function takes it instead. `refreshPopupShield` is idempotent, so the
-    // tick's own call after this one is a no-op rather than a double raise.
+    // must never cause. It is safe today only because the tick body
+    // (`refreshFromModel`) calls the two in sequence and is the sole caller. A
+    // second caller — a dismissal path, a visibility change — would inherit
+    // that obligation silently, so the function takes it instead.
+    // `refreshPopupShield` is idempotent, so the tick's own call after this one
+    // is a no-op rather than a double raise.
     refreshPopupShield();
 }
 

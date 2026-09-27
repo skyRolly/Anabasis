@@ -11733,6 +11733,591 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
     }
 }
 
+// ---------------------------------------------------------------------------
+// TEST-001 (2026-09-26 audit): the editor's 24 Hz tick — the whole layer that
+// carries the model onto the panel — had no test that ran it. No message loop
+// runs here, so the timer never fires; `refreshFromModel()` is the tick body
+// `timerCallback` calls, public for that reason. Every case below first checks
+// a PREMISE that the widget has NOT moved before the tick runs, so a pass means
+// the tick did the work — and each was run against a mutation that deletes or
+// inverts the branch it names (DOCUMENTATION_COVERAGE, 2026-09-27). The pop-up
+// housekeeping the tick also runs is inert with nothing open and stays under
+// ADR-0025's disclosure, as does the hovered = TRUE half of the combo flag.
+
+template <typename T>
+static T* findFirstChildOfType (juce::Component& root)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* t = dynamic_cast<T*> (c))
+            return t;
+        if (auto* found = findFirstChildOfType<T> (*c))
+            return found;
+    }
+    return nullptr;
+}
+
+static void collectCombos (juce::Component& root, juce::Array<juce::ComboBox*>& out)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* b = dynamic_cast<juce::ComboBox*> (c))
+            out.add (b);
+        collectCombos (*c, out);
+    }
+}
+
+static AnabasisAudioProcessorEditor* openTickEditor (AnabasisAudioProcessor& proc,
+                                                     std::unique_ptr<juce::AudioProcessorEditor>& holder,
+                                                     const char* tag)
+{
+    holder.reset (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (holder.get());
+    const juce::String msg = juce::String (tag) + ": (premise) the editor was created";
+    check (ed != nullptr, msg.toRawUTF8());
+    return ed;
+}
+
+// T0 + T1: the tick's first two steps. T0 is the consumer of the flag
+// `parameterChanged` raises for a mode or bypass write — the ONLY consumer for
+// a write off the message thread, and here (where the on-thread post is never
+// delivered) the only one at all. T1 is the sole writer of the combo "hov"
+// property the look-and-feel prefers.
+static void testTheTickAppliesAPendingModeSwitchAndTheComboHoverFlag()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickMode");
+    if (ed == nullptr)
+        return;
+
+    auto* learn = findButtonByText (*ed, "LEARN");
+    check (learn != nullptr, "tickMode: (premise) the LEARN button was found");
+    if (learn == nullptr)
+        return;
+
+    // T1 first, on the untouched editor: nothing else writes the flag.
+    juce::Array<juce::ComboBox*> combos;
+    collectCombos (*ed, combos);
+    int flaggedBefore = 0;
+    for (auto* c : combos)
+        if (c->getProperties().contains ("hov"))
+            ++flaggedBefore;
+    check (combos.size() > 0 && flaggedBefore == 0,
+           "tickHover: (premise) no combo carries the hover flag before the first tick");
+    ed->refreshFromModel();
+    int flagged = 0, hovered = 0;
+    for (auto* c : combos)
+        if (c->getProperties().contains ("hov"))
+        {
+            ++flagged;
+            if ((bool) c->getProperties()["hov"])
+                ++hovered;
+        }
+    {
+        juce::String msg;
+        msg << "tickHover: the tick gives every combo its hover flag (" << flagged
+            << " of " << combos.size() << ")";
+        check (flagged == combos.size(), msg.toRawUTF8());
+    }
+    check (hovered == 0, "tickHover: …and with no pointer over the editor, none reads hovered");
+
+    // T0, on the message thread.
+    const int simpleH = ed->getHeight();
+    check (learn->isVisible(), "tickMode: (premise) the Simple view shows LEARN");
+    auto* adv = proc.apvts.getParameter (pid::advancedMode);
+    adv->setValueNotifyingHost (1.0f);
+    check (ed->getHeight() == simpleH && learn->isVisible(),
+           "tickMode: (premise) the mode write alone changes nothing on screen here");
+    ed->refreshFromModel();
+    check (ed->getHeight() > simpleH && ! learn->isVisible(),
+           "tickMode: the tick applies a pending switch to Advanced");
+
+    // …and OFF it: a host automating the mode from its own thread, where
+    // `parameterChanged` may only raise the flag.
+    std::thread ([adv] { adv->setValueNotifyingHost (0.0f); }).join();
+    check (ed->getHeight() > simpleH && ! learn->isVisible(),
+           "tickMode: (premise) an off-thread write only raises the flag");
+    ed->refreshFromModel();
+    check (ed->getHeight() == simpleH && learn->isVisible(),
+           "tickMode: the tick consumes a flag raised off the message thread");
+}
+
+// T6 + T13 through the tick: both helpers are already tested when called
+// directly, which is exactly why a tick that stopped calling them passed.
+static void testTheTickCallsTheSettingsAndCeilingRefreshes()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickSettings");
+    if (ed == nullptr)
+        return;
+
+    auto* os = findComboByTitle (*ed, "Oversampling");
+    check (os != nullptr, "tickSettings: (premise) the oversampling combo was found by title");
+    if (os == nullptr)
+        return;
+    proc.internalState.state().setProperty (iid::oversample, 3, nullptr);   // 8×
+    check (os->getSelectedItemIndex() != 3,
+           "tickSettings: (premise) the tree write alone does not move the combo");
+    ed->refreshFromModel();
+    check (os->getSelectedItemIndex() == 3 && os->getText() == "8x",
+           "tickSettings: the tick re-seeds the settings combos from the tree");
+
+    auto* ceil = proc.apvts.getParameter (pid::ceiling);
+    auto* knob = findSliderByTitle (*ed, ceil->getName (24));
+    auto* box  = knob != nullptr ? findChildLabel (*knob) : nullptr;
+    check (box != nullptr, "tickCeiling: (premise) the Ceiling value box was found");
+    if (box == nullptr)
+        return;
+    proc.apvts.getParameter (pid::truePeakMode)->setValueNotifyingHost (1.0f);
+    check (! box->getText().contains ("dBTP"),
+           "tickCeiling: (premise) the TP write alone leaves the cached suffix");
+    ed->refreshFromModel();
+    check (box->getText().endsWith (" dBTP"),
+           "tickCeiling: the tick refreshes the Ceiling's unit when TP engages");
+}
+
+// T7: the preset name every tick, the " *" mark on the throttled poll. The
+// exact cadence (every 8th tick) is deliberately not pinned — only that a
+// handful of ticks surface it.
+static void testTheTickShowsThePresetNameAndItsDirtyMark()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickPreset");
+    if (ed == nullptr)
+        return;
+
+    auto* name = findButtonById (*ed, "presetname");
+    check (name != nullptr, "tickPreset: (premise) the preset-name button was found");
+    if (name == nullptr)
+        return;
+
+    check (proc.applyFactoryPreset (1), "tickPreset: (premise) factory preset 1 applied");
+    check (proc.currentPresetName().isNotEmpty()
+             && name->getButtonText() != proc.currentPresetName(),
+           "tickPreset: (premise) an apply made outside the editor has not reached the button");
+    ed->refreshFromModel();
+    check (name->getButtonText() == proc.currentPresetName(),
+           "tickPreset: the tick shows the applied preset's name");
+
+    auto* knee = proc.apvts.getParameter (pid::compKnee);
+    const float kneeNow = knee->getValue();
+    knee->setValueNotifyingHost (kneeNow > 0.5f ? 0.0f : 1.0f);
+    check (proc.presetDirty() && ! name->getButtonText().endsWith (" *"),
+           "tickPreset: (premise) the edit made the preset dirty, unmarked so far");
+    for (int i = 0; i < 16 && ! name->getButtonText().endsWith (" *"); ++i)
+        ed->refreshFromModel();
+    check (name->getButtonText() == proc.currentPresetName() + " *",
+           "tickPreset: the tick's poll marks an edited preset");
+}
+
+// T8: the bypass dim, isolated. A RAW store raises no listener, so the flag T0
+// consumes is never set and only the tick's own edge can show the dim — which
+// is why the notified write below, end to end, is the weaker check: T0 would
+// set the dim for it on its own.
+static void testTheTickDimsTheEditorOnBypass()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickDim");
+    if (ed == nullptr)
+        return;
+    auto* dim = ed->findChildWithID ("dimOverlay");
+    check (dim != nullptr && ! dim->isVisible(), "tickDim: (premise) the dim layer exists and is off");
+    if (dim == nullptr)
+        return;
+
+    auto* raw = proc.apvts.getRawParameterValue (pid::bypass);
+    raw->store (1.0f);
+    check (! dim->isVisible(), "tickDim: (premise) a raw bypass store alone does not dim");
+    ed->refreshFromModel();
+    check (dim->isVisible(), "tickDim: the tick dims the editor while bypassed");
+    raw->store (0.0f);
+    ed->refreshFromModel();
+    check (! dim->isVisible(), "tickDim: …and lifts the dim when bypass clears");
+
+    auto* bypass = proc.apvts.getParameter (pid::bypass);
+    bypass->setValueNotifyingHost (1.0f);
+    ed->refreshFromModel();
+    check (dim->isVisible(), "tickDim: a host bypass write dims the editor end to end");
+    bypass->setValueNotifyingHost (0.0f);
+    ed->refreshFromModel();
+    check (! dim->isVisible(), "tickDim: …and undims it");
+}
+
+// T9: the Simple view's out-LUFS figure, with its "-" for the meter's
+// no-reading sentinel.
+static void testTheTickPrintsTheOutLufsReadout()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickLufs");
+    if (ed == nullptr)
+        return;
+    auto* value = dynamic_cast<juce::Label*> (ed->findChildWithID ("outLufsValue"));
+    check (value != nullptr && value->getText().isEmpty(),
+           "tickLufs: (premise) the out-LUFS label exists and is empty before the first tick");
+    if (value == nullptr)
+        return;
+
+    ed->refreshFromModel();
+    check (value->getText() == "-", "tickLufs: no reading yet prints the dash");
+
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer midi;
+    for (int b = 0; b < 400; ++b)                    // ~4.3 s of a −20 dBFS 1 kHz tone
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.1f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 1000.0f * (float) (b * 512 + n) / 48000.0f);
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+    }
+    const float s = proc.meterLufsS();
+    check (s > -99.0f && value->getText() == "-",
+           "tickLufs: (premise) the meter has a reading the label does not show yet");
+    ed->refreshFromModel();
+    check (value->getText() == juce::String (s, 1),
+           "tickLufs: the tick prints the short-term reading to one decimal");
+}
+
+// T10: the Learn button's §5.4 grammar on a stepped clock — the countdown, the
+// minimum pass, the empty-pass warn flash and its expiry, and a pass that DID
+// move the reference, which must not flash.
+static void testTheTickDrivesTheLearnButton()
+{
+    double fakeNow = 1.0e6;          // declared before the editor, which captures it
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    auto silentBlock = [&] { buf.clear(); proc.processBlock (buf, midi); };
+
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickLearn");
+    if (ed == nullptr)
+        return;
+    ed->setLearnClockForTest ([&fakeNow] { return fakeNow; });
+    auto* learn = findButtonByText (*ed, "LEARN");
+    check (learn != nullptr, "tickLearn: (premise) the LEARN button was found");
+    if (learn == nullptr)
+        return;
+    auto colour = [learn] { return learn->findColour (juce::TextButton::textColourOffId); };
+    const auto& a = proc.adaptiveReadout();
+
+    ed->refreshFromModel();
+    check (learn->getButtonText() == "LEARN" && colour() == abgui::colours::text,
+           "tickLearn: idle, the button reads LEARN in the text colour");
+
+    const double t0 = fakeNow;
+    learn->onClick();
+    silentBlock();                                   // the start lands at a block top
+    check (a.isLearning() && learn->getButtonText() == "LEARN",
+           "tickLearn: (premise) learning, and nothing on the button has moved yet");
+    ed->refreshFromModel();
+    check (learn->getButtonText() == "5" && colour() == abgui::colours::accent,
+           "tickLearn: a started pass counts down from 5 in the accent");
+    fakeNow = t0 + 2500.0;
+    ed->refreshFromModel();
+    check (learn->getButtonText() == "3", "tickLearn: 2.5 s in, the countdown reads 3");
+    fakeNow = t0 + 4001.0;
+    ed->refreshFromModel();
+    check (learn->getButtonText() == "1", "tickLearn: inside the last second it reads 1");
+
+    fakeNow = t0 + 4999.0;
+    learn->onClick();                                // inside the minimum pass
+    silentBlock();
+    check (a.isLearning(), "tickLearn: a stop inside the 5 s minimum pass is ignored");
+
+    fakeNow = t0 + 5000.0;
+    ed->refreshFromModel();
+    check (learn->getButtonText() == "LEARN" && colour() == abgui::colours::accent,
+           "tickLearn: past the minimum the word returns, still lit while learning");
+
+    learn->onClick();                                // an accepted stop, on silence
+    ed->refreshFromModel();
+    check (colour() == abgui::colours::accent,
+           "tickLearn: (premise) before the block top the pass is still running");
+    silentBlock();
+    silentBlock();
+    check (! a.isLearning() && ! a.hasLearned(),
+           "tickLearn: (premise) the silent pass ended without learning anything");
+    ed->refreshFromModel();
+    check (colour() == abgui::colours::warn, "tickLearn: an empty pass flashes warn");
+    const double flashAt = fakeNow;
+    fakeNow = flashAt + 1499.0;
+    ed->refreshFromModel();
+    check (colour() == abgui::colours::warn, "tickLearn: the flash holds for its 1.5 s");
+    fakeNow = flashAt + 1500.0;
+    ed->refreshFromModel();
+    check (colour() == abgui::colours::text, "tickLearn: …and then returns to the text colour");
+
+    // A pass that moves the reference (the material of
+    // testLearnCommitAndAdaptiveRoundTrip) must NOT flash.
+    const double t1 = fakeNow;
+    learn->onClick();
+    for (int b = 0; b < 500; ++b)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const int t = b * 512 + n;
+            float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                       * 220.0f * (float) t / 48000.0f);
+            if ((t % 4800) < 96) v += 0.6f;
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+    }
+    fakeNow = t1 + 5000.0;
+    learn->onClick();
+    silentBlock();
+    silentBlock();
+    check (! a.isLearning() && a.hasLearned(), "tickLearn: (premise) the second pass learned");
+    ed->refreshFromModel();
+    check (colour() == abgui::colours::text && learn->getButtonText() == "LEARN",
+           "tickLearn: a pass that moved the reference does not flash");
+}
+
+// T11: undo/redo enablement follows the history, not the constructor's seed.
+static void testTheTickEnablesUndoAndRedo()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickUndo");
+    if (ed == nullptr)
+        return;
+    auto* undo = findButtonByText (*ed, juce::String::charToString ((juce::juce_wchar) 0x21BA));
+    auto* redo = findButtonByText (*ed, juce::String::charToString ((juce::juce_wchar) 0x21BB));
+    check (undo != nullptr && redo != nullptr, "tickUndo: (premise) both glyph buttons were found");
+    if (undo == nullptr || redo == nullptr)
+        return;
+    check (! undo->isEnabled() && ! redo->isEnabled(),
+           "tickUndo: (premise) a fresh history opens with both disabled");
+
+    auto* knee = proc.apvts.getParameter (pid::compKnee);
+    knee->beginChangeGesture();
+    knee->setValueNotifyingHost (knee->getNormalisableRange().convertTo0to1 (9.0f));
+    knee->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.canUndo() && ! undo->isEnabled(),
+           "tickUndo: (premise) a step was pushed and the button has not followed yet");
+    ed->refreshFromModel();
+    check (undo->isEnabled() && ! redo->isEnabled(), "tickUndo: the tick enables undo");
+
+    proc.undo();
+    check (proc.canRedo() && ! redo->isEnabled(),
+           "tickUndo: (premise) undone, and redo has not followed yet");
+    ed->refreshFromModel();
+    check (! undo->isEnabled() && redo->isEnabled(), "tickUndo: …and swaps to redo after an undo");
+}
+
+// T12: the Advanced view's per-stage GR lanes — right stage, right channel.
+// The two channels are driven to DIFFERENT reductions (unequal levels), so a
+// swap of the lanes or of the stages cannot pass.
+static void testTheTickFeedsTheAdvancedGrLanes()
+{
+    AnabasisAudioProcessor proc;
+    proc.apvts.getParameter (pid::advancedMode)->setValueNotifyingHost (1.0f);
+    proc.prepareToPlay (48000.0, 512);
+    auto set = [&proc] (const char* id, float denorm)
+    {
+        auto* par = proc.apvts.getParameter (id);
+        par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (denorm));
+    };
+    set (pid::compStereoLink, 0.0f);
+    set (pid::stereoLink,     0.0f);
+    set (pid::compThreshold,  -30.0f);
+    set (pid::limGain,        18.0f);
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer midi;
+    for (int b = 0; b < 60; ++b)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const int t = b * 512 + n;
+            buf.setSample (0, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                   * 220.0f * (float) t / 48000.0f));
+            buf.setSample (1, n, 0.20f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                   * 330.0f * (float) t / 48000.0f));
+        }
+        proc.processBlock (buf, midi);
+    }
+    const float c0 = proc.meterCompGrDbCh (0), c1 = proc.meterCompGrDbCh (1);
+    const float l0 = proc.meterLimGrDbCh (0),  l1 = proc.meterLimGrDbCh (1);
+    {
+        juce::String msg;
+        msg << "tickGr: (premise) both stages reduce on both channels, differently (comp "
+            << c0 << "/" << c1 << ", lim " << l0 << "/" << l1 << " dB)";
+        check (c0 < -0.5f && c1 < -0.5f && l0 < -0.5f && l1 < -0.5f
+                 && std::abs (c0 - c1) > 0.1f && std::abs (l0 - l1) > 0.1f
+                 && std::abs (c0 - l0) > 0.1f && std::abs (c1 - l1) > 0.1f,
+               msg.toRawUTF8());
+    }
+
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickGr");
+    if (ed == nullptr)
+        return;
+    auto* comp = dynamic_cast<GrMiniMeter*> (ed->findChildWithID ("compGrMeter"));
+    auto* lim  = dynamic_cast<GrMiniMeter*> (ed->findChildWithID ("limGrMeter"));
+    check (comp != nullptr && lim != nullptr, "tickGr: (premise) both GR mini-meters were found");
+    if (comp == nullptr || lim == nullptr)
+        return;
+    check (juce::exactlyEqual (comp->shownDb (0), 0.0f) && juce::exactlyEqual (lim->shownDb (1), 0.0f),
+           "tickGr: (premise) the lanes are empty before the first tick");
+    ed->refreshFromModel();
+    check (juce::exactlyEqual (comp->shownDb (0), c0) && juce::exactlyEqual (comp->shownDb (1), c1),
+           "tickGr: the COMP lanes carry the compressor's per-channel reduction");
+    check (juce::exactlyEqual (lim->shownDb (0), l0) && juce::exactlyEqual (lim->shownDb (1), l1),
+           "tickGr: the LIMIT lanes carry the limiter's per-channel reduction");
+    check (! comp->isMono() && ! lim->isMono(), "tickGr: a stereo layout draws two lanes");
+}
+
+// T14: the graph well's GR/SPEC flip follows `int_spectrumOn`, including an
+// editor opened on SPEC (the seed the cache has to take from the tree). No
+// scale or mode change here: both relayouts flip the views too, and would
+// hide a tick that stopped doing it.
+static void testTheTickFlipsTheGraphWell()
+{
+    {
+        AnabasisAudioProcessor proc;
+        std::unique_ptr<juce::AudioProcessorEditor> base;
+        auto* ed = openTickEditor (proc, base, "tickGraph");
+        if (ed == nullptr)
+            return;
+        auto* spec = findFirstChildOfType<SpectrumView> (*ed);
+        auto* gr   = findFirstChildOfType<GrHistoryView> (*ed);
+        check (spec != nullptr && gr != nullptr && gr->isVisible() && ! spec->isVisible(),
+               "tickGraph: (premise) both views exist and GR is the default");
+        if (spec == nullptr || gr == nullptr)
+            return;
+        auto& tree = proc.internalState.state();
+        tree.setProperty (iid::spectrumOn, true, nullptr);
+        check (gr->isVisible() && ! spec->isVisible(),
+               "tickGraph: (premise) the tree write alone flips nothing");
+        ed->refreshFromModel();
+        check (spec->isVisible() && ! gr->isVisible(), "tickGraph: the tick shows the spectrum");
+        tree.setProperty (iid::spectrumOn, false, nullptr);
+        ed->refreshFromModel();
+        check (gr->isVisible() && ! spec->isVisible(), "tickGraph: …and flips back to GR");
+    }
+    {
+        AnabasisAudioProcessor proc;
+        auto& tree = proc.internalState.state();
+        tree.setProperty (iid::spectrumOn, true, nullptr);
+        std::unique_ptr<juce::AudioProcessorEditor> base;
+        auto* ed = openTickEditor (proc, base, "tickGraph (SPEC seed)");
+        if (ed == nullptr)
+            return;
+        auto* spec = findFirstChildOfType<SpectrumView> (*ed);
+        auto* gr   = findFirstChildOfType<GrHistoryView> (*ed);
+        check (spec != nullptr && gr != nullptr && spec->isVisible() && ! gr->isVisible(),
+               "tickGraph: (premise) an editor opened on SPEC shows the spectrum");
+        if (spec == nullptr || gr == nullptr)
+            return;
+        tree.setProperty (iid::spectrumOn, false, nullptr);
+        ed->refreshFromModel();
+        check (gr->isVisible() && ! spec->isVisible(),
+               "tickGraph: switching an editor opened on SPEC back to GR reaches the screen");
+    }
+}
+
+// T15: the Simple view's edited dot — shown while any knob is off its macro,
+// never in Advanced (per-control badges there), and restored on the way back
+// to Simple with the mask unchanged.
+static void testTheTickShowsTheEditedDot()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickDot");
+    if (ed == nullptr)
+        return;
+    auto* dot = ed->findChildWithID ("editedDot");
+    check (dot != nullptr, "tickDot: (premise) the edited dot was found");
+    if (dot == nullptr)
+        return;
+    ed->refreshFromModel();
+    check (! dot->isVisible() && proc.detachMask().isEmpty(),
+           "tickDot: (premise) the default state shows no dot");
+
+    auto* limGain = proc.apvts.getParameter (pid::limGain);
+    auto detach = [&proc, limGain] (float db)
+    {
+        limGain->beginChangeGesture();
+        limGain->setValueNotifyingHost (limGain->getNormalisableRange().convertTo0to1 (db));
+        limGain->endChangeGesture();
+        proc.flushPendingDetach();
+    };
+    detach (2.5f);
+    check (! proc.detachMask().isEmpty() && ! dot->isVisible(),
+           "tickDot: (premise) a gestured edit detached a knob; the dot has not followed yet");
+    ed->refreshFromModel();
+    check (dot->isVisible(), "tickDot: the tick shows the edited dot in Simple");
+
+    proc.resetToMacro();
+    proc.flushPendingDetach();
+    check (proc.detachMask().isEmpty(), "tickDot: (premise) back to the macro sound");
+    ed->refreshFromModel();
+    check (! dot->isVisible(), "tickDot: …and hides it once every knob is back on its macro");
+
+    auto* adv = proc.apvts.getParameter (pid::advancedMode);
+    adv->setValueNotifyingHost (1.0f);
+    ed->refreshFromModel();                          // T0 applies the switch
+    detach (4.0f);
+    ed->refreshFromModel();
+    check (! proc.detachMask().isEmpty() && ! dot->isVisible(),
+           "tickDot: an edit made in Advanced does not show the Simple dot there");
+
+    adv->setValueNotifyingHost (0.0f);
+    ed->refreshFromModel();
+    check (dot->isVisible(),
+           "tickDot: returning to Simple with the mask unchanged shows the dot again");
+}
+
+// The tooltip switch's gate (`GatedTooltipWindow`), pinned through its
+// predicate rather than `getTipFor`: JUCE's `TooltipWindow` returns no tip
+// unless the process is in the foreground, which a test process never is, so
+// a check made through `getTipFor` would pass with the gate deleted. The
+// switch is driven the way a project load drives it — a tree write, then the
+// `juce::Value` delivery the message loop would make, dispatched here
+// synchronously — which is the path that reaches `onStateChange` and never
+// `onClick`.
+static void testTheTooltipSwitchGatesEveryTip()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tooltipGate");
+    if (ed == nullptr)
+        return;
+    auto* toggle = findButtonByText (*ed, "Tooltips");
+    check (toggle != nullptr, "tooltipGate: (premise) the Tooltips switch was found");
+    if (toggle == nullptr)
+        return;
+    check (! toggle->getToggleState() && ! ed->tooltipGateOpen(),
+           "tooltipGate: the shipped default (tooltips off) keeps the gate closed");
+
+    auto deliver = [toggle] { toggle->getToggleStateValue().getValueSource().sendChangeMessage (true); };
+    auto& tree = proc.internalState.state();
+    tree.setProperty (iid::tooltipsOn, true, nullptr);
+    check (! ed->tooltipGateOpen(), "tooltipGate: (premise) the tree write alone opens nothing");
+    deliver();
+    check (toggle->getToggleState() && ed->tooltipGateOpen(),
+           "tooltipGate: switching tooltips on through the stored value opens the gate");
+    tree.setProperty (iid::tooltipsOn, false, nullptr);
+    deliver();
+    check (! toggle->getToggleState() && ! ed->tooltipGateOpen(),
+           "tooltipGate: …and switching them off closes it");
+}
+
 int main (int argc, char** argv)
 {
     // Unbuffered stdout: CI pipes are fully buffered, so a crash mid-suite
@@ -11785,6 +12370,17 @@ int main (int argc, char** argv)
         testMeterResetClearsSessionHolds();
         testGrRingResetEpoch();
         testTheSettingsPanelFollowsAProjectLoad();
+        testTheTickAppliesAPendingModeSwitchAndTheComboHoverFlag();
+        testTheTickCallsTheSettingsAndCeilingRefreshes();
+        testTheTickShowsThePresetNameAndItsDirtyMark();
+        testTheTickDimsTheEditorOnBypass();
+        testTheTickPrintsTheOutLufsReadout();
+        testTheTickDrivesTheLearnButton();
+        testTheTickEnablesUndoAndRedo();
+        testTheTickFeedsTheAdvancedGrLanes();
+        testTheTickFlipsTheGraphWell();
+        testTheTickShowsTheEditedDot();
+        testTheTooltipSwitchGatesEveryTip();
         testAValueBoxClickIsNotAMacroGesture();
         testTheSettingsCallbacksReachTheLiveTree();
         testAFactoryApplyWritesEachParameterOnce();

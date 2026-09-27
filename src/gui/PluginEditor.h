@@ -75,6 +75,27 @@ public:
     // the CACHED label, which is what the user actually reads.
     void refreshCeilingUnit();
 
+    // The WHOLE 24 Hz tick body, in its shipped order: `timerCallback` is one
+    // line that calls it (audit finding TEST-001). PUBLIC for the reason the two
+    // hooks above are — no message loop runs in the headless suite, so the tick
+    // never fires there — and WHOLE rather than per direction, so a direction
+    // added to the tick later is reachable by a test the day it lands. Message
+    // thread only. Its pop-up housekeeping is inert with nothing open; that half
+    // stays under ADR-0025's disclosure.
+    void refreshFromModel();
+
+    // The tooltip switch's gate, as `GatedTooltipWindow::getTipFor` evaluates
+    // it. Read-only and PUBLIC for the suite: a check made through `getTipFor`
+    // itself would be vacuous headlessly, because JUCE's `TooltipWindow` returns
+    // no tip unless the process is in the foreground, which a test never is.
+    bool tooltipGateOpen() const { return tooltips.gateOpen(); }
+
+    // The Learn button's wall clock (the 5 s minimum pass and the empty-pass
+    // flash both read it). Replaceable ONLY so the suite can step time instead
+    // of sleeping; production never calls this, and the default is the same
+    // `juce::Time::getMillisecondCounterHiRes` both reads used before.
+    void setLearnClockForTest (std::function<double()> clock) { learnClockMs = std::move (clock); }
+
 private:
     using SliderAttachment   = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment   = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -436,9 +457,10 @@ private:
     {
         using juce::TooltipWindow::TooltipWindow;
         std::function<bool()> tooltipsAllowed;      // unset ⇒ allowed, as JUCE behaves by default
+        bool gateOpen() const { return tooltipsAllowed == nullptr || tooltipsAllowed(); }
         juce::String getTipFor (juce::Component& c) override
         {
-            if (tooltipsAllowed != nullptr && ! tooltipsAllowed())
+            if (! gateOpen())
                 return {};
             return juce::TooltipWindow::getTipFor (c);
         }
@@ -559,6 +581,9 @@ private:
     float  refOnsetAtStop = 0.0f, refTiltAtStop = 0.0f;
     bool   hadLearnedAtStop = false;
     double emptyFlashUntilMs = 0.0;
+    // Both Learn reads (the click and the tick) go through this one function;
+    // `setLearnClockForTest` is its only other writer.
+    std::function<double()> learnClockMs { [] { return juce::Time::getMillisecondCounterHiRes(); } };
     juce::String lastMaskFingerprint;
 
     // -- overlays ------------------------------------------------------------
