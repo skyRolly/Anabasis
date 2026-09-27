@@ -132,6 +132,7 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     // with room to spare (42 of 480 samples at 48 kHz); the rail is for the
     // host-supplied rate the comment at the top of this function describes.
     clamp.prepare (sampleRate);
+    engageTail.prepare (sampleRate);
     tpClampFits = delaySamples - clamp.truePeakDelay()
                   >= (int) std::ceil (kMinLookaheadMs * 0.001 * sampleRate);
     dryMeter.prepare (sampleRate);
@@ -237,6 +238,7 @@ void AnabasisEngine::reset() noexcept
     comp.reset();
     clip.reset();
     clamp.reset();
+    engageTail.reset();
     if (osActive != nullptr)
         osActive->reset();
     for (auto& e : ditherErr) e = 0.0f;
@@ -471,6 +473,26 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // in THIS block's snapshot. Before any pending ADR-0014 restore is
     // injected below, so a staged restore still has the last word.
     adaptiveEngine.resumeAfterReset (p.freeze);
+
+    // ENGAGING true-peak mode while audio plays (ADR-0041, amended in the PR #42
+    // review). The latch cannot wait for the duck's out-leg: that leg is
+    // emitted by the composition being replaced, whose clamp is the sample
+    // clip, and it put up to +4.5 dB of true-peak overs out after the user had
+    // asked for dBTP. So the TP composition latches at THIS block — the silent
+    // bottom is entered now, not reached — and the processed path's place is
+    // taken by a decay of the last emitted frame, checked against the ceiling
+    // before its first sample (EngagementTail). Disengaging (TP on → off) keeps
+    // the out-leg: its audio comes from the TP path, which holds both
+    // ceilings. The first block after prepare/reset and the entry to offline
+    // latch directly below and have nothing to continue.
+    if (wantTpClamp && ! appliedTpClamp && smoothersPrimed && ! enteringOffline
+        && duckState != DuckState::bottom)
+    {
+        engageTail.start (juce::jmin (ceilingLinear.getCurrentValue(),
+                                      juce::Decibels::decibelsToGain (p.ceilingDbTp)));
+        duckState = DuckState::bottom;
+        duckGain  = 0.0f;
+    }
 
     if (! smoothersPrimed || enteringOffline)
     {
@@ -1245,6 +1267,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             for (int ch = 0; ch < nCh; ++ch)
                 clampFrame[ch] = clamp.processSample (clampFrame[ch], ceilingNow);
 
+        float emitted[kMaxChannels] = {};
         for (int ch = 0; ch < nCh; ++ch)
         {
             float processed = clampFrame[ch];
@@ -1254,6 +1277,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             // the export grid stays intact. Exact-1 branch keeps the null.
             if (! juce::exactlyEqual (duckGain, 1.0f))
                 processed *= duckGain;
+
+            // A TP engagement's decay (above): it stands in for the out-leg
+            // while the processed path is silent, so it sits where the duck
+            // does — before dither, inside everything the bypass and delta
+            // legs treat as "processed".
+            if (engageTail.active())
+                processed += engageTail.value (ch);
+            emitted[ch] = processed;
 
             // Dither (4.5): AFTER the clamp (invariant 1/12), processed path
             // only - bypass must stay a bit-exact null. TPDF at +-1 LSB of
@@ -1356,6 +1387,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             ANABASIS_TRACE (anabasis::StageTrace::finalOut, ch, out);
             buffer.setSample (ch, start + n, out);
         }
+        engageTail.advance();
+        engageTail.pushEmitted (emitted, nCh);
         dryMeter.processFrame (monFrameDry, nCh);
         wetMeter.processFrame (monFrameWet, nCh);
         adaptiveEngine.pushFrame (monFrameDry, nCh);

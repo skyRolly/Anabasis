@@ -32,14 +32,14 @@
 //  non-'nonblocking' function". Clean signal, and it fires -- which is the bar a
 //  gate has to pass.
 //
-//  The ceiling stage's TRUE-PEAK half joined in 0.2.13 (ADR-0041): its path and
-//  its detector. It reached this gate the hard way -- the first cut kept the
-//  detector in TruePeak.h, which includes juce_audio_basics, and this file then
-//  failed to compile at all (the `realtime` job, PR #42). The detector now lives
-//  in its own JUCE-free header, and a violation seeded inside it is reported
-//  here at the driver's call to `processFrameTruePeak` (the PR #42 review
-//  worklog) -- the call graph is followed into the new code, not stopped at its
-//  door.
+//  The ceiling stage's TRUE-PEAK half joined in 0.2.13 (ADR-0041): its path,
+//  its detector, and the decay that engages it during playback. It reached this
+//  gate the hard way -- the first cut kept the detector in TruePeak.h, which
+//  includes juce_audio_basics, and this file then failed to compile at all (the
+//  `realtime` job, PR #42). The detector now lives in its own JUCE-free header,
+//  and a violation seeded inside the decay's junction check is reported here at
+//  the driver's call to `EngagementTail::start` (the PR #42 review worklog) -- the
+//  call graph is followed into the new code, not stopped at its door.
 //
 //  SCOPE, deliberately narrow: the JUCE-free first-party leaves only. Adding a
 //  header that reaches JUCE reintroduces the noise above, so the include list
@@ -102,6 +102,7 @@ namespace
     void leafAudioPath (float* l, float* r, int n,
                         const anabasis::CeilingClamp& clamp,
                         anabasis::CeilingClamp& tpClamp,
+                        anabasis::EngagementTail& tail,
                         anabasis::ScopeBuffer& scope,
                         const anabasis::EngineParameters& params,
                         double sampleRate) noexcept ANABASIS_NONBLOCKING
@@ -116,11 +117,21 @@ namespace
 
         // ADR-0041's true-peak path, per frame, exactly as stage E calls it —
         // the clamp's detector (ClampTruePeakDetector.h) and its ring
-        // arithmetic.
+        // arithmetic — and the TP-engagement decay that replaces the duck's
+        // out-leg: its junction check (a replay through a private detector)
+        // at the toggle, then its per-sample value, and the history it is fed.
+        tail.start (ceilingLinear);
         for (int i = 0; i < n; ++i)
         {
             float frame[2] = { l[i], r[i] };
             tpClamp.processFrameTruePeak (frame, 2, ceilingLinear);
+            if (tail.active())
+            {
+                frame[0] += tail.value (0);
+                frame[1] += tail.value (1);
+            }
+            tail.advance();
+            tail.pushEmitted (frame, 2);
             l[i] = frame[0];
             r[i] = frame[1];
         }

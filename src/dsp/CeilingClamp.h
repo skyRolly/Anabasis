@@ -297,4 +297,181 @@ public:
     CeilingClamp& operator= (const CeilingClamp&) = delete;
 };
 
+// ============================================================================
+//  EngagementTail — how true-peak mode is ENGAGED while audio plays (ADR-0041,
+//  amended in the PR #42 review).
+//
+//  THE DEFECT IT CLOSES. Engaging TP changes the clamp's share of the latency
+//  allowance, so the composition is latched at a silent point (ADR-0041
+//  decision 5). It used to be reached by the §2.8 duck's ~6 ms out-leg — and
+//  for that out-leg the OLD composition was still running, so the output kept
+//  coming from the sample-only clamp after the user had asked for dBTP:
+//  measured up to +4.7 dB (product meter) / +5.5 dB (BS.1770 Annex 2 filter)
+//  over the requested ceiling in the first ~2 ms after the toggle (HF-heavy
+//  programme into a +12 dB Post shelf; the PR #42 review worklog).
+//
+//  WHY NOT KEEP A FADE OF THE AUDIO. The samples the out-leg emits were
+//  already in the pipeline, and the old composition has no lookahead at the
+//  clamp. Making them TP-safe from the first post-toggle sample without one is
+//  impossible without either a step in gain (a click) or more latency
+//  (ADR-0004): an interpolated true peak depends on samples not yet produced.
+//
+//  WHAT THE ENGINE DOES INSTEAD. At the toggle it latches the TP composition
+//  immediately (the processed path goes silent while the rings refill), and
+//  this class continues the LAST EMITTED FRAME as a raised-cosine decay to
+//  zero over ~6 ms — value-continuous at the junction, so low-frequency
+//  material does not click (measured: a 100 Hz tone's transition splatter is
+//  ~56 dB below an instant mute's). Everything that makes an inter-sample
+//  peak — the high-frequency detail of the old chain — stops at the toggle.
+//
+//  THE GUARANTEE, and how it is kept: no true-peak reading of the output from
+//  the toggle on exceeds the requested ceiling. A decay is smooth, so its own
+//  readings never exceed its first value; the readings that straddle the
+//  toggle also contain the last 31 emitted samples, and those are CHECKED here
+//  with the clamp's own detector (all three readings) before the first tail
+//  sample is emitted. If they would exceed the ceiling the whole tail is scaled
+//  down by bisection — the only case in which the junction takes a small step.
+//  Scale 0 (plain silence) always fits the ceiling the history was emitted
+//  under: the history can put at most 0.56 of its own peak into a reading at or
+//  after the toggle (the largest history-tap L1 norm over the three readings'
+//  phases), 0.59 with the refinement bound. When the SAME block also lowers the
+//  ceiling (a preset or A/B swap that turns TP on), the check is against the
+//  new, lower value — measured on hostile programme, cuts of 3 to 10 dB at the
+//  toggle held the new ceiling from the toggle on. Were silence ever not to
+//  meet it (a cut deeper than ~4.6 dB under adversarial near-Nyquist history),
+//  the decay would be silent and what remains is the old audio's own ringing,
+//  under the smoothed ceiling the stage enforces during any ceiling move.
+//
+//  Realtime: fixed storage (no allocation after `prepare`), bounded work — the
+//  check replays 63 frames through a private detector, at most 13 times, once
+//  per engagement.
+// ============================================================================
+class EngagementTail
+{
+public:
+    static constexpr int    kMaxChannels = CeilingClamp::kMaxChannels;
+    static constexpr int    kHistory     = ClampTruePeakDetector::kTaps;   // 32 emitted frames
+    static constexpr double kLengthMs    = 6.0;      // the §2.8 duck's out-leg, the one it replaces
+    static constexpr int    kSearchSteps = 12;       // scale resolution 1/4096
+
+    EngagementTail() = default;
+
+    // Message thread / prepare only.
+    void prepare (double sampleRate)
+    {
+        length = truepeak::max2 (1, (int) std::lround (kLengthMs * 0.001 * sampleRate));
+        verifier.prepare();
+        reset();
+    }
+
+    void reset() noexcept
+    {
+        for (auto& h : history)
+            for (auto& v : h)
+                v = 0.0f;
+        histPos = 0;
+        left = 0;
+        pos  = 0;
+    }
+
+    // Every emitted processed frame (after the duck, before dither): the
+    // waveform a tail has to continue. Audio thread.
+    void pushEmitted (const float* frame, int numCh) noexcept
+    {
+        const int nCh = truepeak::min2 (numCh, kMaxChannels);
+        for (int ch = 0; ch < kMaxChannels; ++ch)
+            history[ch][histPos] = ch < nCh ? frame[ch] : 0.0f;
+        if (++histPos == kHistory)
+            histPos = 0;                                // histPos now holds the oldest frame
+    }
+
+    // At a TP-on engagement: start the decay from the last emitted frame,
+    // scaled so no reading of the output from here on exceeds `ceilingLinear`.
+    void start (float ceilingLinear) noexcept
+    {
+        const int last = histPos == 0 ? kHistory - 1 : histPos - 1;
+        for (int ch = 0; ch < kMaxChannels; ++ch)
+            from[ch] = history[ch][last];
+        scale = 1.0f;
+        if (! fits (1.0f, ceilingLinear))
+        {
+            float lo = 0.0f, hi = 1.0f;
+            for (int i = 0; i < kSearchSteps; ++i)
+            {
+                const float mid = 0.5f * (lo + hi);
+                if (fits (mid, ceilingLinear))
+                    lo = mid;
+                else
+                    hi = mid;
+            }
+            scale = lo;
+        }
+        pos  = 0;
+        left = length;
+    }
+
+    bool  active() const noexcept          { return left > 0; }
+    float appliedScale() const noexcept    { return scale; }
+
+    // The tail's value for channel `ch` at the current step; `advance` once
+    // per frame after every channel has read it.
+    float value (int ch) const noexcept    { return scale * from[ch] * shape (pos); }
+    void  advance() noexcept               { if (left > 0) { --left; ++pos; } }
+
+private:
+    // 1 at the junction, falling to ~0 over `length` samples.
+    float shape (int k) const noexcept
+    {
+        if (k >= length)
+            return 0.0f;                                // the decay has ended
+        return 0.5f * (1.0f + std::cos (truepeak::kPi * (float) k / (float) length));
+    }
+
+    // Would a tail at `s` keep every reading from the toggle on within the
+    // ceiling? The decay's own samples must (s·|from| ≤ ceiling: a smooth decay
+    // reads no higher than its first value), and so must every reading whose
+    // window straddles the toggle — replayed here through the clamp's own
+    // detector. Frames 0..31 are the history, frame 32 is the first tail
+    // sample; the detector reports segment m − 16 at step m, so the segments at
+    // or after the toggle whose windows still reach the history are the ones
+    // reported at steps 48..62.
+    bool fits (float s, float ceilingLinear) noexcept
+    {
+        for (int ch = 0; ch < kMaxChannels; ++ch)
+            if (s * std::abs (from[ch]) > ceilingLinear)
+                return false;
+        verifier.reset();
+        float frame[kMaxChannels] = {};
+        float tp[kMaxChannels]    = {};
+        for (int i = 0; i < kHistory; ++i)
+        {
+            const int idx = (histPos + i) % kHistory;           // oldest first
+            for (int ch = 0; ch < kMaxChannels; ++ch)
+                frame[ch] = history[ch][idx];
+            verifier.processFrame (frame, kMaxChannels, tp);
+        }
+        for (int k = 0; k < kHistory - 1; ++k)
+        {
+            for (int ch = 0; ch < kMaxChannels; ++ch)
+                frame[ch] = s * from[ch] * shape (k);
+            verifier.processFrame (frame, kMaxChannels, tp);
+            if (k >= ClampTruePeakDetector::kLag)
+                for (int ch = 0; ch < kMaxChannels; ++ch)
+                    if (tp[ch] > ceilingLinear)
+                        return false;
+        }
+        return true;
+    }
+
+    ClampTruePeakDetector verifier;
+    float history[kMaxChannels][kHistory] = {};
+    float from[kMaxChannels] = {};
+    float scale = 1.0f;
+    int   histPos = 0, length = 1, left = 0, pos = 0;
+
+public:
+    EngagementTail (const EngagementTail&) = delete;
+    EngagementTail& operator= (const EngagementTail&) = delete;
+};
+
 } // namespace anabasis

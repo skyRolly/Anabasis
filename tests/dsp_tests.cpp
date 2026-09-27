@@ -2818,6 +2818,191 @@ static void testTruePeakModeHoldsTheCeiling()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0041, amended in the review of PR #42: ENGAGING true-peak
+// mode while audio plays holds the requested ceiling FROM THE TOGGLE ON.
+//
+// THE DEFECT IT GUARDS. The TP composition is latched at a silent point, and
+// that point used to be reached by the §2.8 duck's ~6 ms out-leg — emitted by
+// the composition being replaced, whose clamp is the sample clip. On hostile
+// programme that out-leg put up to +4.7 dB (product meter) / +5.5 dB (Annex 2)
+// of true-peak overs out after the user had asked for dBTP (186 of 248
+// configurations in the PR #42 review worklog's sweep). Since the fix the TP
+// composition latches at the toggle block and the output continues the last
+// emitted frame as a checked decay (EngagementTail).
+//
+// WHAT IS MEASURED: every reading of the output whose segment starts at or
+// after the first post-toggle sample, from the toggle block through the decay,
+// the silent refill, the fade-in and ~0.4 s of steady state — on the product
+// meter and on the independent Annex 2 meter, at the policy's 0.1 dB. The
+// segment ENDING at the toggle is excluded: it lies between the last TP-off
+// sample and the first post-toggle one, so it belongs to the TP-off audio.
+//
+// WHY IT CANNOT PASS VACUOUSLY: the toggle is mid-stream (0.25 s of TP-off
+// audio first, never the first-block direct adopt), and the premise checks
+// that this TP-off audio really carried overs of more than +1 dB just before
+// the toggle — the same programme would have leaked through the old out-leg.
+// The configurations mix OS cells, rates, block sizes, programme shapes and
+// where in the programme the toggle lands (a programme offset, and one run
+// whose first host block is a short one so the toggle block starts off-grid).
+//
+// AND IT MUST NOT CLICK where it can avoid it: a 100 Hz tone crosses the
+// toggle with no step (the decay starts from the last emitted value) — an
+// "instant mute" implementation of the same guarantee fails that check.
+namespace tpceiling
+{
+struct Engagement { float postMeterDb, postAnnex2Db, preOverDb; };
+
+inline Engagement engageDuringPlayback (double sr, int block, int firstBlock, int factor, int phase,
+                                        int kind, int programmeSkip, const Point& pt, float postShelfDb)
+{
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, block, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode      = false;
+    p.oversample        = (anabasis::OversampleFactor) factor;
+    p.osPhase           = (anabasis::OsPhaseMode) phase;
+    p.limGainDb         = pt.limGainDb;
+    p.compThresholdDb   = pt.compThresholdDb;
+    p.compRatio         = pt.compRatio;
+    p.clipDriveDb       = pt.clipDriveDb;
+    p.clipShape         = pt.clipShape;
+    p.dynTiltDb         = pt.dynTiltDb;
+    p.limStyle          = pt.style;
+    p.transientPreserve = pt.transientPreserve;
+    p.ceilingDbTp       = pt.ceilingDb;
+    if (! juce::exactlyEqual (postShelfDb, 0.0f))
+    {
+        p.eqPosition        = 1;
+        p.eqHighShelfGainDb = postShelfDb;
+    }
+    Programme prog;
+    prog.kind = kind;
+    prog.sr   = sr;
+    for (int k = 0; k < programmeSkip; ++k)
+    {
+        float a = 0.0f, b = 0.0f;
+        prog.frame (a, b);
+    }
+    anabasis::TruePeakEstimator meter;
+    meter.prepare();
+    Annex2Meter annex2;
+    juce::AudioBuffer<float> buf (2, block);
+    const long preSamples  = (long) (0.25 * sr);
+    const long postSamples = (long) (0.4 * sr);
+    long n = 0, toggleAt = -1;
+    float preMax = 0.0f, postMeter = 0.0f, postAnnex2 = 0.0f;
+    bool first = true;
+    while (n < preSamples + postSamples)
+    {
+        if (toggleAt < 0 && n >= preSamples)
+        {
+            p.truePeakMode = true;                       // the user engages TP, mid-stream
+            toggleAt = n;
+        }
+        const int len = first ? firstBlock : block;
+        first = false;
+        for (int i = 0; i < len; ++i)
+        {
+            float l = 0.0f, r = 0.0f;
+            prog.frame (l, r);
+            buf.setSample (0, i, l);
+            buf.setSample (1, i, r);
+        }
+        juce::AudioBuffer<float> view (buf.getArrayOfWritePointers(), 2, len);
+        engine.process (view, p);
+        for (int i = 0; i < len; ++i, ++n)
+        {
+            const float fr[2] = { buf.getSample (0, i), buf.getSample (1, i) };
+            float tp[2] = {};
+            meter.processFrame (fr, 2, tp);
+            const float a = juce::jmax (annex2.push (0, fr[0]), annex2.push (1, fr[1]));
+            const long segment = n - 6;                  // both meters report x[n−6]..x[n−5]
+            if (toggleAt >= 0 && segment >= toggleAt)
+            {
+                postMeter  = juce::jmax (postMeter, tp[0], tp[1]);
+                postAnnex2 = juce::jmax (postAnnex2, a);
+            }
+            else if (n >= preSamples - (long) (0.1 * sr))
+                preMax = juce::jmax (preMax, tp[0], tp[1], a);
+        }
+    }
+    auto dB = [&] (float v) { return 20.0f * std::log10 (juce::jmax (v, 1.0e-9f)) - pt.ceilingDb; };
+    return { dB (postMeter), dB (postAnnex2), dB (preMax) };
+}
+} // namespace tpceiling
+
+static void testTruePeakEngagementHoldsTheCeiling()
+{
+    using tpceiling::Point;
+    const Point hot { 18.0f, -12.0f, 2.0f, 9.0f, 0.35f, 1.5f, 1, 1.0f, -1.0f };
+    struct Run { double sr; int block, firstBlock, factor, phase, kind, skip; };
+    const Run runs[] = {
+        { 48000.0, 512, 512, 0, 0, 1,   0 }, { 48000.0, 512, 512, 0, 0, 4, 211 },
+        { 48000.0, 512, 512, 0, 0, 0,  97 }, { 48000.0, 512, 512, 1, 1, 1,   0 },
+        { 48000.0, 512, 512, 2, 0, 4,   0 }, { 48000.0, 512, 512, 2, 1, 1, 389 },
+        { 48000.0, 512, 512, 3, 1, 4,  97 }, { 48000.0, 512, 512, 4, 1, 1, 211 },
+        { 48000.0,  64,  64, 0, 0, 1,   0 }, { 48000.0, 480, 480, 2, 0, 4,   0 },
+        { 48000.0, 512,  97, 0, 0, 1,   0 },  // a short first host block: the toggle lands off-grid
+        { 44100.0, 512, 512, 0, 0, 4, 211 }, { 96000.0, 512, 512, 2, 1, 1,   0 },
+    };
+    float worstPost = -100.0f, weakestPremise = 100.0f;
+    int over = 0;
+    for (const auto& r : runs)
+    {
+        const auto e = tpceiling::engageDuringPlayback (r.sr, r.block, r.firstBlock, r.factor, r.phase,
+                                                        r.kind, r.skip, hot, 12.0f);
+        const float post = juce::jmax (e.postMeterDb, e.postAnnex2Db);
+        worstPost = juce::jmax (worstPost, post);
+        weakestPremise = juce::jmin (weakestPremise, e.preOverDb);
+        if (post > 0.1f)
+        {
+            ++over;
+            std::printf ("       tpEngage: %.0f Hz / %d / OS %d.%d / kind %d / skip %d: %+.3f dB after the toggle\n",
+                         r.sr, r.block, r.factor, r.phase, r.kind, r.skip, post);
+        }
+    }
+    check (over == 0 && worstPost <= 0.1f,
+           "tpEngage: no reading at or after a mid-stream TP-on toggle exceeds the ceiling by > 0.1 dB");
+    check (weakestPremise > 1.0f,
+           "tpEngage: (premise) the TP-off audio at every toggle carried overs of more than +1 dB");
+
+    // Continuity: a low-frequency tone crosses the toggle without a step.
+    {
+        const double sr = 48000.0;
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.truePeakMode = false;
+        juce::AudioBuffer<float> buf (2, 512);
+        std::vector<float> out;
+        long t = 0;
+        for (int b = 0; b < 60; ++b)
+        {
+            if (b == 40)
+                p.truePeakMode = true;
+            for (int i = 0; i < 512; ++i, ++t)
+            {
+                const float v = 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 100.0 * (double) t / sr);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            engine.process (buf, p);
+            for (int i = 0; i < 512; ++i)
+                out.push_back (buf.getSample (0, i));
+        }
+        const size_t n0 = 40 * 512;
+        float stepAtToggle = std::abs (out[n0] - out[n0 - 1]);
+        float maxStepInTail = 0.0f;
+        for (size_t n = n0 + 1; n < n0 + 400; ++n)
+            maxStepInTail = juce::jmax (maxStepInTail, std::abs (out[n] - out[n - 1]));
+        check (std::abs (out[n0 - 1]) > 0.05f,
+               "tpEngage: (premise) the tone is not at a zero crossing at the toggle");
+        check (stepAtToggle < 0.01f && maxStepInTail < 0.01f,
+               "tpEngage: a 100 Hz tone crosses the TP-on toggle without a step");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ADR-0041's composition, observed where it can be: in true-peak mode the
 // clamp's delay comes OUT of the constant allowance, so (a) the limiter's
 // window is capped at the line that is left — a 10 ms setting engages
@@ -7161,6 +7346,7 @@ int main()
     testClampTruePeakDetector();
     testCeilingClampTruePeakPath();
     testTruePeakModeHoldsTheCeiling();
+    testTruePeakEngagementHoldsTheCeiling();
     testTruePeakModeCapsTheWindowNotTheLatency();
     testDuckWrapsTruePeakLatch();
     testTruePeakModeIsExactBelowTheCeiling();

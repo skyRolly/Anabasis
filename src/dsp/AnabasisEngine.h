@@ -502,6 +502,11 @@ private:
 
     LookaheadLimiter limiter;
     CeilingClamp     clamp;
+    // ADR-0041 (amended in the PR #42 review): what the output does between a TP-on
+    // request during playback and the latched TP composition — a decay of the
+    // last emitted frame, checked against the ceiling (CeilingClamp.h). Fed
+    // every emitted frame; spans the latch, so latchOsConfig never resets it.
+    EngagementTail   engageTail;
     MasteringEQ      eq;
     MasteringComp    comp;
     ClipSat          clip;
