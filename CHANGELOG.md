@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Nineteen such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`, `[0.2.12]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Twenty such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`, `[0.2.12]`, `[0.2.13]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,58 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.13] — 2026-09-27
+
+**The Phase 0 correctness round from the 2026-09-26 product audit: TP mode now holds its dBTP
+ceiling, and a frozen adaptive sound survives the host re-preparing the plugin.** Both changes sit
+behind the Architecture Review Gate and are recorded as **Proposed** decisions awaiting the owner
+(ADR-0041, ADR-0042); nothing here moves the reported latency, a parameter, the saved state or the
+signal order, and true-peak mode OFF renders bit-identically to 0.2.12. Three further audit findings
+were decided as disclosures rather than changes, because each needs an owner decision first —
+[`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-021 (a factory preset turns TP, Dither and Noise
+Shaping off; LOCK holds the ceiling's number only), KI-022 (saving over a name replaces the file
+without asking) and KI-005 (at Oversampling Off any Clip Drive softens the top octave, with the
+figures). Measurement trail: [`worklogs/2026-09-27-phase0-product-correctness.md`](worklogs/2026-09-27-phase0-product-correctness.md).
+
+### Fixed
+- **True-peak mode holds the ceiling in true peak.** With TP on, the final clamp only clipped
+  samples, and the peaks between them went through: measured up to +4.8 dB over a dBTP ceiling on
+  the plugin's own meter, at every oversampling setting and in the Force Max bounce, with only
+  bass-heavy material passing (1674 of 2496 tested TP-mode configurations over the 0.1 dB
+  tolerance). The clamp now measures the waveform between samples itself and brings the gain down
+  just before a peak arrives, one linked gain for both channels, with the sample clip kept as the
+  backstop: 0 of 2736 over on the plugin's meter and on the BS.1770 reference filter, every
+  oversampling setting included (worst +0.005 dB). In a real DAW — an Ardour offline render through
+  the plug-in — the same hot programme went from 0.97 dB over the ceiling to exactly on it. A
+  long-kernel reference meter still reads up to about 1 dB over on synthetic programme with strong
+  content right below Nyquist — recorded in KI-020, not claimed. ADR-0041 (Proposed). Evidence:
+  this release. [Verified]
+- **FREEZE keeps the frozen sound when the host re-prepares the plugin.** A buffer-size or
+  sample-rate change — and in some hosts a transport start or the start of a bounce — silently
+  reset the adaptive engine's frozen adjustments to zero while FREEZE stayed lit and the saved
+  session still held them, so the audio, the button and the save disagreed. The frozen vector now
+  comes back on the first block after the re-prepare whenever Freeze is on; with Freeze off,
+  adaptation restarts as before. ADR-0042 (Proposed). Evidence: this release — verified on the
+  engine and the processor; not yet observed in a DAW. [Verified]
+
+### Changed
+- **Switching TP on or off now dips the output briefly** (~6 ms down, a short hold, ~28 ms up),
+  like an oversampling change, instead of switching at full level — the switch changes how the
+  fixed 10 ms of lookahead is shared. Presets, A/B and undo already sat inside such a dip.
+  ADR-0041 (Proposed). Evidence: this release. [Verified]
+- **In TP mode the longest lookahead settings engage slightly less** — about 0.9 ms less at the top
+  of the range at 44.1/48 kHz (9.125 ms at a 10 ms setting at 48 kHz), because the ceiling's
+  true-peak detection takes that share of the fixed allowance. The latency reported to the host is
+  unchanged. ADR-0041 (Proposed). Evidence: this release. [Verified]
+- **TP mode costs about 0.6 % more of one core** at the budget case (48 kHz, 4× oversampling:
+  3.0 % → 3.6 %, measured on the reference Xeon; method in `TEST_REPORT.md`). Evidence: this
+  release. [Verified]
+
+### Known issues
+- **In TP mode the STATISTICS TP row can turn red while it reads the ceiling itself** — the held
+  reading is then 0.001–0.005 dB above it (74 of 2736 tested configurations), inside the 0.1 dB
+  tolerance; the row compares exactly. Giving it a half-print slack is an owner decision (KI-020).
 
 ## [0.2.12] — 2026-09-05
 

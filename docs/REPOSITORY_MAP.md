@@ -153,7 +153,10 @@ docs/
 │                   2026-09-26-anabasis-product-ux-audit.md (the product / UX / UI / interaction
 │                   audit of `e769f33`: verified findings with decisions and priorities, systemic
 │                   themes and the phased roadmap; its code anchors are revision-pinned) and its
-│                   folder of the captures it cites
+│                   folder of the captures it cites. Since 2026-09-27:
+│                   2026-09-27-phase0-follow-up.md (the first implementation round against that
+│                   audit's Phase 0: each finding's decision and verification, kept apart from
+│                   the audit's own records, which are not edited)
 ├── procedures/     BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS,
 │                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. PACKAGING arrives
 │                   with the OQ-007 installer set (first commercial release)
