@@ -477,8 +477,8 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // ENGAGING true-peak mode while audio plays (ADR-0041, amended in the PR #42
     // review). The latch cannot wait for the duck's out-leg: that leg is
     // emitted by the composition being replaced, whose clamp is the sample
-    // clip, and it put up to +4.5 dB of true-peak overs out after the user had
-    // asked for dBTP. So the TP composition latches at THIS block — the silent
+    // clip, and it put up to +4.7 dB (product meter) / +5.5 dB (Annex 2) of
+    // true-peak overs out after the user had asked for dBTP. So the TP composition latches at THIS block — the silent
     // bottom is entered now, not reached — and the processed path's place is
     // taken by a decay of the last emitted frame, checked against the ceiling
     // before its first sample (EngagementTail). Disengaging (TP on → off) keeps

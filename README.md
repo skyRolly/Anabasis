@@ -143,7 +143,10 @@ The full technical documentation lives in **[`docs/`](docs/)**:
   [`2026-09-26-anabasis-product-ux-audit.md`](docs/reports/2026-09-26-anabasis-product-ux-audit.md)
   (product / UX / UI / interaction audit: verified findings, decisions, priorities and the roadmap)
   with its Phase 0 follow-up [`2026-09-27-phase0-follow-up.md`](docs/reports/2026-09-27-phase0-follow-up.md)
-  (what the first implementation round decided and verified, finding by finding)
+  (what the first implementation round decided and verified, finding by finding), the owner
+  decision material [`2026-09-27-phase0-owner-decisions.md`](docs/reports/2026-09-27-phase0-owner-decisions.md)
+  and the closure record [`2026-09-27-phase0-closure.md`](docs/reports/2026-09-27-phase0-closure.md)
+  (the decisions taken, the review closed item by item, the Phase 0 status matrix)
 - **History & status:** [`CHANGELOG.md`](CHANGELOG.md) ·
   [`docs/HANDOVER.md`](docs/HANDOVER.md) · [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) ·
   [`docs/FUTURE_RISKS.md`](docs/FUTURE_RISKS.md) · [`docs/POSTMORTEMS.md`](docs/POSTMORTEMS.md)

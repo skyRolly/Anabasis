@@ -457,6 +457,18 @@ rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStradd
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
 
+**Addendum (2026-09-27, Phase 0 closure, still 0.2.13) — the closure record.** New dated report
+`docs/reports/2026-09-27-phase0-closure.md`: the three decisions, the PR #42 review closed item by
+item (the engagement leak `FIXED — verified`, with each check re-run on the accepted tree), the Phase 0
+status matrix with engineering and decision completion kept apart, STATE-002 and UX-003 re-checked
+under the new ADR state (both stay deferred owner decisions), and the GitHub check state distinguished
+from local results. Rows engaged: **Add a document** — `REPOSITORY_MAP.md` (the `reports/` entry),
+`README.md` §Documentation (which had never listed the decision-material report either — drift,
+corrected), this file; `SOURCE_OF_TRUTH.md` checked and unchanged (its `docs/reports/` paragraph
+defines the class without enumerating it). The follow-up and decision reports are superseded where
+they differ, not edited. **Drift corrected:** the engine comment on the engagement block still said
+"+4.5 dB" of overs; ADR-0041 records +4.66 dB (product meter) / +5.46 dB (Annex 2).
+
 **Addendum (2026-09-27, Phase 0 closure, still 0.2.13) — the delivery-meter definition: Option 1,
 ADR-0043.** The owner's instruction was to decide from the existing evidence and keep the implemented
 definition if it best matched the accepted contract; it did, so no code or sample moved. Rows engaged:
