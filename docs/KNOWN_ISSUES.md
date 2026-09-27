@@ -1595,13 +1595,19 @@ has to catch.
 **Cause:** finite interpolators, each accurate to a different frequency. Options for the owner, with
 their measured cost (worklog 2026-09-27): define the promise on the product meter + Annex 2 (today's
 guard); lengthen the clamp's accurate kernel to 64 taps (measured on the 16-phase prototype: reference
-residual +0.93 → +0.36 dB on the same subset, at twice its lookahead share and CPU); or bring the meter's own estimator up to the
-accurate kernel so the display agrees with the clamp.
+residual +0.93 → +0.36 dB on the same subset, at twice its lookahead share and CPU); also hold
+libebur128's own interpolator (a prototype measured in the PR #42 review: libebur128 0 of 2736 over,
+worst +0.004 dB, no latency change, the long-kernel reference unchanged at +0.98 dB, ~30 % more
+detector CPU); or bring the meter's own estimator up to the accurate kernel so the display agrees
+with the clamp.
 
 Evidence [Verified]:
-- Source: `src/dsp/TruePeak.h` (`TruePeakEstimator`, `ClampTruePeakDetector`)
+- Source: `src/dsp/TruePeak.h` (`TruePeakEstimator`), `src/dsp/ClampTruePeakDetector.h`
+  (`ClampTruePeakDetector`, moved there in the PR #42 review with no change to its output)
 - Test:   `testTruePeakModeHoldsTheCeiling` (the two held meters); the four-meter matrix is in the
   2026-09-27 worklog, not in the suite (libebur128 and the reference are external to the build)
+- Decision record: `docs/reports/2026-09-27-phase0-owner-decisions.md` §1 lays the definitions out
+  side by side with their measured consequences, for the owner
 - Commit: this round's PR
 
 ### KI-021 — A factory preset turns TP, Dither and Noise Shaping off, and LOCK holds only the ceiling's NUMBER (2026-09-27)

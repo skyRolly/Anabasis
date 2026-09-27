@@ -22,6 +22,17 @@ is not free of gate items, and they are named here rather than left for a review
 A green build does not clear any of these. Until the owner accepts, the PR that carries this record
 is not to be merged.
 
+> **Revised 2026-09-27, still Proposed (review of PR #42).** A review found that ENGAGING true-peak
+> mode while audio plays leaked the requested ceiling: the latch waited for the §2.8 duck's out-leg,
+> and that out-leg is emitted by the composition being replaced, whose clamp is the sample clip —
+> measured up to +4.7 dB (product meter) / +5.5 dB (Annex 2) over the ceiling after the toggle.
+> Decision 5 is revised (engaging no longer rides the out-leg), decision 8's prescribed text with it,
+> the detector moved into its own JUCE-free header (decision 2; the first cut had put a JUCE include
+> under the ceiling stage and failed the `realtime` CI gate), and the Consequences, Related code,
+> Evidence and a new "What the owner is asked to decide" section follow. Nothing else moved: the
+> latency composition, the three readings, the gain law and every steady-state figure are unchanged
+> and re-measured bit-identical (the PR #42 review worklog).
+
 ## Context
 
 `DSP_POLICY.md` invariant 4 promises that the output never exceeds the ceiling, **tolerance
@@ -107,13 +118,15 @@ tap either uses a more accurate estimator or carries a stated margin".
    input** (ADR-0006 items 2–3, now implemented) with the sample-level hard clip kept as the
    backstop; with it off the clamp is the P1 sample compare, unchanged and bit-identical.
 
-2. **The reading (`ClampTruePeakDetector`, `TruePeak.h`)** describes, per step, x[j] and the
+2. **The reading (`ClampTruePeakDetector`, `ClampTruePeakDetector.h`)** describes, per step, x[j] and the
    continuous waveform between x[j] and x[j+1], j = n − 16, from one 32-sample window, as the
    largest of: (i) a 32-tap Kaiser (β = 8) windowed-sinc interpolator designed at `prepare()`,
    evaluated at the quarter points and refined by a parabola through the largest point and its
    neighbours; (ii) `TruePeakEstimator`'s own 4× phases, so the dBTP display cannot show an over the
    clamp let through; (iii) the order-48, 4-phase example filter of **ITU-R BS.1770 Annex 2**
-   (BS.1770-5, identical in -4), transcribed and pinned by test. Reporting lag 16.
+   (BS.1770-5, identical in -4), transcribed and pinned by test. Reporting lag 16. The detector and
+   the meter's phase design live in `ClampTruePeakDetector.h`, which includes no JUCE module, so the
+   whole ceiling stage stays inside the compile-time `-Wfunction-effects` gate (ADR-0029).
 
 3. **The gain** (`CeilingClamp::processFrameTruePeak`): one LINKED gain for all channels; a
    requirement per segment against the lower of its two samples' ceilings (each frame carries the
@@ -141,11 +154,32 @@ tap either uses a more accurate estimator or carries a stated margin".
    at all. If a host-supplied rate leaves no room for D above the 0.5 ms minimum window, the path is
    not used (a rail; no conforming rate reaches it).
 
-5. **A true-peak toggle is a latched rewire.** It moves the region line's length, so it rides the
-   §2.8 duck exactly like an oversampling-factor change: out, latch at the silent bottom (the
-   lookahead ring, the oversampler and the clamp's own ring restart), hold for the refill, in.
-   Adopted directly on the first block after prepare/reset and on entering offline, as the factor
-   is. The limiter's own detector mode still follows the snapshot per block, as before.
+5. **A true-peak toggle is a latched rewire.** It moves the region line's length, so it is latched
+   at the §2.8 duck's silent bottom (the lookahead ring, the oversampler and the clamp's own ring
+   restart), held for the refill, then faded in. Adopted directly on the first block after
+   prepare/reset and on entering offline, as the factor is. The limiter's own detector mode still
+   follows the snapshot per block, as before. The two directions reach the bottom differently
+   *(revised in the PR #42 review)*:
+   - **Disengaging (on → off)** rides the duck exactly like an oversampling change — out, latch,
+     hold, in. Its out-leg is emitted by the true-peak path, which holds the new (sample-peak)
+     ceiling as well as the old one.
+   - **Engaging (off → on) while audio plays** latches at the toggle block itself: the silent bottom
+     is entered at once, and the duck's out-leg is replaced by a **decay of the last emitted frame**
+     to zero over ~6 ms (`EngagementTail`, `CeilingClamp.h`). Before its first sample the decay is
+     checked with the clamp's own detector — every reading of a segment at or after the toggle, the
+     ones whose windows still reach back into the emitted audio included — and scaled down by
+     bisection only if it would exceed the ceiling. So **no reading of the output from the toggle on
+     exceeds the requested ceiling**, and low-frequency material crosses the toggle without a step.
+     A ceiling cut in the same block (a preset or A/B swap that also turns TP on) is checked against
+     the new value: cuts of 3–10 dB held it from the toggle on (measured, hostile programme). Only
+     silence failing the check — a cut deeper than ~4.6 dB under adversarial near-Nyquist history —
+     would leave the old audio's own ringing, under the smoothed ceiling the stage enforces during
+     any ceiling move.
+     *Why not a fade of the audio:* the audio the out-leg would fade is already in the pipeline and
+     the replaced composition has no lookahead at the clamp; holding a true-peak ceiling on it from
+     the first post-toggle sample needs either a gain step or more latency (decision 4 rules that
+     out). *Why not an instant mute:* same guarantee, but a step of up to full scale at every
+     engagement — measured ~56 dB more transition splatter than the decay on a 100 Hz tone.
 
 6. **Realtime.** Everything is allocated at `prepare()`; the per-frame path is allocation-free,
    lock-free and bounded (fixed windows; the requirement windows are scanned only while they hold a
@@ -163,7 +197,9 @@ tap either uses a more accurate estimator or carries a stated margin".
      it — so the reported figure is unchanged in both modes."*
    - `DSP_POLICY.md` invariant 8's enumeration gains **"the true-peak mode"** beside the
      oversampling phase mode, with its reason: it moves the clamp's share of the allowance, so it is
-     latched at the §2.8 duck like an oversampling change.
+     latched at the §2.8 duck's silent bottom like an oversampling change — disengaging through the
+     out-leg, engaging (revised in the PR #42 review) through a checked decay of the last emitted frame, so
+     the ceiling holds from the toggle.
 
 ## Consequences
 
@@ -178,8 +214,20 @@ tap either uses a more accurate estimator or carries a stated margin".
   call (audit DSP-001 sub-item (a)); `KNOWN_ISSUES.md` KI-020 carries the figures and the options (a
   longer accurate kernel measured to halve the residual, at twice the lookahead and CPU).
 - **The limiter's longest window in true-peak mode is 10 ms − D.** Invisible below that setting.
-- **A true-peak toggle dips the output** for the §2.8 duck (~6 ms out, a refill hold, ~28 ms in),
-  like any latched rewire; a preset, A/B or undo step that changes the mode already sits inside one.
+- **A true-peak toggle dips the output**, like any latched rewire; a preset, A/B or undo step that
+  changes the mode already sits inside one. Disengaging: the §2.8 duck (~6 ms out, a refill hold,
+  ~28 ms in). **Engaging while audio plays** *(revised in the PR #42 review)*: the programme stops at the
+  toggle and the last emitted value decays to silence over ~6 ms, then the refill hold (the
+  allowance plus the oversampler's delay) and the ~28 ms fade-in in TP mode. The decay is
+  value-continuous, but the audio's high-frequency detail stops at once — the detail that would carry
+  an inter-sample peak — so a bright or tonal programme hears a more abrupt end than the old fade,
+  though far from a mute's (measured
+  on clean tones: at 100 Hz the transition splatter is ~20 dB above the old fade and ~56 dB below an
+  instant mute; at 1–6 kHz ~4–17 dB above the fade). Where the emitted audio just before the
+  toggle would ring above the ceiling the decay starts lower — a step at the junction; over a
+  248-configuration hostile sweep (+12 dB Post shelf, hot limiter) its start was scaled to no less
+  than 0.82 (−1.7 dB), unscaled in 107 runs; a synthetic full-scale Nyquist-rate history needs 0.69
+  (−3.2 dB). The check costs ~7 µs per engagement unscaled, ~80 µs when it bisects.
 - **Level:** true-peak mode now removes the overs it used to emit. Median RMS change over the main
   matrix −0.06 dB; the largest drops (−5 to −6.6 dB) are the +12 dB Post-shelf stress cases that
   rendered ~+4.7 dB true-peak overs before.
@@ -195,16 +243,56 @@ tap either uses a more accurate estimator or carries a stated margin".
 - **Forecloses:** reporting the clamp's delay as extra latency; a clamp detector that reads fewer
   than the three readings without a new record.
 
+## What the owner is asked to decide *(added in the PR #42 review)*
+
+Accepting this record accepts four things together, each of which the gate needs to see:
+
+1. **The TP-mode latency composition** (decision 4). Verified against the code on 2026-09-27:
+   `CeilingClamp::truePeakDelayFor` = attack + 30 with attack = max(8, round(0.25 ms · fs)) —
+   **41** samples at 44.1 kHz, **42** at 48 kHz, 52 at 88.2 kHz, **54** at 96 kHz, 74 at 176.4 kHz,
+   **78** at 192 kHz; the region line is the 10 ms allowance minus that (the longest engaged window
+   9.07 ms at 44.1 kHz, 9.125 ms at 48 kHz, 9.44 ms at 96 kHz, 9.59 ms at 192 kHz); the **reported**
+   latency is `maxLookahead(10 ms) + osLatency` in both modes, pinned by
+   `testReportedLatencyMatchesImpulse` and `testOsLatencyMatrix` running in both modes, and observed
+   unchanged across TP toggles in a host (Carla, 480 samples at 48 kHz). The engagement fix of
+   decision 5 adds no latency: it changes only when the latch happens, not what it latches.
+2. **The detector** (decisions 2–3): three readings, a stated departure from ADR-0006 item 2's
+   wording, and the yardstick question it leaves open — which meter defines "dBTP" is a separate owner
+   decision, laid out with measurements in `docs/reports/2026-09-27-phase0-owner-decisions.md`.
+3. **The engagement transition** (decision 5, revised): the ceiling holds from the toggle, at the
+   cost of the programme stopping at the toggle instead of fading (and, only where the audio just
+   before the toggle would ring above the ceiling, a small step — −1.7 dB at worst over the hostile
+   sweep, −3.2 dB for a synthetic full-scale Nyquist-rate history).
+   Reproduced in a real host and closed there too (Ardour 8.4: +1.82 / +2.12 dB over after the toggle
+   on the PR head, −0.05 / +0.00 dB on this revision).
+   The alternatives, each measured on the same engine (the PR #42 review worklog): keep the old out-leg —
+   click-free, but up to +4.7 dB (product meter) / +5.5 dB (Annex 2) over the requested ceiling for
+   ~2 ms after the toggle, samples that a latency-compensated host places *before* the toggle on
+   its timeline; or an instant mute — the same guarantee as the decay with a step of up to full
+   scale at every engagement.
+4. **The policy text** (decision 8): invariant 2's sentence and invariant 8's enumeration.
+
+**Instead of accepting,** the owner can take one of the options recorded above: A (report more
+latency — a PDC change every session, or one that moves with the switch), B (a constant clamp delay
+in both modes — TP-off stops being bit-identical and every user's longest lookahead becomes 9.125 ms
+at 48 kHz), or rejecting the record, which returns TP mode to `main`'s behaviour (a sample-peak clamp
+under a dBTP readout; up to +4.8 dB over on the product meter). Whatever is decided, the voicing
+constants (attack 0.25 ms, release 10 ms) are still ⊕ listening material, and the TP-mode cost at ≥ 4×
+is over DESIGN §9's limiter + TP-detection row (`PERFORMANCE_BUDGET.md`).
+
 ## Related code
 
-`src/dsp/CeilingClamp.h` (the true-peak path), `src/dsp/TruePeak.h` (`ClampTruePeakDetector`,
-`TruePeakEstimator::designPhases`), `src/dsp/AnabasisEngine.{h,cpp}` (`latchOsConfig`'s TP
-composition, `latchWanted`, the window cap, stage E's frame-wise clamp), `tests/dsp_tests.cpp`
-(`testClampTruePeakDetector`, `testCeilingClampTruePeakPath`, `testTruePeakModeHoldsTheCeiling`,
-`testTruePeakModeCapsTheWindowNotTheLatency`, `testDuckWrapsTruePeakLatch`,
-`testTruePeakModeIsExactBelowTheCeiling`, and the TP-mode loops added to
-`testReportedLatencyMatchesImpulse`, `testOsLatencyMatrix`, `testBypassNullUnderOs` and
-`testTheAudioPathAllocatesNothing`), `tests/bench.cpp` (the clamp row and the `working+TP` mode).
+`src/dsp/CeilingClamp.h` (the true-peak path; `EngagementTail`), `src/dsp/ClampTruePeakDetector.h`
+(`ClampTruePeakDetector`, `truepeak::designMeterPhases`), `src/dsp/TruePeak.h`
+(`TruePeakEstimator::designPhases`, now forwarding), `src/dsp/AnabasisEngine.{h,cpp}`
+(`latchOsConfig`'s TP composition, `latchWanted`, the engagement block, the window cap, stage E's
+frame-wise clamp and the decay), `tests/dsp_tests.cpp` (`testClampTruePeakDetector`,
+`testCeilingClampTruePeakPath`, `testTruePeakModeHoldsTheCeiling`,
+`testTruePeakEngagementHoldsTheCeiling`, `testTruePeakModeCapsTheWindowNotTheLatency`,
+`testDuckWrapsTruePeakLatch`, `testTruePeakModeIsExactBelowTheCeiling`, and the TP-mode loops added
+to `testReportedLatencyMatchesImpulse`, `testOsLatencyMatrix`, `testBypassNullUnderOs` and
+`testTheAudioPathAllocatesNothing`), `tests/realtime_effects.cpp` (the TP path, the detector and the
+decay under `-Wfunction-effects`), `tests/bench.cpp` (the clamp row and the `working+TP` mode).
 
 ## Evidence
 
@@ -215,6 +303,19 @@ reverted); **Unverified** for the voicing constants (not listened to).
 - Before/after engine matrix, 2718 configurations, four meters, and the negative control (the
   regression guard fails on `main`: 102 of 123 runs over on either meter, worst +6.04 dB) —
   `worklogs/2026-09-27-phase0-product-correctness.md`.
+- The engagement leak and its fix (PR #42 review): a 248-configuration transition sweep — before, 186
+  runs over the requested ceiling after a mid-stream TP-on toggle (worst +4.66 dB product meter,
+  +5.46 dB Annex 2); after, none (worst +0.003 dB); `testTruePeakEngagementHoldsTheCeiling` fails on
+  the pre-fix engine in all 13 of its configurations; the decay's continuity and its junction check
+  each fail their own assertion when removed — `worklogs/2026-09-27-pr42-review-closure.md`.
+- The engagement in a real host (PR #42 review): Ardour 8.4, offline export with TP turned on
+  mid-export through Ardour's plug-in parameter API — the PR head read +1.82 dB (product meter) /
+  +2.12 dB (Annex 2) over the ceiling after the toggle, this revision −0.05 / +0.00 dB, and the TP-off
+  exports of the two builds are sample-identical; Carla 2.5.8 reports 480 samples at 48 kHz before and
+  after TP toggles. The steady-state matrix re-rendered on the revision is hash-identical to the PR
+  head (2718 + 240 + 56 renders) — same worklog.
+- The owner's options, with the delivery-meter question measured out (including a prototype that
+  also holds libebur128's reading) — `docs/reports/2026-09-27-phase0-owner-decisions.md`.
 - Estimator comparison (why three readings): same worklog, §Investigation.
 - ITU-R BS.1770-5 (11/2023), Annex 2 — the example filter table; cross-checked value by value
   against the Recommendation's text.

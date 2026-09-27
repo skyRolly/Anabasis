@@ -38,7 +38,11 @@ the display wording*, so UI copy stays revisable under constraint C8
 - One responsibility per file; a banner comment block (`// ===== Name ===== ...`) documents each
   class's purpose at the top.
 - Member initialisers in the header (`float ceilingDb = -1.0f;`).
-- Use `JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR` on owning classes.
+- Use `JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR` on owning classes — **except in the JUCE-free
+  leaf headers** (`CeilingClamp.h`, `ClampTruePeakDetector.h`, `ScopeBuffer.h`, `Latency.h`,
+  `EngineParameters.h`), which `tests/realtime_effects.cpp` compiles with no JUCE on the include path
+  (ADR-0029): there, delete the copy operations explicitly. Adding a JUCE include to one of them
+  takes it out of that gate and fails the `realtime` job (it did once, on PR #42).
 
 ## Real-time discipline (cross-ref `REALTIME_AUDIO_POLICY.md`)
 

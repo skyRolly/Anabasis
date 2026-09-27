@@ -92,6 +92,38 @@ Annex 2 meter, ≤ 0.1 dB; measured worst +0.001 dB — and on `main` 102 of 123
 +6.04 dB), `testCeilingClampTruePeakPath` (the canonical +3 dB vector held within 0.1 dB at the stage).
 Environment: the machine and compiler of the performance section below.
 
+### Engaging true-peak mode while audio plays (ADR-0041 decision 5, revised) — 2026-09-27, PR #42 review
+
+**Method.** The same scratchpad approach on the transition: the real engine renders 0.25 s with
+true-peak mode OFF, then turns it ON at a block top (hot limiter, a +12 dB Post shelf, hostile
+programme, the toggle landing at several programme phases), and every product-meter and Annex 2
+reading of a segment at or after the toggle is compared with the ceiling. 248 configurations: 44.1 /
+48 / 96 / 192 kHz, nine oversampling cells, blocks 32 / 64 / 480 / 512 / 4096, five programme kinds.
+
+| | over by > 0.1 dB | worst (product / Annex 2) |
+|---|---|---|
+| before (the PR head `3e9b343`) | **186 / 248** — first violating reading 0–106 samples after the toggle | +4.66 / +5.46 dB |
+| after (this revision) | **0 / 248** | +0.001 / +0.003 dB |
+
+Before, the latch waited for the §2.8 duck's out-leg, which the replaced composition (a sample clip)
+emits; a latency-compensated host places those samples just BEFORE the toggle on its timeline. After,
+the composition latches at the toggle block and a checked decay of the last emitted frame replaces
+the out-leg: its start was scaled in 141 of the 248 runs, never below 0.8245 (−1.7 dB). **In a real
+host** (Ardour 8.4, offline export, TP turned on mid-export through Ardour's plug-in parameter API):
+the PR head read **+1.82 dB (product) / +2.12 dB (Annex 2)** over the ceiling after the toggle; this
+revision **−0.05 / +0.00 dB**; the TP-off exports of the two builds are sample-identical.
+
+The steady-state figures above were re-rendered on this revision: all 2718 + 240 + 56 renders are
+hash-identical to the PR head (the fix acts only at an engagement).
+
+**Asserted by** `testTruePeakEngagementHoldsTheCeiling` — 13 hostile runs (six OS cells, blocks 512 /
+64 / 480 and a 97-sample first block, 44.1 / 96 kHz, three programme kinds, four programme phases)
+held within 0.1 dB on both meters from the toggle on, a premise that each toggle carried > +1 dB of
+TP-off overs, and a 100 Hz tone that must cross the toggle without a step. Against the PR head it
+**fails** (13 of 13 runs over, +2.43 to +4.68 dB). Mutations: an instant mute in place of the decay
+fails the continuity check and `testDuckWrapsTruePeakLatch`; the decay without its check fails the
+ceiling check (+0.27 to +0.60 dB).
+
 ## True-peak estimator accuracy (invariant 3, ADR-0003) — 2026-08-01, P2
 
 Estimator: 4-phase × 12-tap windowed-sinc, integer-normalised DC, designed at `prepare()`.

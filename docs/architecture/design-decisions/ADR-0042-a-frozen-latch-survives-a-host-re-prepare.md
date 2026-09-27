@@ -94,7 +94,14 @@ case 4, `testAFrozenLatchDoesNotFollowTheSlotSwitch`).
 
 Confidence: **Verified** at engine and processor level — every assertion above fails when the carry
 is removed, and the two slot-isolation assertions fail when it is written with a retained-generation
-bump (worklog 2026-09-27 §Verification). **Not verified in a DAW:** whether a given host re-prepares
+bump (worklog 2026-09-27 §Verification). Re-checked in the PR #42 review: moving the carry AFTER the
+staged-restore injection (decision 2's ordering reversed) fails four DSP checks and the state suite's
+"an unprimed session load restores the vector on the first block", so "a staged restore still has the
+last word" is pinned; the lifecycle paths (re-prepare at the same and a new rate, Freeze engaged while
+stopped, session load before `prepareToPlay`, save after a re-prepare, A/B, preset load, entry to an
+offline bounce, host activate cycles) are tabulated with their evidence in
+`docs/reports/2026-09-27-phase0-owner-decisions.md` §3, with a technical recommendation. **Not verified
+in a DAW:** whether a given host re-prepares
 on transport start or before a bounce (the audit's TEST-002); a scripted Carla host re-prepared the
 plugin through deactivate/activate with Freeze and every parameter preserved, but its engine carried
 no audio, so the audio half of the carry was not observable there.

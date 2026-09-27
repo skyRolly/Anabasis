@@ -27,6 +27,7 @@ Every allocation in the DSP tree happens in `prepare()` or a function only `prep
 | eight `std::make_unique<juce::dsp::Oversampling>` + `initProcessing` | the same `prepare`, its `for (f, ph)` loop |
 | wedge `assign` ×2 channels, sized for 16× | `LookaheadLimiter::prepare` (`src/dsp/LookaheadLimiter.h`) |
 | the true-peak path's rings (`audio`, `ceilings`, `requirement`, `need`, `forwardMin`) — sized from the rate once | `CeilingClamp::prepare` (`src/dsp/CeilingClamp.h`), called by `AnabasisEngine::prepare` (ADR-0041, added 2026-09-27) |
+| the TP-engagement decay (`EngagementTail`) — fixed arrays only; `prepare` sets its length and designs its private detector | `EngagementTail::prepare` (`src/dsp/CeilingClamp.h`), called by `AnabasisEngine::prepare` (ADR-0041 decision 5, revised 2026-09-27) |
 
 Citations here are **symbol-based on purpose**: the first version of this table carried line
 ranges, and every one of them had drifted by the time it was next read (`pushArr` did not even
@@ -52,7 +53,19 @@ guard, which now runs TP mode in its matrix and toggles it mid-stream: `CeilingC
 `processFrameTruePeak` (fills and fixed-size loops over prepared storage),
 `ClampTruePeakDetector::processFrame` (fixed 32-sample window, no state beyond its arrays), and
 `AdaptiveEngine::resumeAfterReset` (four float copies and five atomic stores, once per reset —
-ADR-0042). No `juce::String`, no logging, no file access, no message posting.
+ADR-0042). The PR #42 review added `EngagementTail` (`CeilingClamp.h`, ADR-0041 decision 5
+revised), which holds only fixed arrays and a private detector: `start` runs once per TP engagement and is
+bounded at 13 replays of 63 detector frames (measured on the reference Xeon: ~7 µs when the decay
+fits unscaled, ~80 µs when the bisection runs — means of 2000 calls; the slowest single call in
+3 × 2000, as thread CPU time on the shared CI-class container, ~0.25 ms against a 1.33 ms 64-sample
+block at 48 kHz),
+`value`/`advance`/`pushEmitted` are a few multiplies and stores per sample. The TP-mode matrix of the
+allocation guard crosses engagements, so `start` runs under the guard too. **Since the PR #42 review the
+ceiling stage's true-peak half is also inside the compile-time tier** (`tests/realtime_effects.cpp`,
+`-Wfunction-effects`, ADR-0029): `CeilingClamp.h` and the new `ClampTruePeakDetector.h` include no
+JUCE module, the driver calls `processFrameTruePeak`, the detector and every `EngagementTail` entry
+point, and a violation seeded inside the tail's junction check is reported there. No `juce::String`,
+no logging, no file access, no message posting.
 `MacroEngine::parameterChanged` — which APVTS may deliver ON the audio thread during automation —
 stores one relaxed atomic and returns; `triggerAsyncUpdate` (which takes a platform lock) is
 gated behind `MessageManager::existsAndIsCurrentThread()` (`src/MacroEngine.cpp:28-35`).

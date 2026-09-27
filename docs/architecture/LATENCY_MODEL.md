@@ -38,7 +38,10 @@ line becomes `maxLookaheadSamples − D`, the clamp delays by `D`, and the sum i
 allowance. The reported figure is therefore identical in both modes; what TP mode costs is
 the top of the engaged range, capped at `10 ms − D` (9.125 ms at 48 kHz). Toggling the mode
 changes the line's length, so it is latched at the §2.8 duck's silent bottom exactly like an
-oversampling change (`AnabasisEngine::latchOsConfig`), never mid-block.
+oversampling change (`AnabasisEngine::latchOsConfig`), never mid-block. Engaging it while audio
+plays enters that bottom at the toggle block rather than after the duck's out-leg (ADR-0041
+decision 5, revised in the PR #42 review): the out-leg would still be emitted by the sample-peak composition.
+Neither changes the total — the latch moves `D` between the line and the clamp, not the sum.
 
 ## Term 2 — the oversampling contribution
 
@@ -118,6 +121,7 @@ realtime→offline flip does **not** duck the render (`testOfflineFlipDoesNotDuc
 | Impulse lands at exactly the reported figure, across lookahead values — both true-peak modes | `testReportedLatencyMatchesImpulse` |
 | The TP-mode composition: window capped at `allowance − D`, group delay unchanged | `testTruePeakModeCapsTheWindowNotTheLatency` |
 | A true-peak toggle is latched at the duck's bottom, never stepped | `testDuckWrapsTruePeakLatch` |
+| Engaging TP mid-stream holds the ceiling from the toggle on (the latch at the toggle block) | `testTruePeakEngagementHoldsTheCeiling` |
 | Measured impulse vs reported figure across the full `(factor × phase)` matrix, both true-peak modes — **exact** for linear phase (a symmetric FIR's peak *is* its group delay) and at OS Off; **within ±1 sample** for min-phase (an IIR cascade's group delay is frequency-dependent by design; the test's comment records the measured split) | `testOsLatencyMatrix` |
 | Offline force / duck edges | `testOfflineFlipDoesNotDuckTheRender`, `testReturnFromOfflineIsDucked` |
 | Bypass alignment at every factor (the dry ring uses the same tables) | the OS bypass-null checks |

@@ -372,7 +372,11 @@ Input Gain → EQ (Pre position) → Compressor → Clipper + Color
   change it, and take effect at a click-free moment.
 - **Click-free by construction**: preset loads, A/B switches, undo/redo and engine
   rewires (EQ position, color model, oversampling changes, the **TP** switch) duck the output
-  briefly instead of clicking. The short dip *is* the mechanism working.
+  briefly instead of clicking. The short dip *is* the mechanism working. Switching **TP on** while
+  audio plays is the one that starts differently: the programme stops at once and its last value
+  fades away over a few milliseconds, so the true-peak ceiling already holds from the moment you
+  press it (a fade of the audio itself would still carry inter-sample peaks); the sound then comes
+  back in TP mode as usual.
 - **Self-healing**: if a hostile upstream signal ever overflows a filter, the engine
   detects and repairs it within the block instead of going silent.
 

@@ -60,7 +60,9 @@ owner-supplied (C8) and gated with OQ-002/OQ-009 — inventing it would violate 
 implemented**: `EngineParameters.h` (the wrapper↔engine POD boundary), `AnabasisEngine` (the
 chain orchestrator, which also carries input gain, dither, loudness compensation and delta
 monitoring inline), `MasteringEQ`, `MasteringComp`, `ClipSat` (ADAA), `LookaheadLimiter`,
-`CeilingClamp`, `Latency`, plus the measurement side: `LoudnessMeter` (BS.1770 + LRA),
+`CeilingClamp` (with the true-peak mode's engagement decay, and the three-reading
+`ClampTruePeakDetector.h` it runs on — both JUCE-free, inside the compile-time realtime tier),
+`Latency`, plus the measurement side: `LoudnessMeter` (BS.1770 + LRA),
 `RmsMeter`, `TruePeak`, `AdaptiveEngine`, `GrHistoryBuffer` and `ScopeBuffer`. *(This paragraph
 read "Planned … modules" from P0 through the 0.1.1 release round — every one of them had
 shipped by P3. The table above likewise placed `PluginEditor` at top-level `src/`, which it has
@@ -156,7 +158,10 @@ docs/
 │                   folder of the captures it cites. Since 2026-09-27:
 │                   2026-09-27-phase0-follow-up.md (the first implementation round against that
 │                   audit's Phase 0: each finding's decision and verification, kept apart from
-│                   the audit's own records, which are not edited)
+│                   the audit's own records, which are not edited) and
+│                   2026-09-27-phase0-owner-decisions.md (the owner decision material from the
+│                   PR #42 review: the delivery-meter definition, ADR-0041, ADR-0042, the two
+│                   deferred findings and Phase 1 readiness — options laid out, none chosen)
 ├── procedures/     BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS,
 │                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. PACKAGING arrives
 │                   with the OQ-007 installer set (first commercial release)
