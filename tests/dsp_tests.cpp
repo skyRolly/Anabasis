@@ -2964,6 +2964,61 @@ static void testTruePeakModeIsExactBelowTheCeiling()
 }
 
 // ---------------------------------------------------------------------------
+// Audit finding DSP-004, DISCLOSED rather than changed (KNOWN_ISSUES KI-005,
+// USER_MANUAL §3.5): the moment Clip Drive leaves exactly 0 dB, first-order
+// ADAA's (1 + z⁻¹)/2 kernel low-passes the whole programme in the clipper's
+// linear region — cos(πf / (N·fs)) at N× — whatever the drive amount. The
+// manual and the known-issue table quote these figures; this pins them to the
+// engine so the documents cannot drift from it quietly, and so a future droop
+// compensation fails here and is sent to re-write them. −30 dBFS keeps the
+// clipper linear; each figure is relative to drive exactly 0 at the same
+// oversampling, which isolates the clip stage from the oversampling filters.
+static void testClipDriveDroopIsTheDisclosedOne()
+{
+    const double sr = 48000.0;
+    auto responseDb = [sr] (int factor, float driveDb, double hz)
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.oversample  = (anabasis::OversampleFactor) factor;
+        p.osPhase     = anabasis::OsPhaseMode::linear;
+        p.clipDriveDb = driveDb;
+        const double a = std::pow (10.0, -30.0 / 20.0);
+        juce::AudioBuffer<float> buf (2, 512);
+        double sumSq = 0.0;
+        long long count = 0;
+        for (int b = 0; b < 60; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = (float) (a * std::sin (juce::MathConstants<double>::twoPi * hz
+                                                        * (double) (b * 512 + n) / sr));
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            if (b >= 30)
+                for (int n = 0; n < 512; ++n, ++count)
+                    sumSq += (double) buf.getSample (0, n) * buf.getSample (0, n);
+        }
+        return 10.0 * std::log10 (sumSq / (double) count);
+    };
+    auto droop = [&] (int factor, float driveDb, double hz)
+    { return responseDb (factor, driveDb, hz) - responseDb (factor, 0.0f, hz); };
+
+    const double off10  = droop (0, 0.07f, 10000.0);
+    const double off20  = droop (0, 0.07f, 20000.0);
+    const double off10b = droop (0, 3.0f,  10000.0);
+    const double x4At20 = droop (2, 0.07f, 20000.0);
+    check (std::abs (off10 - (-2.01)) < 0.05 && std::abs (off20 - (-11.74)) < 0.1,
+           "clipDroop: at OS Off a barely-non-zero drive costs -2.0 dB at 10 kHz and -11.7 dB at 20 kHz (48 kHz)");
+    check (std::abs (off10b - off10) < 0.01,
+           "clipDroop: the droop does not depend on the drive amount — it is the kernel, not the curve");
+    check (x4At20 > -0.6,
+           "clipDroop: 4x oversampling cuts it to under 0.6 dB at 20 kHz, as the manual says");
+}
+
+// ---------------------------------------------------------------------------
 // inv 5's measurement: the SAME driven-clipper stimulus as the ADAA test,
 // with 4x oversampling vs Off — the folded harmonics drop further (numbers
 // recorded per C2).
@@ -7109,6 +7164,7 @@ int main()
     testTruePeakModeCapsTheWindowNotTheLatency();
     testDuckWrapsTruePeakLatch();
     testTruePeakModeIsExactBelowTheCeiling();
+    testClipDriveDroopIsTheDisclosedOne();
     testOsReducesAliasing();
     testDitherModes();
     testDuckWrapsDiscreteRewires();
