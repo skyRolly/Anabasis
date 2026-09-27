@@ -1,7 +1,6 @@
 #pragma once
 
-#include "TruePeak.h"
-#include <juce_core/juce_core.h>   // the ownership guard macro (CODE_STYLE §Structure)
+#include "ClampTruePeakDetector.h"
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -25,8 +24,8 @@
 //    half of item 3 was never built and TP mode ran the OFF path: a sample
 //    clip leaves inter-sample overs it never measured, measured at up to
 //    +4.8 dB over the ceiling (audit finding DSP-001). The estimate is the
-//    ClampTruePeakDetector's (TruePeak.h), not the meter's alone: true-peak
-//    meters disagree by up to ~1.4 dB on HF-rich programme, so the clamp
+//    ClampTruePeakDetector's (ClampTruePeakDetector.h), not the meter's alone:
+//    true-peak meters disagree by up to ~1.4 dB on HF-rich programme, so the clamp
 //    holds the ceiling on the largest of three readings — an accurate 32-tap
 //    interpolator (quarter points refined by a parabola), the product's own
 //    4× meter, and the BS.1770 Annex 2 example filter.
@@ -124,7 +123,7 @@ public:
     {
         attack = attackFor (sampleRate);
         delay  = attack + kRequirementLead - 1;
-        const double relSamples = juce::jmax (1.0, kReleaseMs * 0.001 * sampleRate);
+        const double relSamples = truepeak::max2 (1.0, kReleaseMs * 0.001 * sampleRate);
         releaseKeep = (float) std::exp (-1.0 / relSamples);
 
         for (auto& a : audio)
@@ -164,7 +163,9 @@ public:
     // then hard-clipped against that ceiling. Allocation-free.
     void processFrameTruePeak (float* frame, int numCh, float ceilingLinear) noexcept
     {
-        const int nCh  = juce::jmin (numCh, kMaxChannels);
+        const int nCh  = truepeak::min2 (numCh, kMaxChannels);
+        if (nCh <= 0)
+            return;                     // an empty frame: nothing to delay, read or emit
         const int size = delay + 1;
 
         // The ring's pre-roll carries no ceiling of its own: adopt the first
@@ -185,12 +186,12 @@ public:
         constexpr int lag = ClampTruePeakDetector::kLag;
         float tp[kMaxChannels] = {};
         estimator.processFrame (frame, nCh, tp);
-        const float segCeil = juce::jmin (ceilings[(size_t) wrap (writePos - lag, size)],
-                                          ceilings[(size_t) wrap (writePos - lag + 1, size)]);
+        const float segCeil = truepeak::min2 (ceilings[(size_t) wrap (writePos - lag, size)],
+                                              ceilings[(size_t) wrap (writePos - lag + 1, size)]);
         float r = 1.0f;
         for (int ch = 0; ch < nCh; ++ch)
             if (tp[ch] > segCeil)                 // NaN fails this: see the header
-                r = juce::jmin (r, segCeil / tp[ch]);
+                r = truepeak::min2 (r, segCeil / tp[ch]);
 
         // THE THREE WINDOWS BELOW ARE SCANNED ONLY WHILE THEY HOLD SOMETHING
         // BELOW 1. Each ring keeps a count of its entries under unity, so the
@@ -239,7 +240,7 @@ public:
         for (int ch = 0; ch < nCh; ++ch)
         {
             float y = audio[(size_t) ch][(size_t) readPos];
-            if (! juce::exactlyEqual (gain, 1.0f))
+            if (gain < 1.0f)                      // gain ≤ 1 always: this IS "≠ 1"
                 y *= gain;
             frame[ch] = processSample (y, c);     // the backstop
         }
@@ -252,7 +253,7 @@ public:
 private:
     static int attackFor (double sampleRate) noexcept
     {
-        return juce::jmax (kMinAttackSamples, (int) std::lround (kAttackMs * 0.001 * sampleRate));
+        return truepeak::max2 (kMinAttackSamples, (int) std::lround (kAttackMs * 0.001 * sampleRate));
     }
 
     static int wrap (int i, int size) noexcept
@@ -274,7 +275,7 @@ private:
             return 1.0f;
         float lo = 1.0f;
         for (const float e : ring)
-            lo = juce::jmin (lo, e);
+            lo = truepeak::min2 (lo, e);
         return lo;
     }
 
@@ -287,7 +288,13 @@ private:
     float gain = 1.0f, reduction = 0.0f, releaseKeep = 0.0f;
     bool  ceilingsPrimed = false;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CeilingClamp)
+public:
+    // Non-copyable, spelled out rather than through JUCE's ownership macro:
+    // this is one of the engine's JUCE-free leaf headers (ClampTruePeakDetector.h
+    // says why), and `tests/realtime_effects.cpp` compiles it with no JUCE on
+    // the include path.
+    CeilingClamp (const CeilingClamp&) = delete;
+    CeilingClamp& operator= (const CeilingClamp&) = delete;
 };
 
 } // namespace anabasis

@@ -23,13 +23,23 @@
 //  ADR-0029 records the decision not to enable it build-wide.
 //
 //  What IS clean is the layer below JUCE. This engine has a genuinely JUCE-free
-//  leaf layer -- `CeilingClamp.h`, `ScopeBuffer.h`, `Latency.h` and
-//  `EngineParameters.h`, four headers that include no JUCE module at all -- and
-//  those bodies are pure arithmetic over pre-sized state. Measured on the pinned
-//  Clang 22.1.8: the driver below compiles with ZERO `-Wfunction-effects`
-//  diagnostics, while the `ANABASIS_EFFECTS_CANARY` block fails with "function
-//  with 'nonblocking' attribute must not call non-'nonblocking' function".
-//  Clean signal, and it fires -- which is the bar a gate has to pass.
+//  leaf layer -- `CeilingClamp.h`, `ClampTruePeakDetector.h`, `ScopeBuffer.h`,
+//  `Latency.h` and `EngineParameters.h`, five headers that include no JUCE
+//  module at all -- and those bodies are pure arithmetic over pre-sized state.
+//  Measured on the pinned Clang 22.1.8: the driver below compiles with ZERO
+//  `-Wfunction-effects` diagnostics, while the `ANABASIS_EFFECTS_CANARY` block
+//  fails with "function with 'nonblocking' attribute must not call
+//  non-'nonblocking' function". Clean signal, and it fires -- which is the bar a
+//  gate has to pass.
+//
+//  The ceiling stage's TRUE-PEAK half joined in 0.2.13 (ADR-0041): its path and
+//  its detector. It reached this gate the hard way -- the first cut kept the
+//  detector in TruePeak.h, which includes juce_audio_basics, and this file then
+//  failed to compile at all (the `realtime` job, PR #42). The detector now lives
+//  in its own JUCE-free header, and a violation seeded inside it is reported
+//  here at the driver's call to `processFrameTruePeak` (the PR #42 review
+//  worklog) -- the call graph is followed into the new code, not stopped at its
+//  door.
 //
 //  SCOPE, deliberately narrow: the JUCE-free first-party leaves only. Adding a
 //  header that reaches JUCE reintroduces the noise above, so the include list
@@ -91,6 +101,7 @@ namespace
     // diagnoses nothing. The helper that fails is the one whose body blocks.
     void leafAudioPath (float* l, float* r, int n,
                         const anabasis::CeilingClamp& clamp,
+                        anabasis::CeilingClamp& tpClamp,
                         anabasis::ScopeBuffer& scope,
                         const anabasis::EngineParameters& params,
                         double sampleRate) noexcept ANABASIS_NONBLOCKING
@@ -101,6 +112,17 @@ namespace
         {
             l[i] = clamp.processSample (l[i], ceilingLinear);
             r[i] = clamp.processSample (r[i], ceilingLinear);
+        }
+
+        // ADR-0041's true-peak path, per frame, exactly as stage E calls it —
+        // the clamp's detector (ClampTruePeakDetector.h) and its ring
+        // arithmetic.
+        for (int i = 0; i < n; ++i)
+        {
+            float frame[2] = { l[i], r[i] };
+            tpClamp.processFrameTruePeak (frame, 2, ceilingLinear);
+            l[i] = frame[0];
+            r[i] = frame[1];
         }
 
         // The latency arithmetic the engine runs per block to decide whether the
