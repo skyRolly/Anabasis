@@ -2377,7 +2377,11 @@ static void testCeilingUnderOs()
 // lag the clamp's timing is built on — an impulse reads exactly 1.0 sixteen
 // steps later; (c) the canonical +3 dB vector reads at its true peak; and (d)
 // the reading is never below the product meter's reading of the same segment,
-// which is the property that keeps the dBTP display under the ceiling.
+// which is the property that keeps the dBTP display under the ceiling; and (e)
+// never below the BS.1770 Annex 2 filter's reading of it either — the second
+// of the two meters "dBTP" is DEFINED on (DSP_POLICY invariant 4, ADR-0043),
+// read here by a loop of its own over the published table rather than through
+// the detector's folded evaluation of it.
 static void testClampTruePeakDetector()
 {
     using D = anabasis::ClampTruePeakDetector;
@@ -2424,9 +2428,10 @@ static void testClampTruePeakDetector()
     det.reset();
     anabasis::TruePeakEstimator meter;
     meter.prepare();
-    std::vector<float> meterReads;
+    std::vector<float> meterReads, annex2Reads;
+    float hist[12] = {};
     uint32_t rng = 0xC0FFEEu;
-    bool neverBelow = true;
+    bool neverBelow = true, neverBelowAnnex2 = true;
     for (int n = 0; n < 20000; ++n)
     {
         rng = rng * 1664525u + 1013904223u;
@@ -2436,14 +2441,30 @@ static void testClampTruePeakDetector()
         det.processFrame (x, 2, a);
         meter.processFrame (x, 2, b);
         meterReads.push_back (b[0]);
-        // the meter describes segment n − 6, the detector n − 16: compare like
-        // with like. The detector evaluates the meter's phases FOLDED (pair
-        // sums over mirrored taps), so the two agree to rounding, not to the
-        // bit: 1e-6 relative is 0.00001 dB.
+        for (int k = 11; k > 0; --k)
+            hist[k] = hist[k - 1];
+        hist[0] = v;
+        float annex2 = 0.0f;
+        for (const auto& phase : t)
+        {
+            float acc = 0.0f;
+            for (int k = 0; k < 12; ++k)
+                acc += phase[k] * hist[k];
+            annex2 = juce::jmax (annex2, std::abs (acc));
+        }
+        annex2Reads.push_back (annex2);
+        // both meters describe segment n − 6, the detector n − 16: compare like
+        // with like. The detector evaluates the phases FOLDED (pair sums over
+        // mirrored taps), so they agree to rounding, not to the bit: 1e-6
+        // relative is 0.00001 dB.
         if (n >= 10 && a[0] < meterReads[(size_t) (n - 10)] * (1.0f - 1.0e-6f))
             neverBelow = false;
+        if (n >= 10 && a[0] < annex2Reads[(size_t) (n - 10)] * (1.0f - 1.0e-6f))
+            neverBelowAnnex2 = false;
     }
     check (neverBelow, "clampDetector: never reads a segment lower than the product meter reads it");
+    check (neverBelowAnnex2,
+           "clampDetector: never reads a segment lower than the BS.1770 Annex 2 filter reads it");
 }
 
 // ---------------------------------------------------------------------------
@@ -2556,15 +2577,17 @@ static void testCeilingClampTruePeakPath()
 // stayed green while TP-mode renders measured up to +4.8 dB over on main
 // (ed06ad0) with the same estimator this test reads.
 //
-// TWO YARDSTICKS, the policy's own 0.1 dB on each (not a new tolerance): the
-// product's BS.1770-4 estimator on the output — what the dBTP display reads —
-// and the order-48 example filter of BS.1770 Annex 2, the Recommendation's
-// own meter. They disagree with each other by up to ~1.4 dB on HF-rich
-// programme, which is why the clamp holds the ceiling on both (and on an
-// accurate interpolator — ClampTruePeakDetector). What neither resolves is
-// recorded, not hidden: a long-kernel reference still reads content in the
-// last few percent below Nyquist higher (KNOWN_ISSUES KI-020, measured in the
-// 2026-09-27 worklog) — the yardstick question the audit put to the owner.
+// THE TWO METERS THAT DEFINE dBTP (DSP_POLICY invariant 4, ADR-0043), the
+// policy's own 0.1 dB on each (not a new tolerance), each counted on its own
+// so a failure names its meter: the product's BS.1770-4 estimator on the
+// output — what the dBTP display reads — and the order-48 example filter of
+// BS.1770 Annex 2, the Recommendation's own meter. They disagree with each
+// other by up to ~1.4 dB on HF-rich programme, which is why the clamp holds
+// the ceiling on both (and on an accurate interpolator — ClampTruePeakDetector).
+// libebur128 and a long-kernel reference are REFERENCE and compatibility
+// measurements, not the definition: they still read content in the last few
+// percent below Nyquist higher (KNOWN_ISSUES KI-020, TEST_REPORT, measured in
+// the 2026-09-27 worklog) and are recorded there, not asserted here.
 //
 // COVERAGE, and why each axis is here:
 //  • every OS cell (Off, 2×/4×/8×/16× × minimum/linear) and the Force Max
@@ -2777,13 +2800,13 @@ static void testTruePeakModeHoldsTheCeiling()
                            { 4, 1, false }, { 1, 1, true } };   // the last: Force Max bounce at 16×
 
     float worst = -100.0f, worstHot = -100.0f, worstShelf = -100.0f, worstRates = -100.0f;
-    int runs = 0, over = 0;
+    int runs = 0, overMeter = 0, overAnnex2 = 0;
     auto note = [&] (tpceiling::Over o, float& w)
     {
-        const float both = juce::jmax (o.meterDb, o.annex2Db);
-        w = juce::jmax (w, both);
+        w = juce::jmax (w, o.meterDb, o.annex2Db);
         ++runs;
-        if (both > 0.1f) ++over;
+        if (o.meterDb > 0.1f) ++overMeter;
+        if (o.annex2Db > 0.1f) ++overAnnex2;
     };
 
     for (const auto& c : cells)
@@ -2800,8 +2823,11 @@ static void testTruePeakModeHoldsTheCeiling()
             for (const int factor : { 0, 2 })
                 note (tpceiling::overDb (sr, kind, hot, factor, 1, false, 0.0f, 0.3f), worstRates);
 
-    check (over == 0 && runs == 123,
-           "tpCeiling: no TP-mode render exceeds the ceiling by more than 0.1 dB on either meter (123 runs)");
+    check (runs == 123, "tpCeiling: (premise) all 123 TP-mode configurations ran");
+    check (overMeter == 0,
+           "tpCeiling: invariant 4 (ADR-0043) — no TP-mode render reads > 0.1 dB over the ceiling on the product dBTP meter");
+    check (overAnnex2 == 0,
+           "tpCeiling: invariant 4 (ADR-0043) — no TP-mode render reads > 0.1 dB over the ceiling on the BS.1770 Annex 2 filter");
     check (worst <= 0.1f, "tpCeiling: Loudness 50 % at the -0.1 dBTP default, every OS cell + Force Max");
     check (worstHot <= 0.1f, "tpCeiling: Loudness 100 %, Punchy, Transients 100 %, every OS cell + Force Max");
     check (worstShelf <= 0.1f, "tpCeiling: a +12 dB Post shelf into the clamp");
@@ -2812,9 +2838,10 @@ static void testTruePeakModeHoldsTheCeiling()
     // that "passed" by muting would fail this instead.
     check (worst > -1.0f && worstHot > -1.0f,
            "tpCeiling: (premise) the renders really reach the ceiling — the guard is not vacuous");
-    if (over > 0 || worst > 0.1f || worstHot > 0.1f || worstShelf > 0.1f || worstRates > 0.1f)
-        std::printf ("       tpCeiling: %d of %d runs over; worst %+.3f / %+.3f / %+.3f / %+.3f dB\n",
-                     over, runs, worst, worstHot, worstShelf, worstRates);
+    if (overMeter > 0 || overAnnex2 > 0 || worst > 0.1f || worstHot > 0.1f || worstShelf > 0.1f
+        || worstRates > 0.1f)
+        std::printf ("       tpCeiling: %d / %d of %d runs over (product meter / Annex 2); worst %+.3f / %+.3f / %+.3f / %+.3f dB\n",
+                     overMeter, overAnnex2, runs, worst, worstHot, worstShelf, worstRates);
 }
 
 // ---------------------------------------------------------------------------
@@ -2945,24 +2972,24 @@ static void testTruePeakEngagementHoldsTheCeiling()
         { 48000.0, 512,  97, 0, 0, 1,   0 },  // a short first host block: the toggle lands off-grid
         { 44100.0, 512, 512, 0, 0, 4, 211 }, { 96000.0, 512, 512, 2, 1, 1,   0 },
     };
-    float worstPost = -100.0f, weakestPremise = 100.0f;
-    int over = 0;
+    float weakestPremise = 100.0f;
+    int overMeter = 0, overAnnex2 = 0;
     for (const auto& r : runs)
     {
         const auto e = tpceiling::engageDuringPlayback (r.sr, r.block, r.firstBlock, r.factor, r.phase,
                                                         r.kind, r.skip, hot, 12.0f);
         const float post = juce::jmax (e.postMeterDb, e.postAnnex2Db);
-        worstPost = juce::jmax (worstPost, post);
         weakestPremise = juce::jmin (weakestPremise, e.preOverDb);
+        if (e.postMeterDb > 0.1f) ++overMeter;
+        if (e.postAnnex2Db > 0.1f) ++overAnnex2;
         if (post > 0.1f)
-        {
-            ++over;
-            std::printf ("       tpEngage: %.0f Hz / %d / OS %d.%d / kind %d / skip %d: %+.3f dB after the toggle\n",
-                         r.sr, r.block, r.factor, r.phase, r.kind, r.skip, post);
-        }
+            std::printf ("       tpEngage: %.0f Hz / %d / OS %d.%d / kind %d / skip %d: %+.3f / %+.3f dB after the toggle (product meter / Annex 2)\n",
+                         r.sr, r.block, r.factor, r.phase, r.kind, r.skip, e.postMeterDb, e.postAnnex2Db);
     }
-    check (over == 0 && worstPost <= 0.1f,
-           "tpEngage: no reading at or after a mid-stream TP-on toggle exceeds the ceiling by > 0.1 dB");
+    check (overMeter == 0,
+           "tpEngage: invariant 4 (ADR-0043) from the toggle on — no product-meter reading after a mid-stream TP-on toggle is > 0.1 dB over");
+    check (overAnnex2 == 0,
+           "tpEngage: invariant 4 (ADR-0043) from the toggle on — no Annex 2 reading after a mid-stream TP-on toggle is > 0.1 dB over");
     check (weakestPremise > 1.0f,
            "tpEngage: (premise) the TP-off audio at every toggle carried overs of more than +1 dB");
 

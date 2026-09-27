@@ -92,7 +92,7 @@ stage exists; evidence citations are added as the modules land (constraint C7).
 4. **The output never exceeds the ceiling.** A final safety clamp sits after the limiter and
    before dither, and holds **under every condition** — any input, any parameter combination, any
    automation rate, any sample rate, during and after every transition. Tolerance ≤ 0.1 dBTP in
-   true-peak mode.
+   true-peak mode, dBTP as defined below.
    **Scope: the PROGRAMME path** — the processed signal, and everything an offline render can
    emit. The two monitor-only audition legs are outside it by the same reading that lets bypass
    carry the unclamped dry signal (invariant 7): bypass monitoring plays the input as-is, and
@@ -113,14 +113,23 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    right. Guarded by: `testOutputNeverExceedsCeiling` (hostile-input sweep) and, for the true-peak
    tolerance, `testTruePeakModeHoldsTheCeiling` — every oversampling cell and the Force Max bounce,
    five programme shapes, two operating points, a +12 dB Post shelf and two further sample rates,
-   read on the product meter AND an independently implemented BS.1770 Annex 2 meter (ADR-0041);
+   read on the product meter AND an independently implemented BS.1770 Annex 2 meter (ADR-0041) — the
+   two meters the definition below names, each checked on its own;
    and, for the moment the promise is made, `testTruePeakEngagementHoldsTheCeiling` — true-peak mode
    engaged MID-STREAM on hostile programme, every reading from the toggle on (ADR-0041 decision 5,
    revised in the PR #42 review).
-   **Which yardstick "dBTP" is measured on is recorded, not assumed:** those two meters are the
-   guard; a long-kernel reference still reads a residual on programme with strong content in the
-   last few percent below Nyquist (`KNOWN_ISSUES.md` KI-020), and the choice between them is the
-   owner's (audit finding DSP-001, sub-item (a)).
+   **What "dBTP" means in this promise is defined, not assumed** (ADR-0043, 2026-09-27; audit
+   finding DSP-001 sub-item (a)). In true-peak mode the tolerance applies to each of two meters
+   reading the output: (i) the product's own dBTP estimator, `TruePeakEstimator` (4× polyphase,
+   12 taps per phase, Blackman-windowed sinc), the meter the plug-in displays; and (ii) the example
+   FIR of ITU-R BS.1770-5 Annex 2 (order 48, four phases; identical in BS.1770-4), its four phases
+   applied at every sample rate. Neither may read the output more than 0.1 dB above the ceiling.
+   Other true-peak meters — libebur128's interpolator, a long-kernel reference — are reference and
+   compatibility measurements, recorded (`TEST_REPORT.md`, `KNOWN_ISSUES.md` KI-020) and not
+   asserted; near Nyquist every finite interpolator reads a different peak, so a delivery checked on
+   another meter can read a residual. Removing a meter from this definition weakens the promise and
+   is an Architecture Review Gate item; adding one is an ADR amendment.
+   *(Until 2026-09-27 this sentence recorded the yardstick as the owner's open choice.)*
 
 5. **Oversampling wraps the nonlinear stages; linear stages stay at base rate.** The region is
    **Clipper/Saturation → Limiter**. The EQ, the compressor, the **ceiling

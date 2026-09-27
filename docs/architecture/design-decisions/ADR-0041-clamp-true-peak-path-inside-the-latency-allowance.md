@@ -2,8 +2,9 @@
 
 > **✅ RATIFIED — THE ARCHITECTURE REVIEW GATE IS CLEARED (2026-09-27).** The owner accepted this
 > record as revised in the PR #42 review, and settled on the same day the question its decision 7
-> left open — which meter "dBTP" is defined on — as its own record, ADR-0043 (the product meter and
-> the BS.1770 Annex 2 filter). How it arrived stays in the record, because
+> left open — which meter "dBTP" is defined on — as its own record,
+> [ADR-0043](ADR-0043-dbtp-is-defined-on-the-product-meter-and-the-annex-2-filter.md) (the product
+> meter and the BS.1770 Annex 2 filter). How it arrived stays in the record, because
 > that is the half worth keeping. This record implements a decision that was already Accepted —
 > ADR-0006 items 2 and 3, the clamp's own true-peak estimate driving its gain — and that the code
 > never carried out (audit finding **DSP-001**,

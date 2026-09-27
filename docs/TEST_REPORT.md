@@ -84,11 +84,13 @@ libebur128 32 over, worst +0.18 dB. Every cell measured: 0 of 2736 over on eithe
 True-peak mode OFF: **222 of 222** configurations are bit-identical to `main` (output hash). Level:
 median RMS change −0.06 dB over the main 1920; the large drops (to −6.6 dB) are the +12 dB
 Post-shelf cases that rendered ~+4.7 dB true-peak overs before. The residual on the last two meters
-is content in the top few percent below Nyquist (`KNOWN_ISSUES.md` KI-020) — which of these meters
-defines the promise is the owner's decision.
+is content in the top few percent below Nyquist (`KNOWN_ISSUES.md` KI-020). **The promise is
+defined on the first two** — the product meter and the Annex 2 filter (`DSP_POLICY.md` invariant 4,
+ADR-0043, 2026-09-27); libebur128 and the long-kernel reference are reference/compatibility
+measurements, recorded here and not asserted.
 
 **Asserted by** `testTruePeakModeHoldsTheCeiling` (123 runs on the product meter and an independent
-Annex 2 meter, ≤ 0.1 dB; measured worst +0.001 dB — and on `main` 102 of 123 runs over, worst
+Annex 2 meter — the two defining meters, each checked on its own since 2026-09-27 — ≤ 0.1 dB; measured worst +0.001 dB — and on `main` 102 of 123 runs over, worst
 +6.04 dB), `testCeilingClampTruePeakPath` (the canonical +3 dB vector held within 0.1 dB at the stage).
 Environment: the machine and compiler of the performance section below.
 

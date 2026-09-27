@@ -457,6 +457,24 @@ rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStradd
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
 
+**Addendum (2026-09-27, Phase 0 closure, still 0.2.13) — the delivery-meter definition: Option 1,
+ADR-0043.** The owner's instruction was to decide from the existing evidence and keep the implemented
+definition if it best matched the accepted contract; it did, so no code or sample moved. Rows engaged:
+**DSP algorithm / policy** — ADR-0043 (new, Accepted; enacts `DSP_POLICY.md` invariant 4's definition
+as prescribed text), ADR-0041's banner links it, ADR_INDEX (its row and an amendment-registry row
+against ADR-0041 decision 7), `DSP_POLICY.md` invariant 4 (the tolerance sentence, the guard sentence
+and the "recorded, not assumed" yardstick sentence replaced by the definition). **Metering** —
+`TEST_REPORT.md` (which meters define the promise), `USER_MANUAL.md` §6 (the two meters named as the
+definition; the reference residuals and KI-020's workaround stated), KNOWN_ISSUES KI-020 (status: a
+documented limitation, no longer a pending decision; still open for the reference residuals and
+VIS-002), `FUTURE_RISKS.md` RISK-003. **New/changed test** — `testTruePeakModeHoldsTheCeiling` and
+`testTruePeakEngagementHoldsTheCeiling` count the two defining meters separately (a failure now names
+its meter; +2 checks), `testClampTruePeakDetector` gains the missing lower bound against the Annex 2
+filter (+1 check) — the three new checks each fail when the detector's Annex 2 reading is removed,
+while the product-meter checks keep passing, which is the discrimination the split exists for;
+`procedures/TESTING.md`'s mandated-stimulus rows. The row's `DSP_ALGORITHMS.md` is still planned
+(`REPOSITORY_MAP.md`). **Drift:** none found.
+
 **Addendum (2026-09-27, Phase 0 closure, still 0.2.13) — ADR-0041 and ADR-0042 accepted, recorded
 in the four places.** The owner accepted both records on 2026-09-27 ("Accept Phase 0 Decisions, Close
 PR #42"). No code moved except one comment; the round is the status change and every document that

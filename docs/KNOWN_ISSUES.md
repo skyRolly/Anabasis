@@ -1441,14 +1441,20 @@ Evidence [Verified]:
 ### KI-020 — True-peak meters disagree near Nyquist, so "≤ 0.1 dBTP" is only as exact as the meter it is read on (2026-09-27)
 
 **Severity:** Medium (delivery-spec exposure on programme with strong top-octave content)
-**Status:** Confirmed — the yardstick is an **owner decision** (audit finding DSP-001, sub-item (a));
-the measurement below is what the decision is made on
+**Status:** Confirmed, **documented limitation** — the yardstick is **decided (2026-09-27,
+[ADR-0043](architecture/design-decisions/ADR-0043-dbtp-is-defined-on-the-product-meter-and-the-annex-2-filter.md))**:
+the ≤ 0.1 dBTP promise is defined on the product meter and the BS.1770 Annex 2 filter
+(`DSP_POLICY.md` invariant 4), so the libebur128 and long-kernel residuals below are
+reference/compatibility measurements the product does not claim. The entry stays open for them and
+for the STATISTICS TP row (VIS-002). *(Until 2026-09-27 the yardstick was an owner decision, audit
+finding DSP-001 sub-item (a); the measurement below is what it was made on.)*
 **Affects:** true-peak mode, all platforms/formats; worst on synthetic or heavily clipped programme
 with energy in the last few percent below Nyquist, and after a large Post-EQ high shelf
 
 "dBTP" is the maximum of the continuous waveform, and every meter approximates it. On the engine's
 TP-mode output (ADR-0041, Accepted 2026-09-27) the ceiling holds on the product's own dBTP meter and on the
-BS.1770 Annex 2 example filter, the two readings the clamp is built to hold — worst **+0.005 dB**
+BS.1770 Annex 2 example filter — the two meters "dBTP" is defined on, and the two readings the clamp
+is built to hold — worst **+0.005 dB**
 over 2736 TP-mode configurations covering every oversampling cell. Two further meters still read a
 residual:
 
@@ -1477,9 +1483,10 @@ the Annex 2 example filter — the same property, on the display side (DSP_POLIC
 **Workaround:** for a delivery checked on a long-kernel meter, set the ceiling ~1 dB below the spec
 when the programme is clipped or HF-heavy; oversampling reduces the near-Nyquist content the clamp
 has to catch.
-**Cause:** finite interpolators, each accurate to a different frequency. Options for the owner, with
-their measured cost (worklog 2026-09-27): define the promise on the product meter + Annex 2 (today's
-guard); lengthen the clamp's accurate kernel to 64 taps (measured on the 16-phase prototype: reference
+**Cause:** finite interpolators, each accurate to a different frequency. The options weighed, with
+their measured cost (worklog 2026-09-27; ADR-0043 took the first on 2026-09-27, and the others stay
+available as an amendment of that record): define the promise on the product meter + Annex 2 (the
+guard, now the definition); lengthen the clamp's accurate kernel to 64 taps (measured on the 16-phase prototype: reference
 residual +0.93 → +0.36 dB on the same subset, at twice its lookahead share and CPU); also hold
 libebur128's own interpolator (a prototype measured in the PR #42 review: libebur128 0 of 2736 over,
 worst +0.004 dB, no latency change, the long-kernel reference unchanged at +0.98 dB, ~30 % more
@@ -1489,11 +1496,13 @@ with the clamp.
 Evidence [Verified]:
 - Source: `src/dsp/TruePeak.h` (`TruePeakEstimator`), `src/dsp/ClampTruePeakDetector.h`
   (`ClampTruePeakDetector`, moved there in the PR #42 review with no change to its output)
-- Test:   `testTruePeakModeHoldsTheCeiling` (the two held meters); the four-meter matrix is in the
+- Test:   `testTruePeakModeHoldsTheCeiling` and `testTruePeakEngagementHoldsTheCeiling` (the two
+  DEFINING meters, each checked on its own); the four-meter matrix is in the
   2026-09-27 worklog, not in the suite (libebur128 and the reference are external to the build)
-- Decision record: `docs/reports/2026-09-27-phase0-owner-decisions.md` §1 lays the definitions out
-  side by side with their measured consequences, for the owner
-- Commit: this round's PR
+- Decision: ADR-0043 (enacts `DSP_POLICY.md` invariant 4's definition); decision material:
+  `docs/reports/2026-09-27-phase0-owner-decisions.md` §1, the definitions side by side with their
+  measured consequences
+- Commit: PR #42
 
 ### KI-021 — A factory preset turns TP, Dither and Noise Shaping off, and LOCK holds only the ceiling's NUMBER (2026-09-27)
 

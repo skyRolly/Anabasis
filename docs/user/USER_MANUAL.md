@@ -362,8 +362,11 @@ Input Gain → EQ (Pre position) → Compressor → Clipper + Color
 - The **ceiling clamp is always last before dither** — whatever you do upstream
   (including a boosted Post EQ), the output does not exceed the ceiling: its sample peaks with
   **TP** off, its true peaks with **TP** on, to within 0.1 dB on the plug-in's own dBTP meter and
-  on the BS.1770 reference filter. True-peak meters differ in the top few percent below Nyquist,
-  so a longer-kernel meter can read a little more on very bright, heavily clipped material
+  on the BS.1770 reference filter — the two meters the promise is defined on. True-peak meters
+  differ in the top few percent below Nyquist, so another meter can read a little more on very
+  bright, heavily clipped material: up to ~0.2 dB on libebur128-based meters and up to ~1 dB on a
+  long-kernel reference in the tests. For a delivery checked on such a meter, set the ceiling about
+  1 dB below the spec for that kind of material, or use oversampling
   ([`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) KI-020).
 - **Latency is constant by design**: Anabasis reports a fixed lookahead allowance
   (10 ms) plus the current oversampling filter latency. Moving the Lookahead knob,
