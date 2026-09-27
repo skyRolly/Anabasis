@@ -294,7 +294,10 @@ Evidence [Verified]:
 **Severity:** Low
 **Status:** Confirmed (fix deferred — needs a designed engage crossfade, see below)
 **Affects:** all platforms, all formats — a direct `clipDrive` move (or a
-Character-macro move that carries it) across the 0 dB boundary during playback
+Loudness-macro move that carries it: the macro's drive curve is 0 dB below Loudness 30 % and
+rises from there — `MacroEngine.h` `clipDriveDb`) across the 0 dB boundary during playback.
+*(Corrected 2026-09-27: this line said "Character-macro"; the Character macro sets the colour
+depth, not the drive — audit finding DSP-004.)*
 
 The clipper's sub-block is skipped **exactly** at 0 dB drive, which is the
 bit-identity contract. One sample later, with the drive smoother barely off
@@ -310,6 +313,31 @@ in reverse when drive returns to exactly 0.
 
 Not exposed on the bulk-swap paths — A/B, preset and session loads are covered
 by the §2.8 duck. The reachable case is a knob or automation move.
+
+**The steady-state half — the droop stays for as long as the drive is non-zero, whatever its
+amount (audit finding DSP-004, measured 2026-09-27).** The engage step above is the transition;
+the `(1 + z⁻¹)/2` response it switches to is also what the stage applies to the whole programme,
+in the clipper's linear region, the entire time the drive is off zero — and at the default
+oversampling (Off, Offline Follow, so the bounce too) that is the base rate. Measured on the real
+engine with a −30 dBFS sine (the clipper linear), response with a drive of 0.07 dB — the value the
+Loudness macro reaches at 30.5 % — or 3 dB (identical: the amount does not matter), relative to
+drive exactly 0:
+
+| Rate | Oversampling | 5 kHz | 10 kHz | 15 kHz | 16 kHz | 20 kHz |
+|---|---|---|---|---|---|---|
+| 48 kHz | Off | −0.47 dB | −2.01 dB | −5.11 dB | −6.02 dB | −11.74 dB |
+| 48 kHz | 2× | −0.12 dB | −0.47 dB | −1.09 dB | −1.25 dB | −2.01 dB |
+| 48 kHz | 4× | −0.03 dB | −0.12 dB | −0.26 dB | −0.30 dB | −0.47 dB |
+| 44.1 kHz | Off | −0.56 dB | −2.42 dB | −6.35 dB | −7.58 dB | −16.74 dB |
+| 44.1 kHz | 2× | −0.14 dB | −0.56 dB | −1.30 dB | −1.49 dB | −2.42 dB |
+| 44.1 kHz | 4× | −0.03 dB | −0.14 dB | −0.31 dB | −0.36 dB | −0.56 dB |
+
+It is the first-order ADAA kernel's own response, `cos(πf / (N·fs))` at N× oversampling, and it
+is by design (the ADAA trade recorded in `ClipSat.h`); what was missing is that nothing outside the
+code said so. **Workaround:** oversampling 4× (Settings) cuts it to ≤ 0.6 dB at 20 kHz; 2× leaves
+~2 dB there. A DSP remedy — a droop-compensating pre-emphasis on the driven branch, built together
+with this entry's engage ramp — or a non-Off oversampling default is an owner decision, not made
+here (the worklog of 2026-09-27 records the measurement and the options).
 
 **Workaround:** automate `clipDrive` from a small non-zero value rather than
 from exactly 0, or make the move while the transport is stopped.
@@ -336,9 +364,13 @@ Evidence [Verified]:
 ### KI-006 — A sample-rate change silently drops a frozen slot's adaptation from the AUDIO and the readout, while the SAVE keeps it
 
 **Severity:** Medium
-**Status:** Confirmed — **audio half only** (fix deferred: it is a Freeze-semantics decision, not a
-repair). The save half is CLOSED (round 38, corrected in 39, completed in 40); the heading above
-describes what is left, and it used to describe the reverse.
+**Status:** **Fix pending the owner's decision (2026-09-27)** — the audio half is implemented by
+**ADR-0042** (Proposed, behind the Freeze-semantics gate): with Freeze ON, the first block after a
+re-prepare brings the latched vector back into the audio and the readout, without moving the
+retained set or its generation. Pinned by `testAFrozenLatchSurvivesARePrepare` and
+`testPreparedStateAndSlotOwnership` case 4. When the owner accepts, this entry moves to
+`POSTMORTEMS.md`; until then the text below describes `main`. The save half is CLOSED (round 38,
+corrected in 39, completed in 40). *(Audit finding STATE-004.)*
 **Affects:** all platforms/formats. Trigger: Freeze ON with a latched trim
 vector, then any `prepareToPlay` — a host sample-rate or block-size change.
 
@@ -596,6 +628,17 @@ record.
    `resetToMacro()` does the same. No duck request was added — unlike a preset apply or an undo it
    rewires no discrete stage, and DSP invariant 8's click-free enumeration is about the bulk swaps
    that do. Item 7's Copy A→B, recorded here as the same shape, was settled in round 37.
+
+10. **An A/B switch into a freeze-ON slot that holds no `FROZEN_TRIMS` keeps the OUTGOING
+   slot's latch in the audio** (added 2026-09-27 from the audit's merged note on STATE-004;
+   code-inferred, not run). `applySlotToLive` stages a restore only when the incoming slot has a
+   vector, so nothing replaces the engine's applied vector, and Freeze holds it — while round 42's
+   ownership rule correctly makes the incoming slot save none. The audio and the saved record then
+   disagree, and a reload renders a different sound. The option consistent with round 42's
+   no-borrowing rule is to stage a never-latched (zero) vector on that ownership change; it is the
+   same Freeze-semantics owner call as item 1, and ADR-0042 (the re-prepare carry) deliberately
+   preserves this pre-existing shape rather than resolving it — `testAFrozenLatchDoesNotFollowTheSlotSwitch`
+   pins that the carry does not make it worse.
 
 **For the post-v0.1.0 fine review, alongside KI-006.**
 
@@ -1509,6 +1552,117 @@ Evidence [Verified]:
 - Test:   `testTheSpectrumsRendererNeverSeesHalfOfTwoFrames` (four placements, each counted),
   `testAResetThatLandsInsideATickNeverReachesTheScreen` (one forced straddle)
 - Related: ADR-0039 clause 12 (2026-09-07)
+
+### KI-020 — True-peak meters disagree near Nyquist, so "≤ 0.1 dBTP" is only as exact as the meter it is read on (2026-09-27)
+
+**Severity:** Medium (delivery-spec exposure on programme with strong top-octave content)
+**Status:** Confirmed — the yardstick is an **owner decision** (audit finding DSP-001, sub-item (a));
+the measurement below is what the decision is made on
+**Affects:** true-peak mode, all platforms/formats; worst on synthetic or heavily clipped programme
+with energy in the last few percent below Nyquist, and after a large Post-EQ high shelf
+
+"dBTP" is the maximum of the continuous waveform, and every meter approximates it. On the engine's
+TP-mode output (ADR-0041, Proposed) the ceiling holds on the product's own dBTP meter and on the
+BS.1770 Annex 2 example filter, the two readings the clamp is built to hold — worst **+0.005 dB**
+over 2736 TP-mode configurations covering every oversampling cell. Two further meters still read a
+residual:
+
+- **libebur128** (a widely used BS.1770 implementation, 49-tap Hann interpolator): above the
+  0.1 dB tolerance in **130 of 2736** configurations, worst **+0.18 dB** — HF-heavy and
+  transient-heavy synthetic programme (most at the linear-phase oversampling cells) and the
+  +6/+12 dB Post-shelf cases. An Ardour offline render of a hot test programme through the built
+  plug-in read +0.09 dB over on it — inside the tolerance.
+- **A 32×/128-tap Kaiser reference** (content up to ~0.47·fs): on a deliberately hot 56-configuration
+  subset, worst **+0.98 dB**. Filtering the output to 20 kHz first makes it read HIGHER, not lower —
+  the peak of near-Nyquist content depends on the reconstruction filter, which is why no meter is
+  "the" truth there.
+
+**The STATISTICS TP row can warn at the ceiling.** The row compares its hold with the ceiling
+exactly (ADR-0020 Amendment 2), and the held product-meter reading of a TP-mode render sits 0.001 to
+0.005 dB above the ceiling in 74 of the 2736 configurations (a gain that moves inside the
+interpolation window) — inside the tolerance, printed equal to the ceiling at two decimals, and red.
+Giving the row the SP row's half-print slack is the audit's VIS-002, an ADR-0020 amendment for the
+owner.
+
+Before ADR-0041 the same figures were +4.80 / +6.12 / +5.41 / +7.80 dB. The product meter itself
+(`TruePeakEstimator`, 12 taps under a Blackman window) reads HF-rich programme up to ~1.4 dB below
+the Annex 2 example filter — the same property, on the display side (DSP_POLICY invariant 11's
+≤ 0.1 dB meter accuracy holds for the fs/4 test vectors only; `TruePeak.h`'s header records it).
+
+**Workaround:** for a delivery checked on a long-kernel meter, set the ceiling ~1 dB below the spec
+when the programme is clipped or HF-heavy; oversampling reduces the near-Nyquist content the clamp
+has to catch.
+**Cause:** finite interpolators, each accurate to a different frequency. Options for the owner, with
+their measured cost (worklog 2026-09-27): define the promise on the product meter + Annex 2 (today's
+guard); lengthen the clamp's accurate kernel to 64 taps (measured on the 16-phase prototype: reference
+residual +0.93 → +0.36 dB on the same subset, at twice its lookahead share and CPU); or bring the meter's own estimator up to the
+accurate kernel so the display agrees with the clamp.
+
+Evidence [Verified]:
+- Source: `src/dsp/TruePeak.h` (`TruePeakEstimator`, `ClampTruePeakDetector`)
+- Test:   `testTruePeakModeHoldsTheCeiling` (the two held meters); the four-meter matrix is in the
+  2026-09-27 worklog, not in the suite (libebur128 and the reference are external to the build)
+- Commit: this round's PR
+
+### KI-021 — A factory preset turns TP, Dither and Noise Shaping off, and LOCK holds only the ceiling's NUMBER (2026-09-27)
+
+**Severity:** Medium
+**Status:** Confirmed — fix deferred to the owner (the core change widens ADR-0010's lockable set,
+which is `{ceiling}` by an Accepted decision whose option I — a wider set — was rejected; an ADR and
+the owner's sign-off are owed). Audit finding **STATE-002**.
+**Affects:** all platforms/formats; every factory preset, on every load path (menu, ‹ ›, re-applying
+Default), both views; a user preset saved with TP or Dither off does the same.
+
+A factory preset is applied as "defaults + the preset's intents" over every non-excluded parameter,
+and no factory table names `truePeakMode`, `dither` or `ditherShaping` — so every factory preset
+sets TP **off** (the default since ADR-0015), Dither **off** and Noise Shaping **off**. With LOCK on,
+the ceiling's VALUE is skipped and survives, but TP is not lockable: "−1.00 dBTP" becomes
+"−1.00 dB", a sample-peak limit, and true peaks may pass it. A chosen 16-bit dither is switched off
+without anything in the Simple view showing it. Undo restores all three.
+
+**Workaround:** after browsing presets, re-engage TP (and Dither / SHAPE) before a delivery render —
+or Undo back to the state you locked. The manual (§3.2, §7.3, the Presets FAQ) says so since this
+round.
+**Cause:** `PresetManager.cpp` factory apply (the defaults pass), `PluginParameters.cpp`'s exclusion
+predicate, and ADR-0010's lockable set `{ceiling}`. The owner's options, from the audit: LOCK also
+holds `truePeakMode` (a lockable-set change, ADR); a factory apply leaves the output rows untouched
+(a preset-contract change, `PARAMETER_COMPATIBILITY_POLICY` rule 6); a visible cue when a preset
+changes TP or dither (new UI copy, C8).
+
+Evidence [Verified]:
+- Source: `src/PresetManager.cpp` (factory apply), `src/PluginParameters.cpp` (exclusion predicate,
+  the three defaults)
+- Test:   none — no behaviour changed this round
+- Commit: this round's PR (documentation only)
+
+### KI-022 — Saving a preset over an existing name replaces that file without asking (2026-09-27)
+
+**Severity:** Medium (permanent loss of a user preset not loaded in the current session)
+**Status:** Confirmed, **documented behaviour** (USER_MANUAL §7.2: "Saving over an existing name
+overwrites it") — a change is deferred to the owner. Audit finding **UX-003**.
+**Affects:** all platforms/formats, the Save Preset panel
+
+The Save panel writes `<user preset folder>/<name>.anabasis` with no existence check. The name
+field opens prefilled with the current preset's name, all selected, so Return right after opening
+replaces the loaded user preset (the intended one-keystroke update); a typed name that already
+exists — or one that becomes an existing name once characters a file name cannot hold are stripped
+— replaces THAT preset, with no prompt.
+
+**Workaround:** keep copies of a preset library you care about (the folder is in §7.2); check the
+name before pressing Save.
+**Cause / why it is not changed here:** the silent overwrite is the inherited product-family
+convention (Anamorph's manual documents the same), and `BRAND_CONSISTENCY_CHECKLIST.md` §A lists the
+preset save flow as "must match" — a deviation needs an ADR and the owner's sign-off. There is no
+platform overwrite prompt to reuse (the panel is the product's own overlay, not a file dialog), and
+a confirm step needs new UI wording, which is the maintainer's (C8). The audit's recommended shape,
+for that decision: prompt on every existing-target collision except the unedited prefill of the
+currently selected user file, keyed on "the text was edited", guarded against Return auto-repeat.
+
+Evidence [Verified]:
+- Source: `src/gui/PluginEditor.cpp` (the Save panel's OK handler), `src/PresetManager.cpp`
+  (`writeTo` replaces unconditionally)
+- Test:   none — no behaviour changed this round
+- Commit: this round's PR (documentation only)
 
 ## Standing note for P1 onward
 

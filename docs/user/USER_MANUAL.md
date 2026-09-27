@@ -168,7 +168,7 @@ Universal gestures:
 | Control | Range | What it does |
 |---|---|---|
 | **Loudness** | 0 … 100 | The big knob: how hard the adaptive chain pushes (§4). At 0 it applies no push — but the Ceiling still holds, so anything already hotter than it is still limited. |
-| **Ceiling** | −20 … 0 dB, default −0.1 | The output limit — nothing leaves the plugin above it. Two toggles sit beside it. **TP** decides what the number *means*: off (the default) the limit is on **sample peaks** and the readout says `dB`; on, detection moves to the oversampled rate, inter-sample peaks are caught and the readout says `dBTP`. It is the same parameter as the Advanced limiter zone's TP switch (§3.3). **LOCK** keeps the ceiling fixed while you browse presets. |
+| **Ceiling** | −20 … 0 dB, default −0.1 | The output limit — nothing leaves the plugin above it. Two toggles sit beside it. **TP** decides what the number *means*: off (the default) the limit is on **sample peaks** and the readout says `dB`; on, the limiter detects true peaks and the final ceiling clamp holds the waveform *between* the samples too, at every Oversampling setting — inter-sample peaks are caught and the readout says `dBTP`. It is the same parameter as the Advanced limiter zone's TP switch (§3.3). **LOCK** keeps the ceiling's *value* fixed while you browse presets — the value only: a factory preset still turns TP (and Dither) off (§7.3). |
 | **Character** | 0 … 1 | Clean ↔ Color: how much of the push is done with saturation character rather than clean limiting. |
 | **Tone** | −1 … +1 | Dark ↔ bright tilt of the overall result. |
 
@@ -201,10 +201,13 @@ the automation lane keeps the full name, so "Ratio" here is "Comp Ratio" to your
   **Color** model (Clean / Tape / Tube / Transistor), Odd/Even harmonic balance, Color
   Tone, Color Depth, and **Dynamic Tame** — a programme-dependent high-frequency softener.
 - **LIMITER** — the true-peak lookahead limiter: Gain ("Limiter Gain" in automation — the
-  push into it), Lookahead (0.5–10 ms), Release ("Lim Release") with **AUTO**, **Style**
+  push into it), Lookahead (0.5–10 ms; with **TP** on, the longest settings engage a little less —
+  9.1 ms at the top at 48 kHz — because the ceiling's true-peak detection takes its share of the
+  fixed 10 ms, so the reported latency never changes; §6), Release ("Lim Release") with **AUTO**, **Style**
   (Transparent / Punchy / Loud), Stereo Link ("Limiter Stereo Link"), Transients (transient
-  preservation), **TP** (true-peak mode — **off by default**; on, detection moves to the
-  oversampled rate so inter-sample peaks are caught and the Ceiling becomes a dBTP limit),
+  preservation), **TP** (true-peak mode — **off by default**; on, the limiter detects true peaks
+  and the final ceiling clamp holds inter-sample peaks at every Oversampling setting, so the
+  Ceiling becomes a dBTP limit),
   and its two-lane L/R gain-reduction meter. The **SC HPF** (20–300 Hz) keeps low-frequency
   energy from pumping the **compressor's** detector; since 0.1.2 the limiter's detector is
   deliberately unfiltered — its job is the Ceiling, so it always sees the true peak, and a
@@ -226,7 +229,7 @@ The **STATISTICS** panel — the same eight readings in both Simple and Advanced
 | **M** | Momentary loudness, the newest 400 ms (BS.1770). |
 | **S** | Short-term loudness, the last 3 s. |
 | **I** | Integrated loudness over the whole measurement. Which revision it follows is a Settings choice (§3.5). |
-| **TP** | True peak in dBTP, max hold. It always measures true peak, whether or not the limiter's TP mode is engaged — so it is the honest check on a sample-peak ceiling, and it turns red above your Ceiling. |
+| **TP** | True peak in dBTP, max hold. It always measures true peak, whether or not the limiter's TP mode is engaged — so it is the honest check on a sample-peak ceiling, and it turns red above your Ceiling. With **TP** on it can turn red while it reads the Ceiling itself: the hold is then a few thousandths of a dB above it, well inside the 0.1 dB tolerance ([`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) KI-020). |
 | **SP** | Sample peak in dBFS, max hold. Read it against TP: the gap between them **is** the inter-sample overshoot. |
 | **RMS** | RMS level over a 50 ms Hann window. The reference is a Settings choice (§3.5). |
 | **LRA** | Loudness Range in LU (EBU R128 / Tech 3342) — how much the loudness moves across the programme. A steady master reads near 0; a dynamic one reads 8–15. |
@@ -279,7 +282,7 @@ Session state — saved with your DAW project, never in presets, invisible to au
 
 | Setting | Options | Notes |
 |---|---|---|
-| **Oversampling** | Off / 2× / 4× / 8× / 16× | For the nonlinear stages and true-peak accuracy. Higher = cleaner at higher CPU cost; adds host-compensated latency (§6). |
+| **Oversampling** | Off / 2× / 4× / 8× / 16× | For the nonlinear stages and true-peak accuracy. Higher = cleaner at higher CPU cost; adds host-compensated latency (§6). **At Off, any Clip Drive above 0 dB also softens the top octave** — the clipper's antialiasing costs about −2 dB at 10 kHz and −12 dB at 20 kHz at 48 kHz (more at 44.1 kHz), whatever the drive amount, and the Loudness knob engages the clipper above 30 %. 4× cuts that to under 0.6 dB at 20 kHz ([`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) KI-005). |
 | **Phase** | Minimum / Linear | Minimum phase = lowest latency; linear phase = symmetric ringing, more latency. |
 | **Offline Render** | Follow Online / Force Max | Force Max renders your bounce at maximum oversampling regardless of the live setting; Follow Online uses whatever the live setting is. |
 | **UI Scale** | XS / S / M / L / XL | Five steps; **M** is the original size, everything scales in proportion. |
@@ -305,10 +308,14 @@ deliberately **slow** — second-scale, with hysteresis — so it never sounds l
 modulation; it is the difference between a setting that is right for the chorus and one
 that is right for the whole song.
 
-- **FREEZE** locks the current adaptive state exactly. Use it when the engine has settled
+- **FREEZE** locks the current adaptive state exactly — also when the host re-prepares the
+  plug-in (a sample-rate or buffer-size change, or in some hosts pressing play or starting a
+  bounce). Use it when the engine has settled
   on the sound you want and you don't want a quiet bridge to re-open it. A frozen state is
   **saved and restored with your session** — reopening the project brings back exactly the
-  trims you froze, not a re-adapted approximation.
+  trims you froze, not a re-adapted approximation. (One A/B case does not agree with the save
+  yet: switching into a slot that has FREEZE on but no frozen sound of its own keeps playing the
+  sound of the slot you left — [`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) KI-007, item 10.)
 - **LEARN** is an explicit calibration pass: press it, play a *representative* section
   (at least 5 seconds — the button counts), press it again. The engine fixes its internal
   reference targets to that material, so subsequent adaptation is judged against *your*
@@ -353,15 +360,19 @@ Input Gain → EQ (Pre position) → Compressor → Clipper + Color
 ```
 
 - The **ceiling clamp is always last before dither** — whatever you do upstream
-  (including a boosted Post EQ), the output does not exceed the ceiling.
+  (including a boosted Post EQ), the output does not exceed the ceiling: its sample peaks with
+  **TP** off, its true peaks with **TP** on, to within 0.1 dB on the plug-in's own dBTP meter and
+  on the BS.1770 reference filter. True-peak meters differ in the top few percent below Nyquist,
+  so a longer-kernel meter can read a little more on very bright, heavily clipped material
+  ([`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) KI-020).
 - **Latency is constant by design**: Anabasis reports a fixed lookahead allowance
   (10 ms) plus the current oversampling filter latency. Moving the Lookahead knob,
   browsing presets, switching A/B — none of it changes reported latency, so your DAW's
   delay compensation never re-syncs mid-session. Oversampling factor and phase mode *do*
   change it, and take effect at a click-free moment.
 - **Click-free by construction**: preset loads, A/B switches, undo/redo and engine
-  rewires (EQ position, color model, oversampling changes) duck the output briefly
-  instead of clicking. The short dip *is* the mechanism working.
+  rewires (EQ position, color model, oversampling changes, the **TP** switch) duck the output
+  briefly instead of clicking. The short dip *is* the mechanism working.
 - **Self-healing**: if a hostile upstream signal ever overflows a filter, the engine
   detects and repairs it within the block instead of going silent.
 
@@ -382,7 +393,9 @@ Podcast Voice, Cinematic Wide, Lo-Fi Crush*.
 
 ### 7.2 Saving and managing
 
-"Save Preset…" opens a name dialog. Saving over an existing name overwrites it. User
+"Save Preset…" opens a name dialog. Saving over an existing name overwrites it, without a
+confirmation — including a name that only becomes an existing one once characters a file name
+cannot hold are removed ([`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) KI-022). User
 presets are plain XML files with the `.anabasis` extension, stored per user:
 
 | OS | Folder |
@@ -402,6 +415,12 @@ monitoring toggles (**MATCH** — your host's automation lane still calls this p
 everything in Settings. A **locked Ceiling** is skipped entirely — browsing presets never
 moves it. The `*` edited marker compares exactly what a preset can carry, so toggling
 monitoring or resizing the window never marks a preset as edited.
+
+**TP, Dither and Noise SHAPE are sound parameters here, so a preset sets them.** Every factory
+preset turns all three **off** (none of them states an intent for them), and a user preset
+restores what it was saved with. LOCK holds the ceiling's *value*, not TP — so after browsing,
+re-engage TP (and Dither) if your delivery needs them, or Undo back to the state you locked
+([`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) KI-021).
 
 Presets are **forward-compatible**: parameter identities are frozen and regression-tested
 in CI, so `.anabasis` files and DAW sessions from older versions keep loading in newer
@@ -425,7 +444,10 @@ travel with your DAW session.
 
 1. Start from *Transparent Master* (or defaults). Ceiling to your delivery spec (the −0.1
    default suits most deliveries; lock it). If the spec is written in dBTP, engage **TP**
-   as well — that is what makes the ceiling hold inter-sample peaks.
+   as well — that is what makes the ceiling hold inter-sample peaks — and engage it *after*
+   choosing the preset, because a preset turns it off (§7.3). On bright material, once
+   Loudness passes 30 %, set Oversampling to 4× so the clipper does not soften the top octave
+   (§3.5).
 2. Play the loudest chorus; raise **Loudness** until the GR history shows steady work
    (the graph well opens on the GR history — if it is showing the spectrum, the GR|SPEC
    pill in its bottom-left corner switches back).
@@ -525,7 +547,8 @@ portable across platforms — copy them out, or load any file directly with *Loa
 
 **Browsing presets changed my ceiling.**
 Engage the **LOCK** next to the Ceiling knob — a locked ceiling is skipped by every preset
-apply.
+apply. LOCK holds the number only: a factory preset still switches **TP**, Dither and Noise
+SHAPE off, so check them before a delivery render (§7.3).
 
 **Anything else?**
 [`docs/KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) lists every confirmed limitation with its
