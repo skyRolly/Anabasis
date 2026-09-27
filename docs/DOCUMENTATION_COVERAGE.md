@@ -6,7 +6,12 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.13 (2026-09-27) — the Phase 0 product-correctness round** of the
+**Last updated:** for **the PR #42 review round (2026-09-27, still 0.2.13)** — the true-peak
+engagement fix (ADR-0041 decision 5 revised, still Proposed), the JUCE-free split of the clamp's
+detector that restores the `realtime` gate, and the owner's decision material in
+[`docs/reports/2026-09-27-phase0-owner-decisions.md`](reports/2026-09-27-phase0-owner-decisions.md);
+evidence in [`worklogs/2026-09-27-pr42-review-closure.md`](../worklogs/2026-09-27-pr42-review-closure.md)
+(addendum below). Before that, for **0.2.13 (2026-09-27) — the Phase 0 product-correctness round** of the
 2026-09-26 audit: true-peak mode holds its dBTP ceiling (ADR-0041, Proposed) and a frozen trim latch
 survives a host re-prepare in the audio (ADR-0042, Proposed); STATE-002, UX-003 and DSP-004 disclosed
 pending owner decisions; the finding-by-finding outcome in
@@ -449,6 +454,31 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-27, PR #42 review, still 0.2.13) — the engagement leak, the `realtime` gate and
+the owner's decision material.** Code: `EngagementTail` (`CeilingClamp.h`) and the engagement block
+in `AnabasisEngine`; `ClampTruePeakDetector` and the meter's phase design moved from `TruePeak.h` into
+the new JUCE-free `ClampTruePeakDetector.h` (bitwise identical); a `numCh ≤ 0` early return in the
+detector and the clamp (PREfast C6011). Rows engaged: **DSP algorithm / signal flow** — ADR-0041
+(revision banner; decisions 2, 5, 8; Consequences; a new "What the owner is asked to decide" section;
+Related code; Evidence — still Proposed), `DSP_POLICY.md` invariants 4 and 8 and the invariant→test
+map, `LATENCY_MODEL.md` (the engagement sentence; nothing in the composition moved), `USER_MANUAL.md`
+(what switching TP on sounds like). **Realtime** — `REALTIME_SAFETY_AUDIT.md` (the `EngagementTail`
+allocation row, its measured bound, the widened compile-time tier), `tests/realtime_effects.cpp`'s
+banner, `CODE_STYLE.md` (the JUCE-free leaf-header exception to the leak-detector rule).
+**Adaptive engine (Freeze)** — ADR-0042's Evidence gains the ordering mutation and a pointer to the
+lifecycle table; no behaviour changed. **Metering / delivery definition** — KNOWN_ISSUES KI-020 (the
+detector's new header; the libebur128-reading option measured; the decision record), `TEST_REPORT.md`
+(the transition section: sweep, host, test, mutations; the steady-state re-render). **New/changed
+test** — `procedures/TESTING.md` (the mandated stimulus for `testTruePeakEngagementHoldsTheCeiling`).
+**Ship a version** — `CHANGELOG.md` 0.2.13 amended in place (unreleased: the TP switch-on behaviour and
+the transition figure), `HANDOVER.md`, `README.md` (suite total 1969 → 1973). **Add a document** —
+`docs/reports/2026-09-27-phase0-owner-decisions.md` and `worklogs/2026-09-27-pr42-review-closure.md`:
+`REPOSITORY_MAP.md` (the `reports/` entry and the `src/dsp/` listing), this file. The first round's
+follow-up record is not edited (a dated report is superseded, not corrected in place); the new record
+states where it supersedes it. **Drift corrected:** none found. Coverage status: the engagement transition is **Verified** (a sweep,
+a test that fails on the PR head, two mutations, a real-host export); the meter definition stays an
+owner decision (**recorded, not claimed**).
 
 **Addendum (2026-09-27, 0.2.13) — the Phase 0 correctness round: two Proposed decisions and the
 documents that must tell the same story as the code.** Code: the ceiling clamp's true-peak path

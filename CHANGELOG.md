@@ -66,7 +66,8 @@ figures). Measurement trail: [`worklogs/2026-09-27-phase0-product-correctness.md
   tolerance). The clamp now measures the waveform between samples itself and brings the gain down
   just before a peak arrives, one linked gain for both channels, with the sample clip kept as the
   backstop: 0 of 2736 over on the plugin's meter and on the BS.1770 reference filter, every
-  oversampling setting included (worst +0.005 dB). In a real DAW — an Ardour offline render through
+  oversampling setting included (worst +0.005 dB), and none from the moment TP is switched on while
+  audio plays (0 of 248 tested switch-ons, worst +0.003 dB). In a real DAW — an Ardour offline render through
   the plug-in — the same hot programme went from 0.97 dB over the ceiling to exactly on it. A
   long-kernel reference meter still reads up to about 1 dB over on synthetic programme with strong
   content right below Nyquist — recorded in KI-020, not claimed. ADR-0041 (Proposed). Evidence:
@@ -80,10 +81,14 @@ figures). Measurement trail: [`worklogs/2026-09-27-phase0-product-correctness.md
   engine and the processor; not yet observed in a DAW. [Verified]
 
 ### Changed
-- **Switching TP on or off now dips the output briefly** (~6 ms down, a short hold, ~28 ms up),
-  like an oversampling change, instead of switching at full level — the switch changes how the
-  fixed 10 ms of lookahead is shared. Presets, A/B and undo already sat inside such a dip.
-  ADR-0041 (Proposed). Evidence: this release. [Verified]
+- **Switching TP on or off now dips the output briefly**, like an oversampling change, instead of
+  switching at full level — the switch changes how the fixed 10 ms of lookahead is shared. Switching
+  it **off**: ~6 ms down, a short hold, ~28 ms up. Switching it **on** while audio plays: the
+  programme stops at the switch — its last value fades to silence over ~6 ms, checked so that
+  nothing from the switch on exceeds the dBTP ceiling — then the same hold and ~28 ms fade-in; a
+  bright or tonal programme hears a more abrupt stop than a fade, though far from a hard cut.
+  Presets, A/B and undo already sat inside such a dip. ADR-0041 (Proposed). Evidence: this
+  release. [Verified]
 - **In TP mode the longest lookahead settings engage slightly less** — about 0.9 ms less at the top
   of the range at 44.1/48 kHz (9.125 ms at a 10 ms setting at 48 kHz), because the ceiling's
   true-peak detection takes that share of the fixed allowance. The latency reported to the host is

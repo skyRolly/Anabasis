@@ -14,7 +14,7 @@ Nothing in this file is decided. Each section states what the code does now, wha
 the options, and what each option costs, with figures measured on the real engine or in a real host.
 Where the round was asked for a technical recommendation (ADR-0042) one is given and labelled as
 such; **§1 carries none on purpose** — which meter defines "dBTP" is a product decision. The evidence
-is in `worklogs/2026-09-27-pr42-review-closure.md`
+is in [`worklogs/2026-09-27-pr42-review-closure.md`](../../worklogs/2026-09-27-pr42-review-closure.md)
 and, for the first round, [`worklogs/2026-09-27-phase0-product-correctness.md`](../../worklogs/2026-09-27-phase0-product-correctness.md).
 
 | # | Decision | Record | Blocks |
