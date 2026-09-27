@@ -4358,8 +4358,9 @@ static void testLoudnessCompensationDoesNotAlterRender()
     {   // MID-STREAM realtime→offline flip: the monitor state must SNAP inert
         // (gain 1, delta 0), not slew — from the first offline block the
         // render is bit-identical between comp on and comp off. The monitor
-        // gain is post-mix and the meters are fed pre-monitor frames, so the
-        // two runs' engine states agree; only the snap can differ.
+        // gain touches only the listened processed leg (ADR-0044) and the
+        // meters are fed pre-monitor frames, so the two runs' engine states
+        // agree; only the snap can differ.
         auto renderFlip = [&] (bool compOn) -> std::vector<float>
         {
             anabasis::AnabasisEngine engine;
@@ -4394,6 +4395,310 @@ static void testLoudnessCompensationDoesNotAlterRender()
         check (preDiffers, "inv10 flip: before the flip the comp IS acting (the runs differ)");
         check (postIdentical,
                "inv10 flip: from the first offline block the render is bit-identical — no residual slew");
+    }
+    {   // OFFLINE with MATCH and DELTA both engaged and BYPASS switched in and
+        // out mid-render (ADR-0044): bit-identical to the same render with the
+        // two monitor functions off. The MATCH gain sits on the processed leg
+        // BEFORE the bypass crossfade now, and bypass is live offline, so this
+        // pins that the move did not open a path from either monitor function
+        // into a render through that crossfade.
+        auto renderToggled = [&] (bool monitorsOn) -> std::vector<float>
+        {
+            anabasis::AnabasisEngine engine;
+            engine.prepare (sr, 512, 2);
+            anabasis::EngineParameters p;
+            p.limGainDb    = 12.0f;
+            p.loudnessComp = monitorsOn;
+            p.deltaMonitor = monitorsOn;
+            p.nonRealtime  = true;
+            p.truePeakMode = false;
+            std::vector<float> out;
+            juce::AudioBuffer<float> buf (2, 512);
+            for (int b = 0; b < 200; ++b)
+            {
+                p.bypass = b >= 60 && b < 140;
+                for (int n = 0; n < 512; ++n)
+                {
+                    const float v = 0.15f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                      * 500.0f * (float) (b * 512 + n) / (float) sr);
+                    buf.setSample (0, n, v); buf.setSample (1, n, v);
+                }
+                engine.process (buf, p);
+                for (int n = 0; n < 512; ++n)
+                    out.push_back (buf.getSample (0, n));
+            }
+            return out;
+        };
+        const auto plain = renderToggled (false), monitored = renderToggled (true);
+        bool identical = true;
+        for (size_t n = 0; n < plain.size(); ++n)
+            if (! juce::exactlyEqual (plain[n], monitored[n])) { identical = false; break; }
+        check (identical,
+               "inv10: offline, MATCH + DELTA across a mid-render BYPASS toggle leave the render bit-identical");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MATCH (the §2.7 loudness compensation) and BYPASS, ADR-0044. The
+// compensation gain belongs to the PROCESSED leg: BYPASS plays the
+// delay-aligned input at unity whatever MATCH says, and the matched processed
+// signal sits at the input's loudness — so switching BYPASS with MATCH on is
+// the loudness-matched comparison the feature exists for. Until 0.2.14 the
+// gain was applied AFTER the bypass crossfade, so it scaled BOTH legs and the
+// comparison kept the whole level difference (audit UX-009: 6.3–6.5 LU on
+// pink at the Loudness 70 % point).
+namespace matchmon
+{
+// Paul Kellet's refined pink filter over an LCG white source; decorrelated
+// channels come from different seeds. Deterministic, so the thresholds below
+// are reproducible.
+struct Pink
+{
+    uint32_t rng;
+    float b[7] = {};
+    explicit Pink (uint32_t seed) : rng (seed) {}
+    float next() noexcept
+    {
+        rng = rng * 1664525u + 1013904223u;
+        const float w = (float) (rng >> 8) / 8388608.0f - 1.0f;
+        b[0] = 0.99886f * b[0] + w * 0.0555179f;
+        b[1] = 0.99332f * b[1] + w * 0.0750759f;
+        b[2] = 0.96900f * b[2] + w * 0.1538520f;
+        b[3] = 0.86650f * b[3] + w * 0.3104856f;
+        b[4] = 0.55000f * b[4] + w * 0.5329522f;
+        b[5] = -0.7616f * b[5] - w * 0.0168980f;
+        const float out = b[0] + b[1] + b[2] + b[3] + b[4] + b[5] + b[6] + w * 0.5362f;
+        b[6] = w * 0.115926f;
+        return out;
+    }
+};
+
+// Stereo pink, each channel scaled to `rmsDb` dBFS over the whole stimulus.
+inline std::vector<float> pinkStereo (int frames, float rmsDb)
+{
+    std::vector<float> x ((size_t) frames * 2);
+    Pink l (0x1234567u), r (0x89ABCDEu);
+    double s[2] = {};
+    for (int n = 0; n < frames; ++n)
+    {
+        x[(size_t) n * 2]     = l.next();
+        x[(size_t) n * 2 + 1] = r.next();
+        s[0] += (double) x[(size_t) n * 2] * x[(size_t) n * 2];
+        s[1] += (double) x[(size_t) n * 2 + 1] * x[(size_t) n * 2 + 1];
+    }
+    const float target = juce::Decibels::decibelsToGain (rmsDb);
+    const float g[2] = { target / (float) std::sqrt (s[0] / frames), target / (float) std::sqrt (s[1] / frames) };
+    for (int n = 0; n < frames; ++n)
+        for (int c = 0; c < 2; ++c)
+            x[(size_t) n * 2 + (size_t) c] *= g[c];
+    return x;
+}
+
+// The Simple view's Loudness 70 % point (Character 0, Tone 0) in engine
+// terms — `macro_curves` cannot be included here (invariant 13), so it is
+// written out, as `tpceiling::Point` does for 50 %.
+inline void loudness70 (anabasis::EngineParameters& p)
+{
+    p.limGainDb       = 11.7325f;   // 18 · 0.7^1.2
+    p.compThresholdDb = -12.0f;
+    p.compRatio       = 1.85f;
+    p.clipDriveDb     = 5.1429f;
+    p.clipShape       = 0.4143f;
+    p.dynTiltDb       = 0.6f;
+}
+
+struct Jump { float matchedS, bypassS; };
+
+// MATCH on (or off) from the start, BYPASS engaged at `bypassAtSeconds`;
+// short-term loudness of the LISTENED output (not the render tap) just
+// before the switch and at the end.
+inline Jump bypassJump (bool match, float rmsDb, double bypassAtSeconds, double totalSeconds)
+{
+    const double sr = 48000.0;
+    const int block = 512;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, block, 2);
+    anabasis::EngineParameters p;
+    loudness70 (p);
+    p.loudnessComp = match;
+    const int blocks = (int) (totalSeconds * sr / block);
+    const auto x = pinkStereo (blocks * block, rmsDb);
+    anabasis::LoudnessMeter m;
+    m.prepare (sr);
+    juce::AudioBuffer<float> buf (2, block);
+    Jump j { -100.0f, -100.0f };
+    const int switchBlock = (int) (bypassAtSeconds * sr / block);
+    for (int b = 0; b < blocks; ++b)
+    {
+        if (b == switchBlock)
+        {
+            j.matchedS = m.shortTermLufs();
+            p.bypass = true;
+        }
+        for (int n = 0; n < block; ++n)
+            for (int c = 0; c < 2; ++c)
+                buf.setSample (c, n, x[((size_t) b * block + (size_t) n) * 2 + (size_t) c]);
+        engine.process (buf, p);
+        for (int n = 0; n < block; ++n)
+        {
+            const float fr[2] = { buf.getSample (0, n), buf.getSample (1, n) };
+            m.processFrame (fr, 2);
+        }
+    }
+    j.bypassS = m.shortTermLufs();
+    return j;
+}
+} // namespace matchmon
+
+// Settled BYPASS is the untouched input with MATCH on, DELTA on or both —
+// bit-exact, the invariant-7 null in every monitor state.
+static void testMatchLeavesBypassAtUnity()
+{
+    const double sr = 48000.0;
+    const int block = 512;
+    auto run = [&] (bool bypass, bool delta, bool match, std::vector<float>* inOut) -> std::vector<float>
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, block, 2);
+        anabasis::EngineParameters p;
+        p.bypass       = bypass;
+        p.loudnessComp = match;
+        p.deltaMonitor = delta;
+        p.limGainDb    = 18.0f;          // a loud wet path: the gain MATCH would apply is large
+        std::vector<float> out;
+        juce::AudioBuffer<float> buf (2, block);
+        uint32_t rng = 0xCAFEBABEu;
+        for (int b = 0; b < 120; ++b)    // ~1.3 s: past the predict floor's 200 ms smoother
+        {
+            for (int n = 0; n < block; ++n)
+            {
+                rng = rng * 1664525u + 1013904223u;
+                const float v = ((float) (rng >> 8) / 8388608.0f - 1.0f) * 0.5f;
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+                if (inOut != nullptr) inOut->push_back (v);
+            }
+            engine.process (buf, p);
+            for (int n = 0; n < block; ++n)
+                out.push_back (buf.getSample (0, n));
+        }
+        return out;
+    };
+
+    anabasis::AnabasisEngine probe;
+    probe.prepare (sr, block, 2);
+    const size_t delay = (size_t) probe.groupDelaySamples();
+    for (const bool delta : { false, true })
+    {
+        std::vector<float> in;
+        const auto out = run (true, delta, true, &in);
+        bool exact = true;
+        for (size_t n = out.size() / 2; n < out.size(); ++n)
+            if (! juce::exactlyEqual (out[n], in[n - delay])) { exact = false; break; }
+        check (exact, delta ? "matchBypass: BYPASS with MATCH and DELTA on is the bit-exact delay-aligned input"
+                            : "matchBypass: BYPASS with MATCH on is the bit-exact delay-aligned input");
+    }
+
+    // Non-vacuous: on this material MATCH really is pulling the processed
+    // signal down hard, so a gain applied to the bypass leg would show.
+    auto tailDb = [] (const std::vector<float>& v)
+    {
+        double s = 0.0;
+        for (size_t n = v.size() / 2; n < v.size(); ++n) s += (double) v[n] * v[n];
+        return 10.0 * std::log10 (s / (double) (v.size() - v.size() / 2));
+    };
+    const double matched = tailDb (run (false, false, true, nullptr));
+    const double unmatched = tailDb (run (false, false, false, nullptr));
+    check (matched < unmatched - 3.0,
+           "matchBypass: (premise) MATCH attenuates the processed signal by more than 3 dB here");
+    std::printf ("       matchBypass: MATCH pulls the processed signal %.2f dB down on this material\n",
+                 unmatched - matched);
+}
+
+// The comparison MATCH exists for: switching BYPASS with MATCH on is
+// loudness-matched. Measured on the listened output, short-term, pink noise
+// at the Loudness 70 % point with the dry at about −14.3 LUFS (the audit's
+// calibration). The bound is 1 LU, not 0: the predict floor's bias
+// (audit DSP-005) is what is left, and it grows on hotter programme — this
+// test pins the monitor ORDER, not the estimator.
+static void testMatchedBypassIsLoudnessMatched()
+{
+    const auto on  = matchmon::bypassJump (true,  -17.0f, 10.0, 16.0);
+    const auto off = matchmon::bypassJump (false, -17.0f, 10.0, 16.0);
+    const float jumpOn  = on.bypassS - on.matchedS;
+    const float jumpOff = off.bypassS - off.matchedS;
+    check (std::abs (jumpOff) >= 5.0f,
+           "matchJump: (premise) without MATCH the processed signal is at least 5 LU louder than BYPASS");
+    check (std::abs (jumpOn) <= 1.0f,
+           "matchJump: with MATCH on, switching to BYPASS moves the short-term loudness by at most 1 LU");
+    std::printf ("       matchJump: BYPASS - matched S = %+.2f LU with MATCH, %+.2f LU without (dry S %.2f LUFS)\n",
+                 jumpOn, jumpOff, on.bypassS);
+}
+
+// ADR-0006 decision 9 for the three monitor toggles, mid-stream: BYPASS with
+// MATCH off (two legs ~6 dB apart: the case that pins the bypass ramp), BYPASS
+// with MATCH on (two legs at nearly the same loudness — an instant switch
+// there is nearly step-free by construction, so this case pins that the new
+// order introduced no step, not the ramp), MATCH itself and DELTA. No per-sample
+// step across the toggle may exceed the programme's own largest step either
+// side of it by more than 25 %. The toggle lands at a waveform PEAK (a
+// cosine, whole periods before it) and the processed leg is phase-shifted by
+// a shelf: at a zero crossing, or between two identical legs, an instant
+// switch would hide — both were measured passing a mutant that removed the
+// ramp before this was set up.
+static void testMonitorTogglesAreClickFree()
+{
+    const double sr = 48000.0;
+    const int block = 512;
+    enum class Toggle { bypass, bypassWithMatch, match, delta };
+    for (const auto which : { Toggle::bypass, Toggle::bypassWithMatch, Toggle::match, Toggle::delta })
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, block, 2);
+        anabasis::EngineParameters p;
+        p.limGainDb         = 6.0f;
+        p.eqHighShelfGainDb = 6.0f;              // the processed leg's phase differs from the dry's
+        p.loudnessComp      = which == Toggle::bypassWithMatch;
+        std::vector<float> out;
+        juce::AudioBuffer<float> buf (2, block);
+        long t = 0;
+        const int toggleBlock = 150;             // 1.6 s: settled; 76800 samples = 160 periods
+        for (int b = 0; b < 200; ++b)
+        {
+            if (b == toggleBlock)
+            {
+                if (which == Toggle::bypass || which == Toggle::bypassWithMatch) p.bypass = true;
+                if (which == Toggle::match)           p.loudnessComp = true;
+                if (which == Toggle::delta)           p.deltaMonitor = true;
+            }
+            for (int n = 0; n < block; ++n, ++t)
+            {
+                const double ph = juce::MathConstants<double>::twoPi * 100.0 * (double) t / sr;
+                const float v = 0.3f * (float) (std::cos (ph) + 0.3 * std::cos (7.0 * ph));
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            for (int n = 0; n < block; ++n)
+                out.push_back (buf.getSample (0, n));
+        }
+        auto maxStep = [&] (size_t from, size_t to)
+        {
+            float m = 0.0f;
+            for (size_t n = from + 1; n < to; ++n)
+                m = juce::jmax (m, std::abs (out[n] - out[n - 1]));
+            return m;
+        };
+        const size_t n0 = (size_t) toggleBlock * block;
+        const float before = maxStep (n0 - 9600, n0);
+        const float after  = maxStep (n0 + 24000, out.size());
+        const float across = maxStep (n0 - 1, n0 + 14400);   // the toggle and 300 ms after it
+        const char* what = which == Toggle::bypass          ? "monitorClick: BYPASS toggles without a step"
+                         : which == Toggle::bypassWithMatch ? "monitorClick: BYPASS with MATCH on toggles without a step"
+                         : which == Toggle::match           ? "monitorClick: MATCH toggles without a step"
+                                                            : "monitorClick: DELTA toggles without a step";
+        check (across <= 1.25f * juce::jmax (before, after), what);
+        std::printf ("       %s: largest step %.4f across vs %.4f / %.4f either side\n", what + 14, across, before, after);
     }
 }
 
@@ -7396,6 +7701,9 @@ int main()
     testLufsGating();
     testLufsWindows();
     testLoudnessCompensationDoesNotAlterRender();
+    testMatchLeavesBypassAtUnity();
+    testMatchedBypassIsLoudnessMatched();
+    testMonitorTogglesAreClickFree();
     testDeltaMonitor();
     testAdaptationConvergesAndHolds();
     testResetCancelsAnInFlightLearnPass();

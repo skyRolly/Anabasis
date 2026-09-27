@@ -6,7 +6,8 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **the Phase 0 closure (2026-09-27, still 0.2.13)** — ADR-0041 and ADR-0042
+**Last updated:** for **0.2.14 (2026-09-27) — Phase 1 of the 2026-09-26 audit** (addenda below).
+Before that, for **the Phase 0 closure (2026-09-27, still 0.2.13)** — ADR-0041 and ADR-0042
 accepted by the owner, KI-006 closed as INC-007 (addendum below). Before that, for **the PR #42 review
 round (2026-09-27, still 0.2.13)** — the true-peak engagement fix (ADR-0041 decision 5 revised, then
 Proposed), the JUCE-free split of the clamp's
@@ -456,6 +457,31 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-27, 0.2.14) — MATCH on the processed leg (ADR-0044).** Code: stage E's §2.7
+gain moves from after the bypass crossfade onto `wetLeg`, before it; two engine comments corrected
+(the member comment still said "average measured GR" and "POST-mix"; the GR-tap comment stated the
+predict floor's error direction backwards — audit DSP-005). Rows engaged: **Signal-flow / stage
+order** — ADR-0044 (new; on the owner's direction, ⊕ for review), ADR-0006's dated amendment banner
+(decision 8), ADR_INDEX (row and amendment registry), `DSP_POLICY.md` invariants 7, 10 and 12
+(prescribed text) and the invariant→test map rows 7, 8 and 10 (row 8's "loudnessComp/delta crossfades
+arrive with their P3 features" had been stale since P2), DESIGN §2.7 (dated superseded note; the ADR
+outranks it), `CHANGELOG.md` (new 0.2.14 entry with the release note that MATCH + BYPASS is 5–10 dB
+louder), version 0.2.14. The row's `SIGNAL_FLOW.md` and `DSP_GRAPH_REFERENCE.md` are still planned
+(`REPOSITORY_MAP.md`). **Metering / listening aids** — `USER_MANUAL.md` §2.4 step 6 and the BYPASS row
+(what BYPASS plays; MATCH's slight low bias; MATCH and DELTA never in a bounce — UX-010's missing
+sentence), `procedures/DEVELOPMENT.md` and `procedures/TROUBLESHOOTING.md` (the matched-comparison
+advice now true as written), KNOWN_ISSUES KI-023 (new: the residual, with the clipper/compressor
+isolation). `LATENCY_MODEL.md` checked and unchanged (no delay or read position moved). **New/changed
+test** — four DSP tests and one state test (`testMatchLeavesBypassAtUnity`,
+`testMatchedBypassIsLoudnessMatched`, `testMonitorTogglesAreClickFree`, the offline BYPASS-toggle
+block of `testLoudnessCompensationDoesNotAlterRender`, `testBypassPlaysTheInputAtUnityWithMatchOn`);
+the regression tests fail on the old order and each toggle ramp's removal fails its own click case —
+the table is in the new worklog. **Add a document** — `worklogs/2026-09-27-phase1-match-statistics-observability.md`.
+**Drift recorded, not corrected:** ADR-0006's Consequences and DESIGN §7 promise per-slot compensation
+memory that does not exist (banner on ADR-0006). Historical records quoting the post-mix rationale
+(POSTMORTEMS INC-002, earlier addenda, HANDOVER round logs, older CHANGELOG entries) are history and
+are not edited.
 
 **Addendum (2026-09-27, TEST-001) — the editor tick is tested, and every test was made to fail
 first.** Code: `refreshFromModel()` is the whole 24 Hz tick body, public; `timerCallback` calls it.

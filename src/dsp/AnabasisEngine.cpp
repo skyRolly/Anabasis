@@ -1096,10 +1096,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // exists and is read only by the tests, so the published `pubGrDb`, the
         // GR history ring and the §2.7 predict floor
         // (`inputGainDb + limGainDb + grDbNow`) all describe the limiter alone
-        // — the floor therefore UNDER-estimates the lift whenever the
-        // compressor is doing the work, and `min(measure, predict)` hides that
-        // once the measure converges. A P5 item (the meter legend has to say
-        // which reduction it is showing) rather than a defect today.
+        // — the floor therefore OVER-estimates the lift whenever the
+        // compressor (or the clipper) takes level out, and
+        // `min(measure, predict)` KEEPS that too-deep floor once the measure
+        // converges, so MATCH settles below the dry loudness (audit DSP-005;
+        // measured 2026-09-27 at the Loudness 70 % point on pink: +0.6 to
+        // +0.9 LU, +1.7 LU on hot programme, the clipper's loss the larger
+        // term there — `KNOWN_ISSUES.md` KI-023). This comment said the
+        // opposite direction until then.
         // `nCh - 1` is the LAST active channel. `process` already refuses a
         // block with no channels -- `numChannels <= 0` returns false before any
         // chunk runs -- so nCh >= 1 whenever this line executes. That guard
@@ -1358,8 +1362,21 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             // §2.9 spectrum tap 2: post-chain — the same render the meters read.
             (ch == 0 ? specOutL : specOutR)[(size_t) n] = renderFrame[ch];
 
+            // §2.7 loudness compensation (MATCH) on the PROCESSED leg, after the
+            // delta substitution and BEFORE the bypass crossfade (ADR-0044,
+            // amending ADR-0006 decision 8): the matched processed signal sits
+            // at the input's loudness, BYPASS plays the delay-aligned input at
+            // unity, so switching between them is the loudness-matched
+            // comparison, and DELTA + MATCH stays g·(dry − processed). Applied
+            // after the bypass mix until 0.2.14, the gain scaled BOTH legs and
+            // the comparison kept the whole level difference (audit UX-009).
+            // Exact skip at unity — MATCH off, and always offline, where the
+            // engine snaps the gain to 1 (invariant 10).
+            if (! juce::exactlyEqual (monGainNow, 1.0f))
+                wetLeg *= monGainNow;
+
             // Bypass crossfade. The SECOND leg downstream of dither (the §2.7
-            // monitor gain below is the other), and unlike that one it is not
+            // monitor gain above is the other), and unlike that one it is not
             // monitor-only — it runs in a render too. Both endpoints are exact
             // branches, so a steady state is on the quantisation grid either
             // way; the ~10 ms ramp between them is a convex combination of a
@@ -1373,11 +1390,6 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             if (bypassMix <= 0.0f)      out = wetLeg;                           // exact endpoint
             else if (bypassMix >= 1.0f) out = delayedDry;                       // exact endpoint
             else                        out = wetLeg + (delayedDry - wetLeg) * bypassMix;
-
-            // §2.7 loudness compensation: POST-mix, so the bypass leg carries
-            // the same gain (loudness-matched bypass). Exact skip at unity.
-            if (! juce::exactlyEqual (monGainNow, 1.0f))
-                out *= monGainNow;
 
             if (! std::isfinite (out))
             {

@@ -41,6 +41,7 @@ Common failures and where to look. Build/test/CI details are in `BUILD.md`, `TES
 ## "But it sounds louder, so it's better"
 
 It is not. Compare **loudness-matched** — use the plugin's own loudness-compensated monitoring and
-loudness-matched bypass, and use delta monitoring to hear what is being removed. An uncompensated
+loudness-matched bypass (MATCH on, then BYPASS — matched since 0.2.14, ADR-0044), and use delta
+monitoring to hear what is being removed. An uncompensated
 A/B cannot answer the question (`DEVELOPMENT_BRIEF.md` §3; `DEVELOPMENT.md` §"Judging your own
 work honestly").

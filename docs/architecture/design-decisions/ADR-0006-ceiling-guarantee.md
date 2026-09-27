@@ -10,6 +10,18 @@
 > default** — with true-peak mode off the clamp decides on the sample peak, which is why ADR-0015
 > also makes the Ceiling's displayed unit follow the mode instead of asserting dBTP.
 
+> **Amended by [ADR-0044](ADR-0044-match-applies-to-the-processed-leg-so-bypass-is-loudness-matched.md)
+> (2026-09-27, on the owner's direction; ⊕ for review) — decision 8's mechanism sentence.**
+> "Bypass's crossfade target is the dry ring scaled by the same compensation, so a bypass comparison
+> is loudness-matched by construction" was self-contradictory: scaling both legs by the same gain
+> keeps their ratio, and measured it kept the whole jump (−6.8 LU on pink at Loudness 70 %). The
+> compensation now multiplies the processed leg before the bypass crossfade, so BYPASS plays the
+> input at unity and the comparison is loudness-matched; DELTA + MATCH is unchanged. The rest of
+> decision 8, decision 7's measure/predict law and decision 6's render isolation are untouched.
+> **Drift recorded there, not addressed:** the Consequences' "per-slot compensation memory restores
+> at the duck bottom" describes state that does not exist — the MATCH measure and gain are single
+> engine members, not slot state. Nothing below is rewritten.
+
 > **Implemented by [ADR-0041](ADR-0041-clamp-true-peak-path-inside-the-latency-allowance.md)
 > (Accepted 2026-09-27; filed `Proposed` and held at the gate until the owner answered).** Items
 > 2–3's true-peak half was never built — the clamp stayed the P1 sample clip in both modes until

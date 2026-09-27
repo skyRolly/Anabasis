@@ -10681,6 +10681,71 @@ static void testMetersReadTheRenderNotTheMonitor()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0044 through the wrapper: BYPASS — the host's own bypass, which is this
+// parameter — plays the input at unity whether or not MATCH is on, at the
+// Simple view's Loudness 70 % point. The listening buffers of the two runs
+// are bit-identical once the bypass crossfade has settled, and so is every
+// published reading (the meters read the render, which MATCH never touched).
+// Until 0.2.14 MATCH scaled the bypassed input by its gain as well, so the
+// comparison against BYPASS kept the whole level difference (audit UX-009).
+static void testBypassPlaysTheInputAtUnityWithMatchOn()
+{
+    struct R { std::vector<float> tail; float lufsS, lufsI, tpMax; double wetRms; };
+    auto run = [] (bool match)
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        proc.apvts.getParameter (pid::loudness)->setValueNotifyingHost (0.7f);
+        proc.getMacroEngine().flushPendingMapping();
+        if (match)
+            proc.apvts.getParameter (pid::loudnessComp)->setValueNotifyingHost (1.0f);
+        auto* bypass = proc.apvts.getParameter (pid::bypass);
+
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        R r {};
+        double wetSq = 0.0;
+        uint32_t rng = 0x5EEDu;
+        for (int b = 0; b < 300; ++b)                  // 2 s processed, then 1.2 s bypassed
+        {
+            if (b == 190)
+                bypass->setValueNotifyingHost (1.0f);
+            for (int n = 0; n < 512; ++n)
+            {
+                rng = rng * 1664525u + 1013904223u;
+                const float v = ((float) (rng >> 8) / 8388608.0f - 1.0f) * 0.25f;
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, 0.8f * v);
+            }
+            proc.processBlock (buf, midi);
+            if (b >= 150 && b < 190)
+                for (int n = 0; n < 512; ++n)
+                    wetSq += (double) buf.getSample (0, n) * buf.getSample (0, n);
+            if (b >= 220)
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int n = 0; n < 512; ++n)
+                        r.tail.push_back (buf.getSample (ch, n));
+        }
+        r.lufsS = proc.meterLufsS();
+        r.lufsI = proc.meterLufsI();
+        r.tpMax = proc.meterDbTpMax();
+        r.wetRms = std::sqrt (wetSq / (40.0 * 512.0));
+        return r;
+    };
+    const auto off = run (false), on = run (true);
+    check (on.wetRms < off.wetRms * 0.7,
+           "matchWrapper: (premise) MATCH audibly pulls the processed signal down before the bypass");
+    check (on.tail.size() == off.tail.size() && on.tail == off.tail,
+           "matchWrapper: settled BYPASS is sample-identical with MATCH on and off");
+    check (juce::exactlyEqual (on.lufsS, off.lufsS) && juce::exactlyEqual (on.lufsI, off.lufsI)
+             && juce::exactlyEqual (on.tpMax, off.tpMax),
+           "matchWrapper: MATCH moves no published reading across the bypass either");
+    AnabasisAudioProcessor probe;
+    check (probe.getBypassParameter() == probe.apvts.getParameter (pid::bypass),
+           "matchWrapper: the host's bypass IS this parameter, so a host bypass takes the same path");
+}
+
+// ---------------------------------------------------------------------------
 // MODE_AND_ADAPTATION_POLICY invariant 2's named guard: switching Simple ⇄
 // Advanced changes NOTHING about the rendered sound — not approximately,
 // sample-identically. Two processors, identical input and settings; one
@@ -12424,6 +12489,7 @@ int main (int argc, char** argv)
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();
         testMetersReadTheRenderNotTheMonitor();
+        testBypassPlaysTheInputAtUnityWithMatchOn();
         testModeSwitchIsSoundNeutral();
         testLearnCommitAndAdaptiveRoundTrip();
         testDrainInsideRestoreIsSuppressed();

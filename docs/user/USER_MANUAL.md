@@ -110,7 +110,13 @@ toggle row, and the metering strip.
    written in **dBTP**, engage **TP** beside it, which is what makes the number mean dBTP
    (§3.2). The readout's unit follows the switch, so it always says which one you have.
 6. **Bypass** in the top bar A/Bs against the untouched signal — with MATCH on, that
-   comparison is loudness-matched too.
+   comparison is loudness-matched too: MATCH brings the processed signal down to the
+   input's loudness and Bypass plays the input as it is (since 0.2.14 — before that, MATCH
+   turned the bypassed signal down by the same amount, so the jump stayed). MATCH errs
+   slightly low: the matched signal settles a fraction of a LU under the input on typical
+   material, up to about 1.7 LU on very hot material ([`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md)
+   KI-023). MATCH and DELTA are listening aids only — an offline bounce or export never
+   includes them.
 
 ### 2.5 The Standalone application
 
@@ -161,7 +167,7 @@ Universal gestures:
 | **↶ / ↷** | Undo / Redo — kept **per A/B slot**. Covers sound parameters, preset loads, Copy (on the destination slot) and the ADV view switch; bypass and the monitor toggles are never recorded. |
 | **Settings (gear)** | Opens the Settings overlay (§3.5). |
 | **ADV** | Switches Simple ↔ Advanced view (§5). |
-| **BYPASS** | Click-free bypass; with **MATCH** on, the comparison is loudness-matched. Hosts also see this as the standard bypass parameter. |
+| **BYPASS** | Click-free bypass: plays your input untouched, at its own level. With **MATCH** on, the comparison is loudness-matched, because MATCH brings the processed signal to the input's loudness (since 0.2.14). Hosts also see this as the standard bypass parameter. |
 
 ### 3.2 Simple view
 

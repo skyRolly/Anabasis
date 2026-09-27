@@ -261,6 +261,9 @@ essentially always louder, so compensation is essentially always attenuation:
 - Applied **only** to the monitoring path (DSP_POLICY inv 10); the render is untouched.
   Loudness-matched bypass = the bypass crossfade target is the dry ring scaled by the same
   compensation. Delta = (delay-aligned dry − wet) on the monitor path, own crossfade.
+  *(Superseded 2026-09-27 by ADR-0044: the compensation multiplies the WET leg before the bypass
+  crossfade, and the bypass target is the dry ring at unity — scaling both legs kept the level
+  difference. The ADR outranks this section.)*
 
 ### 2.8 Click-free transition layer
 Inherit Anamorph's three-mechanism taxonomy (its ADR-0004 [Verified]): asymmetric raised-cosine

@@ -1564,6 +1564,45 @@ Evidence [Verified]:
 - Test:   none — no behaviour changed this round
 - Commit: this round's PR (documentation only)
 
+### KI-023 — MATCH settles the processed signal slightly below the input's loudness (2026-09-27)
+
+**Severity:** Low (a conservative listening-aid bias of a fraction of a LU at typical settings; no
+rendered sample is affected)
+**Status:** Confirmed, measured — the next MATCH item after ADR-0044. Audit finding **DSP-005**.
+**Affects:** realtime monitoring with MATCH on, all platforms/formats; offline renders are unaffected
+
+MATCH's gain is `min(measure, predict)`: the measure is the short-term dry − processed loudness, the
+predict floor is the deterministic lift (input gain + limiter gain + the limiter's deepest recent
+reduction). The floor counts only the LIMITER's reduction, so whenever another stage takes level out
+it over-estimates the lift, and `min` keeps the too-deep floor once the measure converges: the
+matched processed signal sits under the input. Since ADR-0044 put BYPASS at unity, this residual is
+the whole of the BYPASS comparison gap. Measured 2026-09-27 on the real engine at the Loudness 70 %
+point, pink noise (short-term / momentary, input − matched):
+
+| Input level (pink, per channel) | Residual | With clip drive 0 | With the compressor idle |
+|---|---|---|---|
+| −17 dBFS RMS (dry −14.3 LUFS) | +0.63 LU S / +0.82 LU M | +0.30 LU M | +0.81 LU M |
+| −12 dBFS RMS (dry −9.3 LUFS) | +1.73 LU M | +0.44 LU M | +1.39 LU M |
+
+At these settings the **clipper's** level loss is the larger term — which contradicts the audit's
+recommendation to add the compressor's reduction and drop the clipper term. The fix has to stay
+inside ADR-0006 decision 7 (stateless, floor-only, attenuation-only) and must not turn MATCH into a
+continuous AGC (DSP_POLICY invariant 10); both terms, and their per-block behaviour on transient
+programme, need prototyping against the audit's acceptance criteria before a change is chosen.
+
+**Workaround:** none needed for most judging — the bias is conservative (the processed signal is never
+flattered). Where it matters, compare at moderate input levels, or read the input's and the output's
+loudness directly.
+**Cause:** the predict floor's "expected GR" term is the limiter's alone (`AnabasisEngine.cpp`, the
+block-top predict; the GR-tap comment there stated the error direction backwards until 2026-09-27).
+
+Evidence [Verified]:
+- Source: `src/dsp/AnabasisEngine.cpp` (measure / predict at the block top; the GR tap comment)
+- Test:   `testMatchedBypassIsLoudnessMatched` bounds the residual at 1 LU at the calibration point
+  (measured +0.63 LU); the level sweep and the clip/compressor isolation are probe measurements in
+  `worklogs/2026-09-27-phase1-match-statistics-observability.md`
+- Commit: PR #42
+
 ## Standing note for P1 onward
 
 Two categories are known in advance to need entries in this project, from the sibling product's

@@ -584,12 +584,14 @@ private:
     // either side's momentary drops under the BS.1770 −70 LUFS absolute gate,
     // chosen over a dBFS gate because a mastering plugin meets quiet
     // classical passages). Predict: stateless floor from the deterministic
-    // gain lift (inputGain + limGain + average measured GR), only ever
-    // LOWERING monitor gain — cranking the macro pre-ducks instantly, no
-    // ratchet. Applied = min(measure, predict), smoothed 200 ms, POST-mix so
-    // the bypass leg carries the same compensation (the §2.7 loudness-matched
-    // bypass). Delta = (delay-aligned dry − processed) behind its own
-    // always-running ~10 ms crossfade.
+    // gain lift (inputGain + limGain + the limiter's DEEPEST reduction over the
+    // previous call — a per-call minimum, not an average), only ever LOWERING
+    // monitor gain — cranking the macro pre-ducks instantly, no ratchet.
+    // Applied = min(measure, predict), smoothed 200 ms, on the PROCESSED leg
+    // before the bypass crossfade (ADR-0044), so BYPASS plays the input at
+    // unity and the bypass comparison is loudness-matched. Delta =
+    // (delay-aligned dry − processed) behind its own always-running ~10 ms
+    // crossfade; with MATCH on it is heard as g·(dry − processed).
     LoudnessMeter dryMeter, wetMeter;
 
     // §2.9 render-tap meters (see the public accessors for why these live in

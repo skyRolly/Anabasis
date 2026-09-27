@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Twenty such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`, `[0.2.12]`, `[0.2.13]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Twenty-one such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`, `[0.2.12]`, `[0.2.13]`, `[0.2.14]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,34 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.14] — 2026-09-27
+
+**Phase 1 of the 2026-09-26 product audit: listening and measurement you can trust.** MATCH now
+makes the BYPASS comparison loudness-matched. Nothing here changes a rendered sample, the reported
+latency, a parameter or the saved state. Measurement trail:
+[`worklogs/2026-09-27-phase1-match-statistics-observability.md`](worklogs/2026-09-27-phase1-match-statistics-observability.md).
+
+### Fixed
+- **With MATCH on, BYPASS is now a loudness-matched comparison.** MATCH used to turn the bypassed
+  signal down by the same amount as the processed one, so switching BYPASS still jumped by the full
+  level difference MATCH exists to remove (6.8 LU on pink noise at Loudness 70 %) and BYPASS played
+  your input 5–10 dB below itself. MATCH now brings only the processed signal to the input's
+  loudness, and BYPASS plays the input untouched: the same switch now moves the loudness by +0.6 LU.
+  DELTA with MATCH is unchanged, and nothing changes in an offline bounce or on the meters.
+  [ADR-0044](docs/architecture/design-decisions/ADR-0044-match-applies-to-the-processed-leg-so-bypass-is-loudness-matched.md)
+  (on the owner's direction; flagged for review). Evidence: this release. [Verified]
+
+### Changed
+- **MATCH + BYPASS is 5–10 dB louder than before** — it is now your input at its own level, never
+  louder than a plain BYPASS. A realtime print that automates BYPASS with MATCH on records the input
+  at unity in the bypassed sections. Evidence: this release. [Verified]
+
+### Known issues
+- **MATCH settles slightly low**: the matched processed signal sits +0.6 LU under the input on
+  typical material, up to about 1.7 LU on very hot material — the predict floor counts only the
+  limiter's reduction ([`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-023, audit DSP-005). The next
+  MATCH item.
 
 ## [0.2.13] — 2026-09-27
 
