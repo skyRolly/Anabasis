@@ -458,6 +458,21 @@ rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStradd
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
 
+**Addendum (2026-09-27, 0.2.14) — the Phase 1 records: the roadmap, the gates and the hosts.**
+Documentation only. **Add a document** — `docs/reports/2026-09-27-phase1-roadmap.md`, the durable
+Phase 1 follow-up: per-finding status after this round (UX-009, UX-002, VIS-001, VIS-009, DOC-002,
+TEST-001, VIS-007/VIS-003 step 1 done or in part; DSP-005, VIS-010 next; the rest not started), the
+recommended order for the next round, the owner decisions not taken, and the evidence limits. It is a
+dated snapshot beside the audit, which is not edited; linked from `REPOSITORY_MAP.md`, `README.md`
+and `HANDOVER.md`. The worklog gains its host section (Carla 2.5.8 realtime MATCH/BYPASS against a
+0.2.13 build; Ardour 8.4.0 offline re-exports byte-identical to the review round's; what was not run,
+named host by host), its gates section (local results, the RTSan lane's disclosed allocation-guard
+skip, GitHub not yet run on this round's commits) and the re-check of the review round's pluginval
+exit segfault (15 runs, the failing seed replayed 3 times, not reproduced — recorded as not
+diagnosed, not as fixed). **Ship a version** rows: `HANDOVER.md` (current version 0.2.14, test status,
+pending tasks), `README.md` (suite total 2138 = 565 + 1573; the Phase 1 record). No code, test,
+ADR or policy change in this unit.
+
 **Addendum (2026-09-27, 0.2.14) — the limiter's reduction as a number (audit VIS-007 / VIS-003
 step 1).** Code: `GrHistoryView` gains pure statics (`readingFrom` with `paintHistory`'s epoch/lap
 discipline, `readoutSpan` with a 4096-entry lap margin, `readoutCurrentEntries`, `readoutStale`,

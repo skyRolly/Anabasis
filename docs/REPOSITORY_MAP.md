@@ -164,7 +164,8 @@ docs/
 │                   deferred findings and Phase 1 readiness — options laid out, none chosen) and
 │                   2026-09-27-phase0-closure.md (the decisions taken on that material — ADR-0041,
 │                   ADR-0042 and ADR-0043 accepted — the PR #42 review closed item by item, and the
-│                   Phase 0 status matrix)
+│                   Phase 0 status matrix) and 2026-09-27-phase1-roadmap.md (Phase 1's first
+│                   round per finding, the recommended next order and the open owner decisions)
 ├── procedures/     BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS,
 │                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. PACKAGING arrives
 │                   with the OQ-007 installer set (first commercial release)
