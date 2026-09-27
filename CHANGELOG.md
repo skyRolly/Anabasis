@@ -48,9 +48,9 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ## [0.2.13] — 2026-09-27
 
 **The Phase 0 correctness round from the 2026-09-26 product audit: TP mode now holds its dBTP
-ceiling, and a frozen adaptive sound survives the host re-preparing the plugin.** Both changes sit
-behind the Architecture Review Gate and are recorded as **Proposed** decisions awaiting the owner
-(ADR-0041, ADR-0042); nothing here moves the reported latency, a parameter, the saved state or the
+ceiling, and a frozen adaptive sound survives the host re-preparing the plugin.** Both changes went
+to the Architecture Review Gate and were **accepted** by the owner on 2026-09-27 (ADR-0041,
+ADR-0042), with the meter "dBTP" is defined on settled the same day (ADR-0043); nothing here moves the reported latency, a parameter, the saved state or the
 signal order, and true-peak mode OFF renders bit-identically to 0.2.12. Three further audit findings
 were decided as disclosures rather than changes, because each needs an owner decision first —
 [`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-021 (a factory preset turns TP, Dither and Noise
@@ -70,14 +70,14 @@ figures). Measurement trail: [`worklogs/2026-09-27-phase0-product-correctness.md
   audio plays (0 of 248 tested switch-ons, worst +0.003 dB). In a real DAW — an Ardour offline render through
   the plug-in — the same hot programme went from 0.97 dB over the ceiling to exactly on it. A
   long-kernel reference meter still reads up to about 1 dB over on synthetic programme with strong
-  content right below Nyquist — recorded in KI-020, not claimed. ADR-0041 (Proposed). Evidence:
+  content right below Nyquist — recorded in KI-020, not claimed. ADR-0041 (Accepted 2026-09-27). Evidence:
   this release. [Verified]
 - **FREEZE keeps the frozen sound when the host re-prepares the plugin.** A buffer-size or
   sample-rate change — and in some hosts a transport start or the start of a bounce — silently
   reset the adaptive engine's frozen adjustments to zero while FREEZE stayed lit and the saved
   session still held them, so the audio, the button and the save disagreed. The frozen vector now
   comes back on the first block after the re-prepare whenever Freeze is on; with Freeze off,
-  adaptation restarts as before. ADR-0042 (Proposed). Evidence: this release — verified on the
+  adaptation restarts as before. ADR-0042 (Accepted 2026-09-27). Evidence: this release — verified on the
   engine and the processor; not yet observed in a DAW. [Verified]
 
 ### Changed
@@ -87,12 +87,12 @@ figures). Measurement trail: [`worklogs/2026-09-27-phase0-product-correctness.md
   programme stops at the switch — its last value fades to silence over ~6 ms, checked so that
   nothing from the switch on exceeds the dBTP ceiling — then the same hold and ~28 ms fade-in; a
   bright or tonal programme hears a more abrupt stop than a fade, though far from a hard cut.
-  Presets, A/B and undo already sat inside such a dip. ADR-0041 (Proposed). Evidence: this
+  Presets, A/B and undo already sat inside such a dip. ADR-0041 (Accepted 2026-09-27). Evidence: this
   release. [Verified]
 - **In TP mode the longest lookahead settings engage slightly less** — about 0.9 ms less at the top
   of the range at 44.1/48 kHz (9.125 ms at a 10 ms setting at 48 kHz), because the ceiling's
   true-peak detection takes that share of the fixed allowance. The latency reported to the host is
-  unchanged. ADR-0041 (Proposed). Evidence: this release. [Verified]
+  unchanged. ADR-0041 (Accepted 2026-09-27). Evidence: this release. [Verified]
 - **TP mode costs about 0.6 % more of one core** at the budget case (48 kHz, 4× oversampling:
   3.0 % → 3.6 %, measured on the reference Xeon; method in `TEST_REPORT.md`). Evidence: this
   release. [Verified]

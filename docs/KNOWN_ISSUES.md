@@ -36,9 +36,10 @@ it does not check heading nesting, so this convention is held by hand.
 
 ## Open issues
 
-*(KI-001 — unducked discrete transitions — KI-002 — inert Loudness Comp/Delta — and KI-009 — the
-silent left channel — are FIXED and recorded as `POSTMORTEMS.md` INC-001/INC-002/INC-004; their
-numbers are never reused. KI-009's entry ran to five months of round-by-round investigation, and
+*(KI-001 — unducked discrete transitions — KI-002 — inert Loudness Comp/Delta — KI-009 — the
+silent left channel — and KI-006 — a re-prepare dropping a frozen slot's trims from the audio — are
+FIXED and recorded as `POSTMORTEMS.md` INC-001/INC-002/INC-004/INC-007; their numbers are never
+reused. KI-009's entry ran to five months of round-by-round investigation, and
 what was durable in it — the hypotheses the rounds excluded, and the two ways the probe that
 finally reproduced it was vacuous first — moved into INC-004 with the mechanism, because a fixed
 issue's record lives there.)*
@@ -361,126 +362,6 @@ Evidence [Verified]:
 
 ---
 
-### KI-006 — A sample-rate change silently drops a frozen slot's adaptation from the AUDIO and the readout, while the SAVE keeps it
-
-**Severity:** Medium
-**Status:** **Fix pending the owner's decision (2026-09-27)** — the audio half is implemented by
-**ADR-0042** (Proposed, behind the Freeze-semantics gate): with Freeze ON, the first block after a
-re-prepare brings the latched vector back into the audio and the readout, without moving the
-retained set or its generation. Pinned by `testAFrozenLatchSurvivesARePrepare` and
-`testPreparedStateAndSlotOwnership` case 4. When the owner accepts, this entry moves to
-`POSTMORTEMS.md`; until then the text below describes `main`. The save half is CLOSED (round 38,
-corrected in 39, completed in 40). *(Audit finding STATE-004.)*
-**Affects:** all platforms/formats. Trigger: Freeze ON with a latched trim
-vector, then any `prepareToPlay` — a host sample-rate or block-size change.
-
-`AnabasisEngine::prepare` calls `AdaptiveEngine::prepare` → `reset()`, which
-zeroes the internal `trims` struct along with the features **and republishes
-them**: `reset()`'s last step is a `publishTrims` call, so all four published
-atomics go to zero too, whatever Freeze says. (This entry asserted the opposite
-until 2026-08-03 — "the PUBLISHED trim atomics are NOT zeroed, and cannot be",
-reasoning from `finishBlock`'s `if (! freeze && audible)` guard and missing the
-`reset()` publish. Corrected against the code, which is the authority.)
-
-The consequence was therefore SYMMETRIC, not one-sided: after a re-prepare the
-engine applies a zero trim vector to the audio, the Advanced overlay reads zeros
-with it, **and the state half went with them**. What never went to zero is the
-wrapper's `liveFrozenTrims` mirror — the copy a load/A-B/undo placed — so a slot
-whose vector arrived that way still serialised the right thing; a vector latched
-LIVE in the session had no mirror, and after a re-prepare there was nothing left
-to save (before round 39 the save wrote the post-reset zeros, an INVALID vector
-that the next load re-injected; after it, no `FROZEN_TRIMS` child at all).
-
-**The state half is CLOSED (round 40, re-implemented correctly at round 41,
-slot-scoped at round 42) and the audio half is what remains.** The fix is an ownership statement rather than
-a Freeze decision: the ENGINE owns the durable copy, in `AdaptiveEngine`'s
-**retained** trim set — four lock-free scalars plus a release-stored flag that
-`reset()` does not clear, so the latched vector outlives a re-prepare exactly as
-`learned`/`refOnsetRate`/`refTiltDb` always have. The PUBLISHED set keeps its
-current meaning (what the DSP is applying, zeroed by `reset()`), which is what
-keeps the overlay honest. The save prefers the engine whenever
-`! frozenRestorePending() && hasRetainedTrims()` — both clauses in
-`engineFrozenTrimsIfLive()` — and falls back to the wrapper's mirror for the
-staged-but-unapplied window, which is the only window the mirror covers.
-Guarded by `testPreparedStateAndSlotOwnership` case 4 (`liveLatch:`), which
-asserts the two sets part company at the re-prepare.
-
-**Round 42 added the slot scope the retained set could not carry by itself.**
-`FROZEN_TRIMS` is per-slot; the retained vector is engine-wide and knows nothing
-about A/B. After a switch into a freeze-ON slot holding no vector of its own,
-nothing stages a restore (the stage is gated on the mirror being valid), the
-generation pair stays equal, and the incoming slot's next save serialised the
-OUTGOING slot's latch as its own — after which the next A/B or undo restore
-injected it. The retained set is a runtime CACHE of the last latch and may only
-answer for the slot it was filled under, so the wrapper records the retained
-GENERATION whenever the live surface's frozen ownership changes
-(`adoptFrozenMirror`, the single writer of the mirror) and adopts the engine's
-answer only when the generation has advanced past it. `testAFrozenLatchDoesNotFollowTheSlotSwitch`.
-
-**Round 40's version of this fix was itself a defect, recorded because the shape
-recurs:** it declared the wrapper's `juce::ValueTree` mirror the durable owner
-and had `prepareToPlay` copy the latch into it. `prepareToPlay` is a host
-callback JUCE does not deliver on the message thread, and the editor's
-`presetDirty()` poll read and `createCopy()`d that same member continuously (it
-went through `saveSlotFromLive()` until round 51 moved the marker onto
-`presetShapeFromLive()`, which touches no ValueTree at all) — both sides gated
-on Freeze being ON, so the windows coincided exactly rather than being disjoint. ThreadSanitizer reports it as a data race on
-`ReferenceCountedObjectPtr<ValueTree::SharedObject>::get()` plus one on the
-refcount increment; the current code is TSAN-clean on the same stimulus
-(`testTheFrozenLatchNeedsNoThreadCrossing`). The lesson is general: state that
-must survive a re-initialisation should be RETAINED where it already lives, not
-copied across a thread boundary to somewhere more durable.
-
-What is still open, unchanged: after a re-prepare the ENGINE applies a zero trim
-vector and the Advanced overlay reads zeros until the next load, A/B or undo
-re-injects the mirror. Closing that means "keep the trims across `reset()`",
-covering the published atomics as well as the internal struct since both are
-cleared together — which is a Freeze-semantics change, an Architecture Review
-Gate item and an AI-agent Hard Stop (`MODE_AND_ADAPTATION_POLICY` Enforcement),
-so it stays owner's business rather than a repair.
-
-**Found by** the adversarial verification pass over review round 24
-(2026-08-03), not by the review itself; it PREDATES ADR-0014 (P4 shipped the
-same reset), which is why it is recorded rather than folded into that round's
-fixes.
-
-**Why it is not simply "keep the trims across reset".** That is the likely
-resolution — the trim vector is a bounded, rate-independent control value, not
-signal state, and carrying it would also make an un-frozen re-prepare re-slew
-from where it was instead of jumping to zero — but it changes what
-`MODE_AND_ADAPTATION_POLICY` invariant 3's Freeze clause promises across a
-discontinuity, which is an owner/ADR call, not a bug fix. It would also have to
-carry the PUBLISHED copy, not just the internal struct — see the correction
-above. The alternative (re-stage the vector from the wrapper at
-`prepareToPlay`) used to be blocked by the same asymmetry — `liveFrozenTrims`
-held one only after a load — and round 41 removes that objection from the other
-side: the engine's RETAINED set holds a live latch too, so the audio-side fix no
-longer needs the wrapper at all. It would be a one-line re-injection from the
-retained values at the end of `reset()`. It is still not done here, because that
-IS the Freeze-semantics change this section defers; the retained set deliberately
-stops at the serialization boundary and feeds no audio path.
-
-**The SAVE half of the same gap, added 2026-08-03 (review round 27), CLOSED 2026-08-03 (round
-38).** The description above is about the audio; the capture had the mirror-image problem.
-`saveSlotFromLive` read `publishedTrim*()` whenever Freeze was on and no restore was pending — and
-on an instance that was prepared but had never PROCESSED a block, those atomics are all zero, so
-the session serialised an all-zero `FROZEN_TRIMS` for a slot the user believes holds a latched
-vector and the next load injected zeros. It needed no answer to the audio half after all: the
-capture now also requires `AdaptiveEngine::hasPublishedTrims()`, because "all four read 0" is
-otherwise indistinguishable between *measured, and the answer is no trim* and *initialisation* —
-and a value nothing measured cannot be more truthful than the one the slot already holds. The flag
-tracks the CURRENT contents of the four atomics rather than "has one ever been published": it is
-set by an audible `finishBlock` and by an ADR-0014 `injectTrims`, and CLEARED by `reset()` along
-with the values. Round 38 shipped it as a one-way flag set inside `publishTrims()` — which
-`reset()` also calls — so it read true for every prepared instance and the guard was inert; round
-39 made it mean what its name says. Round 40 closed the remaining save case — a latch established
-LIVE, whose only record was the atomics the re-prepare cleared — and round 41 re-implemented that
-closure without a thread crossing, by retaining the vector in the engine instead of copying it into
-the wrapper's mirror from a host callback (see above). The AUDIO half above is untouched and still
-needs the owner call.
-
-**For the post-v0.1.0 fine review.**
-
 ### KI-007 — Preset/Freeze bookkeeping edges the fine review must settle together
 
 **Severity:** Low (each is display or recall bookkeeping; none changes a rendered sample on its own)
@@ -497,7 +378,9 @@ record.
    across a preset change, the next save serialises it, and the next A/B or undo restore
    re-injects it. Whether a preset should carry or clear the Freeze memory is a
    `MODE_AND_ADAPTATION_POLICY` invariant-3 question, and it is the same question **KI-006**
-   asks about a re-prepare. Settle them together or the two answers will disagree.
+   asked about a re-prepare. Settle them together or the two answers will disagree. *(2026-09-27:
+   KI-006 is closed — ADR-0042, accepted, answers it for a re-prepare: with Freeze ON the applied
+   vector carries. This item stays open, and its answer should be consistent with that one.)*
 
 2. **RESOLVED 2026-08-08 (ADR-0022) — preset-ring navigation identified the current entry by
    NAME.** `stepPreset` matched `currentPresetName()` against the factory table first and the
@@ -640,7 +523,8 @@ record.
    preserves this pre-existing shape rather than resolving it — `testAFrozenLatchDoesNotFollowTheSlotSwitch`
    pins that the carry does not make it worse.
 
-**For the post-v0.1.0 fine review, alongside KI-006.**
+**For the post-v0.1.0 fine review, alongside ADR-0042 option A** (Freeze OFF across a re-prepare
+— KI-006, closed 2026-09-27 as `POSTMORTEMS.md` INC-007, settled only the Freeze ON half).
 
 ---
 
@@ -1222,7 +1106,8 @@ another's time base, and the price is that non-ring readers may lag by one recon
 > its own publication schedule while leaving the rate on the processor's. Measured at 6 kHz, bin 512
 > at 48 kHz and bin 256 at 96 kHz: −0.00 dB paired, −116.80 dB and −120.00 dB crossed. Repaired by
 > carrying the rate INSIDE the published frame and taking it under the GR ring's epoch (ADR-0039,
-> `Proposed`); `SpectrumView` therefore moves from the banner's unbracketed discipline to its
+> Accepted 2026-09-06 — this read `Proposed` until the 2026-09-27 acceptance sweep found it);
+> `SpectrumView` therefore moves from the banner's unbracketed discipline to its
 > bracketed one, and `CurveView` is the only unbracketed reader left — legitimately, since its curve
 > comes from the parameter set and not from a ring, and its "bounded correct-but-late frame" reading
 > above is unchanged.
@@ -1562,7 +1447,7 @@ the measurement below is what the decision is made on
 with energy in the last few percent below Nyquist, and after a large Post-EQ high shelf
 
 "dBTP" is the maximum of the continuous waveform, and every meter approximates it. On the engine's
-TP-mode output (ADR-0041, Proposed) the ceiling holds on the product's own dBTP meter and on the
+TP-mode output (ADR-0041, Accepted 2026-09-27) the ceiling holds on the product's own dBTP meter and on the
 BS.1770 Annex 2 example filter, the two readings the clamp is built to hold — worst **+0.005 dB**
 over 2736 TP-mode configurations covering every oversampling cell. Two further meters still read a
 residual:

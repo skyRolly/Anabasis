@@ -11,8 +11,9 @@
 > also makes the Ceiling's displayed unit follow the mode instead of asserting dBTP.
 
 > **Implemented by [ADR-0041](ADR-0041-clamp-true-peak-path-inside-the-latency-allowance.md)
-> (Proposed 2026-09-27, awaiting the owner).** Items 2–3's true-peak half was never built — the
-> clamp stayed the P1 sample clip in both modes until then (audit finding DSP-001), so the banner
+> (Accepted 2026-09-27; filed `Proposed` and held at the gate until the owner answered).** Items
+> 2–3's true-peak half was never built — the clamp stayed the P1 sample clip in both modes until
+> then (audit finding DSP-001), so the banner
 > above ("still with its own true-peak tap") described the decision, not the code. ADR-0041 builds
 > it, and departs from item 2's wording in one respect it states: the clamp's reading is the largest
 > of the shared estimator's phases, an accurate interpolator and the BS.1770 Annex 2 example filter.

@@ -6,8 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **the PR #42 review round (2026-09-27, still 0.2.13)** — the true-peak
-engagement fix (ADR-0041 decision 5 revised, still Proposed), the JUCE-free split of the clamp's
+**Last updated:** for **the Phase 0 closure (2026-09-27, still 0.2.13)** — ADR-0041 and ADR-0042
+accepted by the owner, KI-006 closed as INC-007 (addendum below). Before that, for **the PR #42 review
+round (2026-09-27, still 0.2.13)** — the true-peak engagement fix (ADR-0041 decision 5 revised, then
+Proposed), the JUCE-free split of the clamp's
 detector that restores the `realtime` gate, and the owner's decision material in
 [`docs/reports/2026-09-27-phase0-owner-decisions.md`](reports/2026-09-27-phase0-owner-decisions.md);
 evidence in [`worklogs/2026-09-27-pr42-review-closure.md`](../worklogs/2026-09-27-pr42-review-closure.md)
@@ -454,6 +456,30 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-27, Phase 0 closure, still 0.2.13) — ADR-0041 and ADR-0042 accepted, recorded
+in the four places.** The owner accepted both records on 2026-09-27 ("Accept Phase 0 Decisions, Close
+PR #42"). No code moved except one comment; the round is the status change and every document that
+carried the pending state. Rows engaged (the lifecycle map has no row for an ADR STATUS change —
+reported as a gap in the closure record; the precedent set of `2f5541e`, ed4f9ba and 134e7fd was
+followed): **the ADRs** — ADR-0041 and ADR-0042 each gain a `✅ RATIFIED` banner that keeps the gate
+reasoning in past tense, an `Accepted — 2026-09-27` status naming what the approval covers and what it
+does not, and re-tensed revision banners; nothing in Decision rewritten. ADR-0041 decision 7 gains a
+dated pointer to the definition decision, and decision 8 a third prescribed bullet — invariant 8's
+decay sentence had been in `DSP_POLICY.md` since the PR #42 review without being prescribed, found
+by the closure sweep and completed so the approval covers the policy text as it stands. **Banners on
+the records they move** — ADR-0004 (the proposed amendment is now in effect), ADR-0006, ADR-0014,
+ADR-0015. **ADR_INDEX** — both status cells, the ADR-0006 evidence cell, three rows of the amendment
+registry (the "takes effect only if accepted" clause removed). **Policies and ledgers** — `DSP_POLICY.md`
+invariants 2 and 8 and the invariant→test map, `MODE_AND_ADAPTATION_POLICY.md`, `LATENCY_MODEL.md`,
+`FUTURE_RISKS.md` RISK-003. **Known issues** — KI-006 closed and moved to `POSTMORTEMS.md` INC-007 (its
+own text committed to the move; the durable lessons of its eight weeks moved with it), KI-007 item 1
+and its footer re-pointed, KI-020's ADR marker. **Ship a version** — `CHANGELOG.md` 0.2.13 amended in
+place (unreleased; `2f5541e`'s precedent), `HANDOVER.md` (the Current Version row, and a Pending Tasks
+lead that 0.2.13 never had). **Drift corrected:** KI-018 still read ADR-0039 as `Proposed`, three weeks
+after its acceptance — the risk this sweep exists for; corrected with a dated note. Historical records —
+the two 2026-09-27 worklogs, the follow-up and decision reports, the audit, earlier addenda — are
+not edited.
 
 **Addendum (2026-09-27, PR #42 review, still 0.2.13) — the engagement leak, the `realtime` gate and
 the owner's decision material.** Code: `EngagementTail` (`CeilingClamp.h`) and the engagement block

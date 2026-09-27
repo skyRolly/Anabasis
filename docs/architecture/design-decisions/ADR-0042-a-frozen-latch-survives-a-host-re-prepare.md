@@ -1,13 +1,24 @@
 # ADR-0042 — A frozen trim latch survives a host re-prepare in the AUDIO, not only in the save
 
-**Status:** **Proposed — 2026-09-27, awaiting the owner's decision at the Architecture Review
-Gate.** It changes what Freeze does across a discontinuity, which `MODE_AND_ADAPTATION_POLICY.md`
-Enforcement puts behind the gate and `KNOWN_ISSUES.md` KI-006 deferred to the owner for exactly that
-reason. The round that carries it was asked, in the owner's own words, to make "the visible FREEZE
-state and the actual processing state agree" (audit finding **STATE-004**); this record is how, and
-the choice among the ways of doing it is still the owner's to confirm. It extends ADR-0014 (the
-frozen vector *restored*) with what happens to a vector that is already *applied* when the host
-re-prepares; ADR-0014 itself is untouched.
+> **✅ RATIFIED — THE ARCHITECTURE REVIEW GATE IS CLEARED (2026-09-27).** The owner accepted this
+> record — option C as written below. How it arrived stays in the record: it changes what Freeze does
+> across a discontinuity, which `MODE_AND_ADAPTATION_POLICY.md` Enforcement puts behind the gate and
+> `KNOWN_ISSUES.md` KI-006 deferred to the owner for exactly that reason. The round that carried it
+> was asked, in the owner's own words, to make "the visible FREEZE state and the actual processing
+> state agree" (audit finding **STATE-004**); this record is how, and the choice among the ways of
+> doing it was the owner's to confirm. It was filed `Proposed` with the code in the tree, flagged in
+> the pull request as a gate item a green build does not clear, re-verified path by path in the PR
+> #42 review with no change to the code, and held there until the owner answered.
+
+**Status:** **Accepted — 2026-09-27**, on the owner's explicit approval of this record (the
+instruction of record: "Accept Phase 0 Decisions, Close PR #42"). It was NOT covered by the standing
+blanket approval for the post-v0.1.0 rounds — a Freeze-semantics change is a gate item that approval
+never reached. The approval is of option C as recorded below — the applied vector carried across
+`AdaptiveEngine::reset()` and re-adopted by the first block whose snapshot has Freeze ON, with only
+the applied/published set restored — and explicitly *not* of option A (Freeze OFF restarting from
+rest) or of `KNOWN_ISSUES.md` KI-007 item 10 (the A/B trigger), which stay separate open decisions.
+It extends ADR-0014 (the frozen vector *restored*) with what happens to a vector that is already
+*applied* when the host re-prepares; ADR-0014 itself is untouched.
 
 ## Context
 
@@ -81,7 +92,8 @@ wrong slot)?
   across a re-prepare rather than resolving it; `KNOWN_ISSUES.md` KI-007 keeps it with the owner.
 - **With Freeze OFF a re-prepare still restarts adaptation from rest** (a step, which invariant 3's
   "rate-limited, not stepped" arguably also forbids) — option A, deliberately left to the owner.
-- `KNOWN_ISSUES.md` KI-006's audio half is closed for the re-prepare trigger when this is accepted.
+- `KNOWN_ISSUES.md` KI-006's audio half is closed for the re-prepare trigger *(accepted 2026-09-27;
+  KI-006 is closed and moved to `docs/POSTMORTEMS.md` INC-007)*.
 
 ## Related code
 
@@ -100,7 +112,10 @@ staged-restore injection (decision 2's ordering reversed) fails four DSP checks 
 last word" is pinned; the lifecycle paths (re-prepare at the same and a new rate, Freeze engaged while
 stopped, session load before `prepareToPlay`, save after a re-prepare, A/B, preset load, entry to an
 offline bounce, host activate cycles) are tabulated with their evidence in
-`docs/reports/2026-09-27-phase0-owner-decisions.md` §3, with a technical recommendation. **Not verified
+`docs/reports/2026-09-27-phase0-owner-decisions.md` §3, with a technical recommendation (decision
+material; accepted 2026-09-27). Re-checked at acceptance on the accepted tree: code unchanged since
+the review, the ordering mutation still pinned, preset and A/B coherence as tabulated there
+(`docs/reports/2026-09-27-phase0-closure.md`). **Not verified
 in a DAW:** whether a given host re-prepares
 on transport start or before a bounce (the audit's TEST-002); a scripted Carla host re-prepared the
 plugin through deactivate/activate with Freeze and every parameter preserved, but its engine carried

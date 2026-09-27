@@ -223,7 +223,7 @@ back with the struct when the vector comes back — or the P5 overlay would repo
 is not using (KI-006's readout half); `retainedTrim*()` is *the vector this instance last latched*,
 which is persistence state.
 
-**Across a host re-prepare, a frozen vector keeps playing** (**ADR-0042**, Proposed 2026-09-27 —
+**Across a host re-prepare, a frozen vector keeps playing** (**ADR-0042**, Accepted 2026-09-27 —
 audit finding STATE-004, KI-006's audio half). `reset()` stashes the applied vector, and the first
 block after it re-adopts it when that block's snapshot has Freeze ON — the first moment the Freeze
 state is known, which is why the decision is not taken inside `reset()` (a user may engage Freeze

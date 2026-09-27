@@ -4,8 +4,8 @@
 v0.1.0 blanket approval of 2026-08-02; flagged ⊕ for the post-v0.1.0 fine review like every
 decision taken under that approval)
 
-> **Extended by [ADR-0042](ADR-0042-a-frozen-latch-survives-a-host-re-prepare.md) (Proposed
-> 2026-09-27, awaiting the owner).** This record restores a STAGED vector; ADR-0042 decides what
+> **Extended by [ADR-0042](ADR-0042-a-frozen-latch-survives-a-host-re-prepare.md) (Accepted
+> 2026-09-27; filed `Proposed` and held at the gate until the owner answered).** This record restores a STAGED vector; ADR-0042 decides what
 > happens to an already-APPLIED one when the host re-prepares (it keeps playing while Freeze is ON).
 > Nothing here moves.
 

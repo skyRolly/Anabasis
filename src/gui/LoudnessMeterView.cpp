@@ -261,7 +261,7 @@ void LoudnessMeterView::paint (juce::Graphics& g)
     // the ceiling 0.005 dB is ≈ 18 LSB at 16-bit, so flat and shaped TPDF both
     // fit inside it, and neither is a limiter failure. The TP row keeps its
     // exact test deliberately: its over-warning is the documented one above.
-    // It measured a quantity the clamp did not bound until ADR-0041 (Proposed);
+    // It measured a quantity the clamp did not bound until ADR-0041 (Accepted);
     // in true-peak mode the clamp now holds this estimator's reading to the
     // ceiling within invariant 4's 0.1 dB, and measured a few thousandths of a
     // dB above it on ~3 % of hostile configurations — so this row can warn

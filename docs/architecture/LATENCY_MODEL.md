@@ -30,7 +30,7 @@ changes reported latency by exactly **nothing**, so host PDC never re-syncs mid-
 This is also why `lookahead` is non-automatable-advisory: the engaged value is a live read
 offset, not a PDC input (`PARAMETER_REGISTRY.md` §non-automatable rows).
 
-**In true-peak mode the allowance is shared** (ADR-0041, Proposed 2026-09-27). The ceiling
+**In true-peak mode the allowance is shared** (ADR-0041, Accepted 2026-09-27). The ceiling
 clamp's true-peak path needs a short delay of its own — `D = attack + 30` samples,
 `CeilingClamp::truePeakDelayFor` (41 at 44.1 kHz, 42 at 48 kHz, 54 at 96 kHz, 78 at
 192 kHz) — and takes it OUT of the allowance rather than adding it: the region's lookahead

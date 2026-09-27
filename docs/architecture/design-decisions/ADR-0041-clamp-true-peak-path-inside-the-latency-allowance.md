@@ -1,35 +1,49 @@
 # ADR-0041 — The ceiling clamp's true-peak path, inside the constant latency allowance
 
-**Status:** **Proposed — 2026-09-27, awaiting the owner's decision at the Architecture Review
-Gate.** This record implements a decision that was already Accepted — ADR-0006 items 2 and 3, the
-clamp's own true-peak estimate driving its gain — and that the code never carried out (audit finding
-**DSP-001**, `docs/reports/2026-09-26-anabasis-product-ux-audit/findings-dsp-tech.md`). Carrying it out
-is not free of gate items, and they are named here rather than left for a reviewer to find:
+> **✅ RATIFIED — THE ARCHITECTURE REVIEW GATE IS CLEARED (2026-09-27).** The owner accepted this
+> record as revised in the PR #42 review, and settled on the same day the question its decision 7
+> left open — which meter "dBTP" is defined on — as its own record, ADR-0043 (the product meter and
+> the BS.1770 Annex 2 filter). How it arrived stays in the record, because
+> that is the half worth keeping. This record implements a decision that was already Accepted —
+> ADR-0006 items 2 and 3, the clamp's own true-peak estimate driving its gain — and that the code
+> never carried out (audit finding **DSP-001**,
+> `docs/reports/2026-09-26-anabasis-product-ux-audit/findings-dsp-tech.md`). Carrying it out was not
+> free of gate items, and they were named here rather than left for a reviewer to find:
+>
+> 1. **A conflict with Accepted ADR-0004.** The true-peak path needs lookahead of its own; to keep
+>    the reported latency constant it takes that lookahead out of the 10 ms allowance, which amends
+>    ADR-0004 items 1, 2 and 7 **for true-peak mode only** (item 1: "no other stage contributes";
+>    item 2: the audio delay through the limiter stage is the full 10 ms; item 7: the lookahead
+>    range is exactly 0.5–10 ms). The **reported** latency does not move by a sample — only its
+>    composition.
+> 2. **A wording departure from Accepted ADR-0006 item 2** ("both instances come from the shared
+>    BS.1770-4 estimator"): the clamp's detector evaluates the shared estimator's phases *and* two
+>    more readings (decision 3). ADR-0006's purpose for item 2 — an estimate of the clamp's own
+>    input, a measurement tap that never resamples the audio — is kept exactly.
+> 3. **A DSP signal-flow change** (`DSP_POLICY.md` Enforcement: "any change to … the ceiling
+>    clamp, or the latency contract"), and a **policy amendment**: invariant 2's body and invariant
+>    8's enumeration, carried in decision 8 as prescribed text.
+>
+> It was filed `Proposed`, flagged in the pull request as a gate item a green build does not clear,
+> revised once in the PR #42 review, and held there until the owner answered.
 
-1. **A conflict with Accepted ADR-0004.** The true-peak path needs lookahead of its own; to keep the
-   reported latency constant it takes that lookahead out of the 10 ms allowance, which amends
-   ADR-0004 items 1, 2 and 7 **for true-peak mode only** (item 1: "no other stage contributes";
-   item 2: the audio delay through the limiter stage is the full 10 ms; item 7: the lookahead range
-   is exactly 0.5–10 ms). The **reported** latency does not move by a sample — only its composition.
-2. **A wording departure from Accepted ADR-0006 item 2** ("both instances come from the shared
-   BS.1770-4 estimator"): the clamp's detector evaluates the shared estimator's phases *and* two more
-   readings (decision 3). ADR-0006's purpose for item 2 — an estimate of the clamp's own input, a
-   measurement tap that never resamples the audio — is kept exactly.
-3. **A DSP signal-flow change** (`DSP_POLICY.md` Enforcement: "any change to … the ceiling clamp, or
-   the latency contract"), and a **policy amendment**: invariant 2's body and invariant 8's
-   enumeration, carried in decision 8 as prescribed text.
+**Status:** **Accepted — 2026-09-27**, on the owner's explicit approval of this record (the
+instruction of record: "Accept Phase 0 Decisions, Close PR #42"). It was NOT covered by the standing
+blanket approval for the post-v0.1.0 rounds — a conflict with an Accepted ADR and a signal-flow change
+are gate items that approval never reached. The approval is of the design recorded below — the four
+items under "What the owner was asked to decide", and decision 8's prescribed policy text as
+completed at acceptance — and explicitly *not* of the voicing constants (attack 0.25 ms, release
+10 ms), which stay ⊕ listening material, nor of the TP-mode cost at ≥ 4× over DESIGN §9's
+limiter + TP-detection row (`PERFORMANCE_BUDGET.md`), which stays recorded.
 
-A green build does not clear any of these. Until the owner accepts, the PR that carries this record
-is not to be merged.
-
-> **Revised 2026-09-27, still Proposed (review of PR #42).** A review found that ENGAGING true-peak
+> **Revised 2026-09-27, before acceptance (review of PR #42).** A review found that ENGAGING true-peak
 > mode while audio plays leaked the requested ceiling: the latch waited for the §2.8 duck's out-leg,
 > and that out-leg is emitted by the composition being replaced, whose clamp is the sample clip —
 > measured up to +4.7 dB (product meter) / +5.5 dB (Annex 2) over the ceiling after the toggle.
 > Decision 5 is revised (engaging no longer rides the out-leg), decision 8's prescribed text with it,
 > the detector moved into its own JUCE-free header (decision 2; the first cut had put a JUCE include
 > under the ceiling stage and failed the `realtime` CI gate), and the Consequences, Related code,
-> Evidence and a new "What the owner is asked to decide" section follow. Nothing else moved: the
+> Evidence and a new "What the owner is asked to decide" section followed. Nothing else moved: the
 > latency composition, the three readings, the gain law and every steady-state figure are unchanged
 > and re-measured bit-identical (the PR #42 review worklog).
 
@@ -189,6 +203,9 @@ tap either uses a more accurate estimator or carries a stated margin".
 7. **Verification is on independent meters, at the policy's own 0.1 dB.** The durable guard
    (`testTruePeakModeHoldsTheCeiling`) reads every run with the product meter AND an independently
    implemented Annex 2 meter; the matrix in the worklog adds libebur128 and a 32×/128-tap reference.
+   *(Settled at acceptance, 2026-09-27, by ADR-0043: the two meters the durable guard reads are the
+   ones "dBTP" is DEFINED on — `DSP_POLICY.md` invariant 4 — and libebur128 and the long-kernel
+   reference are reference and compatibility measurements, recorded and not asserted.)*
 
 8. **Policy amendment (prescribed text, `ADR_POLICY.md` rule 5).**
    - `DSP_POLICY.md` invariant 2 gains, after "the engine pads the difference": *"In true-peak mode
@@ -200,6 +217,14 @@ tap either uses a more accurate estimator or carries a stated margin".
      latched at the §2.8 duck's silent bottom like an oversampling change — disengaging through the
      out-leg, engaging (revised in the PR #42 review) through a checked decay of the last emitted frame, so
      the ceiling holds from the toggle.
+   - *(Completed at acceptance, 2026-09-27, so the approval covers the policy text as it stands.)*
+     Invariant 8's parenthetical also carries the one place it yields to invariant 4: *"The decay is
+     value-continuous; where the audio just before the toggle would ring above the ceiling it
+     starts lower, the one place this invariant yields to invariant 4 — no lower than −1.7 dB over
+     a 248-configuration hostile sweep, −3.2 dB for a synthetic full-scale Nyquist-rate history."*
+     The sentence had been in the policy since the PR #42 review without being prescribed here;
+     the behaviour it states is decision 5's and the Consequences' below. Invariant 4's own
+     definition of "dBTP" is ADR-0043's prescribed text, not this record's.
 
 ## Consequences
 
@@ -210,8 +235,10 @@ tap either uses a more accurate estimator or carries a stated margin".
   programme with strong content in the last few percent below Nyquist (clicks, near-Nyquist tones,
   a +12 dB Post shelf), and libebur128 reads a smaller residual. Filtering that content to 20 kHz
   before measuring makes the reference read HIGHER, not lower — the "true" peak of near-Nyquist
-  content depends on the reconstruction filter. Which yardstick defines the promise is the owner's
-  call (audit DSP-001 sub-item (a)); `KNOWN_ISSUES.md` KI-020 carries the figures and the options (a
+  content depends on the reconstruction filter. Which yardstick defines the promise was the owner's
+  call (audit DSP-001 sub-item (a)), taken at acceptance: ADR-0043 defines "dBTP" on the product
+  meter and the Annex 2 filter, so those two residuals are reference/compatibility measurements
+  outside the definition; `KNOWN_ISSUES.md` KI-020 carries the figures and the options not taken (a
   longer accurate kernel measured to halve the residual, at twice the lookahead and CPU).
 - **The limiter's longest window in true-peak mode is 10 ms − D.** Invisible below that setting.
 - **A true-peak toggle dips the output**, like any latched rewire; a preset, A/B or undo step that
@@ -243,9 +270,9 @@ tap either uses a more accurate estimator or carries a stated margin".
 - **Forecloses:** reporting the clamp's delay as extra latency; a clamp detector that reads fewer
   than the three readings without a new record.
 
-## What the owner is asked to decide *(added in the PR #42 review)*
+## What the owner was asked to decide *(added in the PR #42 review; decided 2026-09-27)*
 
-Accepting this record accepts four things together, each of which the gate needs to see:
+Accepting this record accepted four things together, each of which the gate needed to see:
 
 1. **The TP-mode latency composition** (decision 4). Verified against the code on 2026-09-27:
    `CeilingClamp::truePeakDelayFor` = attack + 30 with attack = max(8, round(0.25 ms · fs)) —
@@ -257,8 +284,9 @@ Accepting this record accepts four things together, each of which the gate needs
    unchanged across TP toggles in a host (Carla, 480 samples at 48 kHz). The engagement fix of
    decision 5 adds no latency: it changes only when the latch happens, not what it latches.
 2. **The detector** (decisions 2–3): three readings, a stated departure from ADR-0006 item 2's
-   wording, and the yardstick question it leaves open — which meter defines "dBTP" is a separate owner
-   decision, laid out with measurements in `docs/reports/2026-09-27-phase0-owner-decisions.md`.
+   wording, and the yardstick question it left open — which meter defines "dBTP" was a separate owner
+   decision, laid out with measurements in `docs/reports/2026-09-27-phase0-owner-decisions.md` and
+   taken the same day (ADR-0043: Option 1).
 3. **The engagement transition** (decision 5, revised): the ceiling holds from the toggle, at the
    cost of the programme stopping at the toggle instead of fading (and, only where the audio just
    before the toggle would ring above the ceiling, a small step — −1.7 dB at worst over the hostile
@@ -270,13 +298,14 @@ Accepting this record accepts four things together, each of which the gate needs
    ~2 ms after the toggle, samples that a latency-compensated host places *before* the toggle on
    its timeline; or an instant mute — the same guarantee as the decay with a step of up to full
    scale at every engagement.
-4. **The policy text** (decision 8): invariant 2's sentence and invariant 8's enumeration.
+4. **The policy text** (decision 8): invariant 2's sentence and invariant 8's enumeration, with
+   invariant 8's decay sentence added to the prescription at acceptance.
 
-**Instead of accepting,** the owner can take one of the options recorded above: A (report more
+**The alternatives on record at the gate, not taken:** one of the options recorded above — A (report more
 latency — a PDC change every session, or one that moves with the switch), B (a constant clamp delay
 in both modes — TP-off stops being bit-identical and every user's longest lookahead becomes 9.125 ms
 at 48 kHz), or rejecting the record, which returns TP mode to `main`'s behaviour (a sample-peak clamp
-under a dBTP readout; up to +4.8 dB over on the product meter). Whatever is decided, the voicing
+under a dBTP readout; up to +4.8 dB over on the product meter). As decided, the voicing
 constants (attack 0.25 ms, release 10 ms) are still ⊕ listening material, and the TP-mode cost at ≥ 4×
 is over DESIGN §9's limiter + TP-detection row (`PERFORMANCE_BUDGET.md`).
 
@@ -315,7 +344,11 @@ reverted); **Unverified** for the voicing constants (not listened to).
   after TP toggles. The steady-state matrix re-rendered on the revision is hash-identical to the PR
   head (2718 + 240 + 56 renders) — same worklog.
 - The owner's options, with the delivery-meter question measured out (including a prototype that
-  also holds libebur128's reading) — `docs/reports/2026-09-27-phase0-owner-decisions.md`.
+  also holds libebur128's reading) — `docs/reports/2026-09-27-phase0-owner-decisions.md` (decision
+  material; decided 2026-09-27 — this record accepted, the definition as ADR-0043).
+- Acceptance re-verification, 2026-09-27: the steady-state matrix, the 248-configuration transition
+  sweep, TP-off identity, the latency composition and the Ardour engagement export re-run on the
+  accepted tree — `docs/reports/2026-09-27-phase0-closure.md`.
 - Estimator comparison (why three readings): same worklog, §Investigation.
 - ITU-R BS.1770-5 (11/2023), Annex 2 — the example filter table; cross-checked value by value
   against the Recommendation's text.

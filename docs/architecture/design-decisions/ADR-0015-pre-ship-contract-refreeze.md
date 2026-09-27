@@ -25,7 +25,7 @@ autonomous-decision instruction that accompanied it)
 > and 4 are mode-conditional) and not of the code: with true-peak mode on, the clamp was still the
 > P1 sample clip, and TP-mode renders measured up to +4.8 dB over a dBTP ceiling. The decision
 > itself — the defaults, the removal, the mode-aware unit — is untouched; the implementation that
-> makes the TP-mode guarantee true is ADR-0041 (Proposed).
+> makes the TP-mode guarantee true is ADR-0041 (Accepted 2026-09-27).
 
 ## Context
 
