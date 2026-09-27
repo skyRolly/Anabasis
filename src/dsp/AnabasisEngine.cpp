@@ -466,6 +466,12 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     const bool enteringOffline = p.nonRealtime && ! lastNonRealtime;
     lastNonRealtime = p.nonRealtime;
 
+    // ADR-0042: the first block after a reset decides whether the adaptive
+    // vector reset() stashed comes back — it does exactly when Freeze is ON
+    // in THIS block's snapshot. Before any pending ADR-0014 restore is
+    // injected below, so a staged restore still has the last word.
+    adaptiveEngine.resumeAfterReset (p.freeze);
+
     if (! smoothersPrimed || enteringOffline)
     {
         if (latchWanted)

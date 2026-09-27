@@ -4385,6 +4385,133 @@ static void testFreezeLatchesTrims()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0042 (audit finding STATE-004, KI-006's audio half): a host re-prepare
+// no longer takes a latched Freeze out of the AUDIO while FREEZE stays lit.
+// Deterministic, and three-way:
+//  (a) the vector keeps playing — the re-prepared engine's render is BIT-
+//      IDENTICAL to a fresh engine that had the same vector restored the
+//      ADR-0014 way, i.e. to "that vector, frozen, from the first sample";
+//      at the same rate/block (the transport-start case) and at a new one;
+//  (b) the carry republishes the APPLIED set only — the retained generation
+//      does not move, which is what keeps a re-prepare from handing the latch
+//      to whichever A/B slot is live (round 42);
+//  (c) the scope is Freeze: a latch the user engaged WHILE STOPPED still
+//      comes back (the first block's snapshot decides, not the last block's),
+//      and with Freeze OFF adaptation restarts from rest exactly as before.
+static void testAFrozenLatchSurvivesARePrepare()
+{
+    auto feed = [] (anabasis::AnabasisEngine& e, const anabasis::EngineParameters& p,
+                    double sr, int block, int blocks, int& t0, float clickAmp,
+                    std::vector<float>* out)
+    {
+        juce::AudioBuffer<float> buf (2, block);
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < block; ++n)
+            {
+                const int t = t0 + n;
+                float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                           * 220.0f * (float) t / (float) sr);
+                if ((t % 6000) < 96) v += clickAmp;
+                buf.setSample (0, n, v); buf.setSample (1, n, 0.8f * v);
+            }
+            t0 += block;
+            e.process (buf, p);
+            if (out != nullptr)
+                for (int n = 0; n < block; ++n)
+                    out->push_back (buf.getSample (0, n)), out->push_back (buf.getSample (1, n));
+        }
+    };
+    struct Vec { float r, l, h, d; };
+    auto published = [] (const anabasis::AnabasisEngine& e)
+    {
+        const auto& a = e.adaptive();
+        return Vec { a.publishedTrimRelease(), a.publishedTrimLink(),
+                     a.publishedTrimHpf(), a.publishedTrimTilt() };
+    };
+    auto same = [] (Vec x, Vec y)
+    {
+        return juce::exactlyEqual (x.r, y.r) && juce::exactlyEqual (x.l, y.l)
+            && juce::exactlyEqual (x.h, y.h) && juce::exactlyEqual (x.d, y.d);
+    };
+
+    for (const double reSr : { 48000.0, 96000.0 })
+    {
+        const int reBlock = reSr > 50000.0 ? 256 : 512;
+        anabasis::AnabasisEngine a;
+        a.prepare (48000.0, 512, 2);
+        anabasis::EngineParameters p;
+        int t = 0;
+        feed (a, p, 48000.0, 512, 400, t, 0.6f, nullptr);   // adapt on transient-dense material
+        p.freeze = true;
+        feed (a, p, 48000.0, 512, 4, t, 0.6f, nullptr);     // latch at a block boundary
+        const Vec latched = published (a);
+        const auto gen = a.adaptive().retainedTrimGeneration();
+        check (std::abs (latched.r) > 1.0e-4f,
+               "freezeRePrepare: (premise) the latch MOVED — a zero vector would pass either way");
+
+        a.prepare (reSr, reBlock, 2);                        // the host re-prepares; FREEZE still lit
+        // Every stage a trim reaches is ENGAGED for the render — the limiter
+        // (release, link), the compressor (its detector HPF) and the clipper's
+        // Dynamic Tame (tilt). At factory settings all of them are inert and a
+        // render comparison would pass with any vector at all.
+        p.limGainDb = 9.0f; p.compThresholdDb = -12.0f; p.compRatio = 2.0f;
+        p.clipDriveDb = 3.0f; p.dynTiltDb = 0.5f; p.stereoLink = 0.5f;
+        std::vector<float> outA, outB, outZ;
+        int ta = 0, tb = 0, tz = 0;
+        feed (a, p, reSr, reBlock, 60, ta, 0.6f, &outA);
+
+        anabasis::AnabasisEngine b;                          // the reference: restored, frozen
+        b.prepare (reSr, reBlock, 2);
+        b.restoreFrozenTrims (latched.r, latched.l, latched.h, latched.d);
+        feed (b, p, reSr, reBlock, 60, tb, 0.6f, &outB);
+
+        anabasis::AnabasisEngine z;                          // the old behaviour: zero trims, frozen
+        z.prepare (reSr, reBlock, 2);
+        feed (z, p, reSr, reBlock, 60, tz, 0.6f, &outZ);
+
+        check (same (published (a), latched),
+               reSr > 50000.0 ? "freezeRePrepare: a rate change keeps the latched vector in the audio"
+                              : "freezeRePrepare: a same-configuration re-prepare keeps the latched vector");
+        check (outB != outZ,
+               "freezeRePrepare: (premise) the vector is audible here — the comparison is not vacuous");
+        check (outA == outB,
+               "freezeRePrepare: the render is bit-identical to that vector restored and frozen");
+        check (a.adaptive().hasPublishedTrims(),
+               "freezeRePrepare: the readout describes a real vector again, not initialisation zeros");
+        check (a.adaptive().retainedTrimGeneration() == gen,
+               "freezeRePrepare: the carry latches nothing — the retained generation does not move");
+    }
+
+    {   // Freeze engaged WHILE STOPPED, then a re-prepare before any audio
+        anabasis::AnabasisEngine a;
+        a.prepare (48000.0, 512, 2);
+        anabasis::EngineParameters p;
+        int t = 0;
+        feed (a, p, 48000.0, 512, 400, t, 0.6f, nullptr);
+        const Vec current = published (a);
+        p.freeze = true;                                     // no block processed with it yet
+        a.prepare (48000.0, 512, 2);
+        feed (a, p, 48000.0, 512, 2, t, 0.0f, nullptr);
+        check (same (published (a), current),
+               "freezeRePrepare: Freeze engaged while stopped still latches the vector that was playing");
+    }
+
+    {   // Freeze OFF: unchanged — adaptation restarts from rest
+        anabasis::AnabasisEngine a;
+        a.prepare (48000.0, 512, 2);
+        anabasis::EngineParameters p;
+        int t = 0;
+        feed (a, p, 48000.0, 512, 400, t, 0.6f, nullptr);
+        const Vec before = published (a);
+        a.prepare (48000.0, 512, 2);
+        feed (a, p, 48000.0, 512, 1, t, 0.0f, nullptr);
+        check (std::abs (published (a).r) < 0.1f * std::abs (before.r),
+               "freezeRePrepare: with Freeze OFF the vector restarts from rest, as it always has");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MODE inv 4: trims stay inside their declared bounds under pathological
 // programme (maximally bright, transient-dense, loud) — and the published
 // vector is what proves it, since the effective values are clamped inside
@@ -7005,6 +7132,7 @@ int main()
     testResetCancelsAnInFlightLearnPass();
     testStopThenStartInOneBlockKeepsBoth();
     testFreezeLatchesTrims();
+    testAFrozenLatchSurvivesARePrepare();
     testTrimBounds();
     testAutoReleaseFollowsTheTrimScale();
     testAStagedFrozenVectorAlwaysGetsABottom();
