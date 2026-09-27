@@ -186,7 +186,7 @@ transitions per switchable path; no NaN/Inf/denormals across the feature × over
 sample-rate matrix; loudness-compensation render neutrality; LUFS against the EBU R128 vectors;
 dither placement and default.
 
-**Four of these have a stimulus mandated by an ADR, not left to the implementer.** A test name
+**Five of these have a stimulus mandated by an ADR, not left to the implementer.** A test name
 alone does not carry the property; these are the cases where the wrong stimulus passes vacuously:
 
 | Test | Mandated stimulus | Source |
@@ -194,7 +194,8 @@ alone does not carry the property; these are the cases where the wrong stimulus 
 | `testOutputNeverExceedsCeiling` | Run in **both EQ positions**, and the Post case must include a **+12 dB shelf after the limiter** — the exact signal the clamp placement exists to survive | ADR-0002 |
 | true-peak accuracy (≤ 0.1 dB) | The **whole OS matrix** — Off / 2× / 4× / 8× / 16× **× both phase modes** (minimum / linear) — because the estimator's input path differs per setting: its own 4× interpolator, a further ≥ 2×, or the oversampled signal read directly. It must cover **both taps**: the limiter's detector *and* the ceiling clamp's (ADR-0002), which read at different points in the chain. The `Off × linear` cell is knowingly degenerate — no filter is instantiated at Off, so phase cannot reach the estimator; keep it (uniform sweep) but do not hunt for a difference there | ADR-0003 item 9 |
 | `testReportedLatencyMatchesImpulse` | The impulse must land at **exactly `maxLookahead + OS` for every lookahead value**, not just at the range ends — the constant-allowance contract is what makes a padding bug a test failure | ADR-0004 |
-| click-free transitions | Must include a **lookahead move** — it is the one switchable path with neither a duck nor a latch (`DSP_POLICY.md` invariant 8) | ADR-0004 |
+| click-free transitions | Must include a **lookahead move** — it is the one switchable path with neither a duck nor a latch (`DSP_POLICY.md` invariant 8) — and, since ADR-0041, a **true-peak toggle in both directions** (`testDuckWrapsTruePeakLatch`), which moves the lookahead line's length and is latched like an OS change | ADR-0004, ADR-0041 |
+| `testTruePeakModeHoldsTheCeiling` | **True-peak mode ON** (the two older ceiling tests pin it off), on the **real engine**, at **every OS cell and the Force Max bounce**, with programme that exercises each over mechanism — transient-heavy (one-sample clicks), HF-heavy (near-Nyquist tones), a +12 dB Post shelf, the limiter's slewed attack (Punchy, Transients 100 %) — read on **two meters**: the product's dBTP estimator AND an independently implemented BS.1770 Annex 2 filter. One meter alone passes a clamp that shares its blind spot (measured: the product meter alone read +0.008 dB on an output the Annex 2 filter read +1.44 dB over) | ADR-0041 |
 
 ### `tests/state_tests.cpp` → `AnabasisStateTests`
 

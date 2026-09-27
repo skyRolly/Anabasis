@@ -43,7 +43,11 @@ stage exists; evidence citations are added as the modules land (constraint C7).
 
    **The lookahead contributes its MAXIMUM, always** (ADR-0004, 2026-07-31). The limiter reads at
    a variable offset inside a fixed 10 ms delay line and the engine pads the difference, so the
-   *engaged* lookahead moves freely while the *reported* figure never does. The reason is a
+   *engaged* lookahead moves freely while the *reported* figure never does. In true-peak mode
+   the ceiling clamp's true-peak path takes a short delay of its own (ADR-0041) out of that same
+   allowance — the lookahead line shrinks by it and the longest engaged window becomes 10 ms
+   minus it — so the reported figure is unchanged in both modes. *(Enacted by ADR-0041,
+   Proposed 2026-09-27 — this sentence stands or falls with the owner's decision on it.)* The reason is a
    compatibility one, not an aesthetic one: `lookahead` is carried by every preset, A/B slot and
    undo step, so under the obvious `engagedLookahead + OS` model, browsing presets or A/B-comparing
    **during playback** would change host PDC on nearly every step.
@@ -106,7 +110,14 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    would otherwise be falsified by the very stage the ADR puts there deliberately.
    Recorded 2026-08-01 (PR #5) — a clarification of scope, not a weakening of the promise.
    This is the product's core promise; weakening it is an Architecture Review Gate item in its own
-   right. Guarded by: `testOutputNeverExceedsCeiling` (hostile-input sweep).
+   right. Guarded by: `testOutputNeverExceedsCeiling` (hostile-input sweep) and, for the true-peak
+   tolerance, `testTruePeakModeHoldsTheCeiling` — every oversampling cell and the Force Max bounce,
+   five programme shapes, two operating points, a +12 dB Post shelf and two further sample rates,
+   read on the product meter AND an independently implemented BS.1770 Annex 2 meter (ADR-0041).
+   **Which yardstick "dBTP" is measured on is recorded, not assumed:** those two meters are the
+   guard; a long-kernel reference still reads a residual on programme with strong content in the
+   last few percent below Nyquist (`KNOWN_ISSUES.md` KI-020), and the choice between them is the
+   owner's (audit finding DSP-001, sub-item (a)).
 
 5. **Oversampling wraps the nonlinear stages; linear stages stay at base rate.** The region is
    **Clipper/Saturation → Limiter**. The EQ, the compressor, the **ceiling
@@ -142,14 +153,16 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    `testLoudnessCompensationDoesNotAlterRender` (the render-side half).
 
 8. **Every transition is click-free.** Toggling bypass, loudness compensation, delta monitoring,
-   the oversampling factor, **the oversampling phase mode**, the EQ position, **the colour model**,
-   **the lookahead**, the mode switch, or a **bulk swap — a preset load, an A/B switch, or an undo
-   step, three routes through the same forced duck, each owed its own test** — must produce no
-   click, pop, or level jump. All parameters are smoothed; discrete switches are crossfaded or
-   ducked. *(Amended by ADR-0004, 2026-07-31.)*
+   the oversampling factor, **the oversampling phase mode**, **the true-peak mode**, the EQ
+   position, **the colour model**, **the lookahead**, the mode switch, or a **bulk swap — a preset
+   load, an A/B switch, or an undo step, three routes through the same forced duck, each owed its
+   own test** — must produce no click, pop, or level jump. All parameters are smoothed; discrete
+   switches are crossfaded or ducked. *(Amended by ADR-0004, 2026-07-31. The true-peak mode was
+   added by ADR-0041, Proposed 2026-09-27: it moves the clamp's share of the lookahead allowance,
+   so it is latched at the §2.8 duck like an oversampling change.)*
    Guarded by: the click-free transition tests (one per switchable path) — the three bulk-swap
    routes by `testAbSwitchRequestsDuck`, `testUndoRequestsDuck` and the preset bracket's duck
-   request. **The undo route was a code drift against this text, found by review and wired on
+   request; the true-peak mode by `testDuckWrapsTruePeakLatch`. **The undo route was a code drift against this text, found by review and wired on
    2026-08-03:** `undo`/`redo` restored a whole StateSet without requesting the duck, so an undo
    that moved no discrete stage never reached a silent bottom — and after ADR-0014 that also
    stranded the frozen-trim vector it stages. This wording was already correct; the enumeration is
@@ -299,13 +312,13 @@ where feasible (`TESTING_POLICY.md`). An invariant with no test is a documented 
 | Invariant | Guarding test | Status |
 |---|---|---|
 | 1 chain order | `testLimiterPushDoesNotDriveTheClipper` (the push sits after Clip/Sat), `testEqPositionsAreDistinct` + `testOutputNeverExceedsCeiling` in BOTH EQ positions (the clamp is last before dither) | **live** (P2) |
-| 2 latency exactness | `testReportedLatencyMatchesImpulse`, `testOsLatencyMatrix` | **live (P2)** — the impulse lands at exactly `maxLookahead + osLatency` for every lookahead value AND every factor × phase cell, Force-Max-offline included; linear-phase cells are sample-exact, min-phase cells within 1 sample of the nominal bulk delay (IIR dispersion, documented in the test) |
-| 3 true peak ≥ 4× | `testTruePeakAccuracy`, `testLimiterTruePeakMode` | **partial (P2)** — the 4× measurement-tap estimator is live in the limiter's detector (grid-aligned ISP −0.004 dB, off-grid −0.171 dB recorded; the ceiling is dBTP-aware in true-peak mode); the full OS-matrix stimulus and the dBTP meter arrive with the oversampler (P2) and metering (P3) |
-| 4 ceiling never exceeded | `testOutputNeverExceedsCeiling` | **partial (P2)** — the ADR-0002 mandated stimulus is live: BOTH EQ positions, the Post case with a +12 dB shelf after the limiter (mutation-verified: clamp moved upstream of the post EQ fails it); the ≤ 0.1 dBTP matrix still needs the true-peak tap (P2/P3) |
+| 2 latency exactness | `testReportedLatencyMatchesImpulse`, `testOsLatencyMatrix`, `testTruePeakModeCapsTheWindowNotTheLatency` | **live (P2)** — the impulse lands at exactly `maxLookahead + osLatency` for every lookahead value AND every factor × phase cell, Force-Max-offline included; linear-phase cells are sample-exact, min-phase cells within 1 sample of the nominal bulk delay (IIR dispersion, documented in the test). **Both true-peak modes since 2026-09-27** (ADR-0041 moves the composition in TP mode, not the total) |
+| 3 true peak ≥ 4× | `testTruePeakAccuracy`, `testLimiterTruePeakMode`, `testClampTruePeakDetector` | **partial (P2)** — the 4× measurement-tap estimator is live in the limiter's detector (grid-aligned ISP −0.004 dB, off-grid −0.171 dB recorded; the ceiling is dBTP-aware in true-peak mode); the clamp's own tap (ADR-0006 item 2) is live since 2026-09-27 (ADR-0041, Proposed) and pinned by `testClampTruePeakDetector`. **Recorded gap:** the vectors this row tests sit at fs/4; on HF-rich programme the 4× estimator reads up to ~1.4 dB below the BS.1770 Annex 2 example filter (worklog 2026-09-27, `KNOWN_ISSUES.md` KI-020) |
+| 4 ceiling never exceeded | `testOutputNeverExceedsCeiling`, `testTruePeakModeHoldsTheCeiling`, `testCeilingClampTruePeakPath` | **live (2026-09-27)** — the ADR-0002 mandated stimulus: BOTH EQ positions, the Post case with a +12 dB shelf after the limiter (mutation-verified: clamp moved upstream of the post EQ fails it); the ≤ 0.1 dBTP matrix: 123 TP-mode runs on the product meter and an independent BS.1770 Annex 2 meter, worst +0.001 dB — it fails on `main` (102 of 123 runs over on either meter, worst +6.04 dB) and passes on ADR-0041 (Proposed) |
 | 5 oversampling scope | `testOsLatencyMatrix`, `testOsReducesAliasing`, `testCeilingUnderOs`, `testBypassNullUnderOs` | **live (P2)** — the region wraps Clipper/Sat → Limiter; EQ/comp/clamp/dither at base rate; bypass stays bit-exact at every factor; measured: 4× drops the driven-clipper folded 3rd by ~74 dB beyond ADAA alone |
 | 6 ADAA | `testClipAdaaReducesAliasing` | **partial (P2)** — first-order ADAA on the clip curve, measured at OS Off: the folded 3rd/5th of a driven 11.72 kHz tone drop 14.8 / 10.4 dB vs the memoryless curve (numbers recorded in the test); the OS × aliasing matrix arrives with the oversampler |
 | 7 identity at zero | `testNullWithDefaults`, `testBypassNull` | **live (P1)** |
-| 8 click-free transitions | per-path click tests | **live (P2)** — smoothed paths pinned (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`, `testEqGainIsSmoothed`); the §2.8 duck wraps every discrete rewire (`testDuckWrapsDiscreteRewires`, `testDuckWrapsOsLatch`) and the wrapper bulk swaps (`testDuckOnWrapperRequest`, `testAbSwitchRequestsDuck`) — all mutation-verified; loudnessComp/delta crossfades arrive with their P3 features |
+| 8 click-free transitions | per-path click tests | **live (P2)** — smoothed paths pinned (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`, `testEqGainIsSmoothed`); the §2.8 duck wraps every discrete rewire (`testDuckWrapsDiscreteRewires`, `testDuckWrapsOsLatch`, and since 2026-09-27 the true-peak mode, `testDuckWrapsTruePeakLatch`) and the wrapper bulk swaps (`testDuckOnWrapperRequest`, `testAbSwitchRequestsDuck`) — all mutation-verified; loudnessComp/delta crossfades arrive with their P3 features |
 | 9 no NaN/Inf/denormals | `testNoBadSamples`, `testExtremeLevelDoesNotSilencePermanently`, `testExtremeLevelDoesNotBreakTheMetersOrAdaptation`, `testALearnPassThatOverflowedIsNotCommitted`, `testSelfHealDoesNotSnapTheEnvelope`, `testClipSatCannotLoseAChannel`, `testClipSatCannotHideANonFiniteFromTheBoundary` | **live (P1, extended P4)** — a non-finite value never leaves the engine, and the engine RECOVERS from one rather than degrading permanently. Both sources are covered: contamination that arrives (a hostile input buffer, zeroed before any state sees it) and contamination a stage generates from a legal float (EQ biquad in either position, RMS detector square, colour c⁵, polyphase IIR — each verified by its own stimulus, and each case dies against exactly one element of the recovery being reverted), and the stages that emit no audio to check at all (the meters and the feature extractor, repaired per block). **Extended 0.1.3** with the PER-CHANNEL half, which the runs above did not reach because they drive one block into both channels: every boundary substitutes `0.0f` for the OFFENDING CHANNEL ALONE, so a stage that keeps regenerating a non-finite value from a FINITE input silences one channel indefinitely while the other plays — and the state repair this invariant relies on cannot help, because nothing about the stage's state is wrong. `testClipSatCannotLoseAChannel` pins the §2.4 stage as channel-symmetric and non-finite-free over a swept fuzz (the premise), and `testExtremeLevelDoesNotSilencePermanently` gained the SUSTAINED one-channel case at three Clip Mix values × four magnitudes (the consequence). RULE FOR NEW STAGES, alongside the reset-list rule in `AnabasisEngine::processChunk`: a stage whose failure mode is INPUT-magnitude-driven rather than state-driven must bound its own arithmetic — being in the sanitise list is necessary and not sufficient. **Extended again 0.1.3 round 8** with the OBSERVABILITY half: a stage with a dry/wet mix stops being observable at its dry endpoint, because the mix loop leaves the input sample untouched and the boundary that raises the repair flag has nothing to see — so warm state kept across that endpoint is a latch that surfaces later, on ordinary audio, when the mix opens. `testClipSatCannotHideANonFiniteFromTheBoundary` pins the §2.4 stage against it (30 poisoning attempts up to FLT_MAX, colour swept on and off, at Clip Mix 0 then re-opened with the tame engaged); removing the colour-argument bound fails it with 32 000 of 120 000 non-finite samples on ORDINARY audio, which is the failure class no other test in the suite can reach |
 | 10 monitoring honesty | `testLoudnessCompensationDoesNotAlterRender`, `testDeltaMonitor` | **live (P3)** — offline render bit-identical with comp on/off and with delta on/off; realtime monitor pulled to the dry loudness with the predict floor acting before the measure exists (all mutation-verified) |
 | 11 metering accuracy | `testLufsCalibration`, `testLufsGating`, `testLufsWindows` | **partial (P3)** — LUFS M/S/I live against the standard's synthesised calibration points (997 Hz compliance vector −3.01 LKFS ≤ 0.1 LU at 48/44.1 kHz; both gate halves isolated by stimulus, incl. the silence-in-the-threshold-base case only mutation testing surfaced); the dBTP meter and the file-based EBU vector sweep remain |

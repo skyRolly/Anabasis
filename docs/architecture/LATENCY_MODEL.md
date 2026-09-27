@@ -30,6 +30,16 @@ changes reported latency by exactly **nothing**, so host PDC never re-syncs mid-
 This is also why `lookahead` is non-automatable-advisory: the engaged value is a live read
 offset, not a PDC input (`PARAMETER_REGISTRY.md` §non-automatable rows).
 
+**In true-peak mode the allowance is shared** (ADR-0041, Proposed 2026-09-27). The ceiling
+clamp's true-peak path needs a short delay of its own — `D = attack + 30` samples,
+`CeilingClamp::truePeakDelayFor` (41 at 44.1 kHz, 42 at 48 kHz, 54 at 96 kHz, 78 at
+192 kHz) — and takes it OUT of the allowance rather than adding it: the region's lookahead
+line becomes `maxLookaheadSamples − D`, the clamp delays by `D`, and the sum is the same
+allowance. The reported figure is therefore identical in both modes; what TP mode costs is
+the top of the engaged range, capped at `10 ms − D` (9.125 ms at 48 kHz). Toggling the mode
+changes the line's length, so it is latched at the §2.8 duck's silent bottom exactly like an
+oversampling change (`AnabasisEngine::latchOsConfig`), never mid-block.
+
 ## Term 2 — the oversampling contribution
 
 A pure function of `(factor, phaseMode)` — no signal-dependent term, and **integer** by
@@ -57,8 +67,10 @@ what dated entries are for, not a live copy to keep in step.) Structure worth kn
 
 True-peak detection runs as a **measurement tap** off the signal path — a 4-phase
 polyphase estimator whose group delay fits inside the 0.5 ms *minimum engaged* lookahead
-with margin — so dBTP metering and the true-peak ceiling mode contribute **zero** to
-reported latency at every oversampling setting, including Off. The design-time arithmetic
+with margin — so dBTP metering and the limiter's true-peak detection contribute **zero** to
+reported latency at every oversampling setting, including Off. The ceiling clamp's
+true-peak path (ADR-0041) does delay its audio, by `D`, and contributes zero to the
+REPORTED figure for the reason given under Term 1: its delay is inside the allowance. The design-time arithmetic
 behind this was RISK-008; the entry records its measured resolution (the estimator's
 reporting lag is bounded well inside the minimum window, and the margin *grows* with
 sample rate). Residual exposure is accuracy (`DSP_POLICY.md` invariant 11's meter), not
@@ -103,8 +115,10 @@ realtime→offline flip does **not** duck the render (`testOfflineFlipDoesNotDuc
 
 | Property | Test (`tests/dsp_tests.cpp`) |
 |---|---|
-| Impulse lands at exactly the reported figure, across lookahead values | `testReportedLatencyMatchesImpulse` |
-| Measured impulse vs reported figure across the full `(factor × phase)` matrix — **exact** for linear phase (a symmetric FIR's peak *is* its group delay) and at OS Off; **within ±1 sample** for min-phase (an IIR cascade's group delay is frequency-dependent by design; the test's comment records the measured split) | `testOsLatencyMatrix` |
+| Impulse lands at exactly the reported figure, across lookahead values — both true-peak modes | `testReportedLatencyMatchesImpulse` |
+| The TP-mode composition: window capped at `allowance − D`, group delay unchanged | `testTruePeakModeCapsTheWindowNotTheLatency` |
+| A true-peak toggle is latched at the duck's bottom, never stepped | `testDuckWrapsTruePeakLatch` |
+| Measured impulse vs reported figure across the full `(factor × phase)` matrix, both true-peak modes — **exact** for linear phase (a symmetric FIR's peak *is* its group delay) and at OS Off; **within ±1 sample** for min-phase (an IIR cascade's group delay is frequency-dependent by design; the test's comment records the measured split) | `testOsLatencyMatrix` |
 | Offline force / duck edges | `testOfflineFlipDoesNotDuckTheRender`, `testReturnFromOfflineIsDucked` |
 | Bypass alignment at every factor (the dry ring uses the same tables) | the OS bypass-null checks |
 

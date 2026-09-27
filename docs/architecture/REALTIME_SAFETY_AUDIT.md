@@ -26,6 +26,7 @@ Every allocation in the DSP tree happens in `prepare()` or a function only `prep
 | `wetRing/dryRing/staging.setSize`, `ceilArr/wArr/pushArr.resize` | `AnabasisEngine::prepare` (`src/dsp/AnabasisEngine.cpp`) |
 | eight `std::make_unique<juce::dsp::Oversampling>` + `initProcessing` | the same `prepare`, its `for (f, ph)` loop |
 | wedge `assign` ×2 channels, sized for 16× | `LookaheadLimiter::prepare` (`src/dsp/LookaheadLimiter.h`) |
+| the true-peak path's rings (`audio`, `ceilings`, `requirement`, `need`, `forwardMin`) — sized from the rate once | `CeilingClamp::prepare` (`src/dsp/CeilingClamp.h`), called by `AnabasisEngine::prepare` (ADR-0041, added 2026-09-27) |
 
 Citations here are **symbol-based on purpose**: the first version of this table carried line
 ranges, and every one of them had drifted by the time it was next read (`pushArr` did not even
@@ -44,7 +45,14 @@ bounded cost paid only at a latch, never per block).
 
 None found on any audited path. The only loops whose trip counts are not compile-time constants
 are bounded by `prepare()`-fixed quantities (chunk length ≤ maxBlock, region ≤ maxBlock·16, wedge
-expiry amortised O(1)). No `juce::String`, no logging, no file access, no message posting.
+expiry amortised O(1); the ceiling clamp's true-peak windows — 32 entries and the attack length,
+0.25 ms of samples — scanned only while they hold a value below unity, ADR-0041). The 2026-09-27
+additions were inspected to the same standard and are also under `testTheAudioPathAllocatesNothing`'s
+guard, which now runs TP mode in its matrix and toggles it mid-stream: `CeilingClamp::reset` and
+`processFrameTruePeak` (fills and fixed-size loops over prepared storage),
+`ClampTruePeakDetector::processFrame` (fixed 32-sample window, no state beyond its arrays), and
+`AdaptiveEngine::resumeAfterReset` (four float copies and five atomic stores, once per reset —
+ADR-0042). No `juce::String`, no logging, no file access, no message posting.
 `MacroEngine::parameterChanged` — which APVTS may deliver ON the audio thread during automation —
 stores one relaxed atomic and returns; `triggerAsyncUpdate` (which takes a platform lock) is
 gated behind `MessageManager::existsAndIsCurrentThread()` (`src/MacroEngine.cpp:28-35`).

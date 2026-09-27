@@ -2,6 +2,13 @@
 
 **Status:** Accepted (2026-07-31 — owner sign-off on `docs/DESIGN.md`)
 
+> **Proposed amendment by [ADR-0041](ADR-0041-clamp-true-peak-path-inside-the-latency-allowance.md)
+> (2026-09-27, awaiting the owner).** In true-peak mode only, the ceiling clamp's true-peak path
+> takes D samples (42 at 48 kHz) out of the constant allowance: the reported figure below is
+> unchanged in both modes, but items 1, 2 and 7's "no other stage contributes", "the full 10 ms"
+> and the 0.5–10 ms engaged range then hold only with TP off — in TP mode the longest engaged
+> lookahead is 10 ms − D. Nothing below is rewritten; the amendment takes effect only on acceptance.
+
 ## Context
 
 `DEVELOPMENT_BRIEF.md` §4.3 specifies the limiter lookahead as **0.5–10 ms** and leaves the question
