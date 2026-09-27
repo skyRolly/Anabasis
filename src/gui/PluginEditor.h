@@ -90,11 +90,12 @@ public:
     // no tip unless the process is in the foreground, which a test never is.
     bool tooltipGateOpen() const { return tooltips.gateOpen(); }
 
-    // The Learn button's wall clock (the 5 s minimum pass and the empty-pass
-    // flash both read it). Replaceable ONLY so the suite can step time instead
-    // of sleeping; production never calls this, and the default is the same
-    // `juce::Time::getMillisecondCounterHiRes` both reads used before.
-    void setLearnClockForTest (std::function<double()> clock) { learnClockMs = std::move (clock); }
+    // The editor tick's wall clock — the Learn button's 5 s minimum pass and
+    // empty-pass flash, and the GR readout's stall rule, all read it.
+    // Replaceable ONLY so the suite can step time instead of sleeping;
+    // production never calls this, and the default is the same
+    // `juce::Time::getMillisecondCounterHiRes` those reads used before.
+    void setClockForTest (std::function<double()> clock) { tickClockMs = std::move (clock); }
 
 private:
     using SliderAttachment   = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -527,6 +528,13 @@ private:
     juce::ToggleButton tpSimpleToggle;
     juce::TextButton   learnButton { "LEARN" };    // §5.4 explicit start/end
     juce::Label outLufsCaption, outLufsValue;      // live render short-term
+    // The numeric limiter GR (audit VIS-007): "now" and the history window's
+    // max, both views, placed by each layout. The head/epoch the readout last
+    // saw move, for its stall rule (`GrHistoryView::readoutStale`).
+    juce::Label grNowCaption, grNowValue, grMaxCaption, grMaxValue;
+    int64_t  grReadoutHead    = -1;
+    uint32_t grReadoutEpoch   = 0;
+    double   grReadoutMovedMs = -1.0e12;
 
     // §5.3 "edited" indicator + reset-to-macro affordance: an accent dot that
     // appears when any managed parameter is detached; clicking it re-engages
@@ -581,9 +589,10 @@ private:
     float  refOnsetAtStop = 0.0f, refTiltAtStop = 0.0f;
     bool   hadLearnedAtStop = false;
     double emptyFlashUntilMs = 0.0;
-    // Both Learn reads (the click and the tick) go through this one function;
-    // `setLearnClockForTest` is its only other writer.
-    std::function<double()> learnClockMs { [] { return juce::Time::getMillisecondCounterHiRes(); } };
+    // Both Learn reads (the click and the tick) and the GR readout's stall
+    // rule go through this one function; `setClockForTest` is its only other
+    // writer.
+    std::function<double()> tickClockMs { [] { return juce::Time::getMillisecondCounterHiRes(); } };
     juce::String lastMaskFingerprint;
 
     // -- overlays ------------------------------------------------------------

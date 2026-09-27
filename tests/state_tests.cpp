@@ -12070,7 +12070,7 @@ static void testTheTickDrivesTheLearnButton()
     auto* ed = openTickEditor (proc, base, "tickLearn");
     if (ed == nullptr)
         return;
-    ed->setLearnClockForTest ([&fakeNow] { return fakeNow; });
+    ed->setClockForTest ([&fakeNow] { return fakeNow; });
     auto* learn = findButtonByText (*ed, "LEARN");
     check (learn != nullptr, "tickLearn: (premise) the LEARN button was found");
     if (learn == nullptr)
@@ -12604,6 +12604,210 @@ static void testTheStatisticsPanelResetsOnlyFromItsResetControl()
            "statsReset: …and the session then describes only what followed");
 }
 
+// ---------------------------------------------------------------------------
+// The numeric limiter GR readout (audit VIS-007 / VIS-003 step 1), on a
+// standalone ring first: "now" is the deepest entry over the last 0.3 s, the
+// max the deepest over the history window, both the brute-force minima of
+// their spans; an empty or cleared timeline reads "nothing measured"; a
+// reading stays live while the producer pushes during the scan, which is what
+// the lap margin is for; the stall rule and the formatter.
+static void testTheGrReadoutReadsTheRingItNames()
+{
+    using Ring = anabasis::GrHistoryBuffer;
+    using V    = GrHistoryView;
+    {
+        Ring ring;
+        ring.prepare (48000.0, 512);
+        const auto r = V::readingFrom (ring);
+        check (r.taken && r.head == 0 && V::readoutStale (r.head, 0.0, r.period),
+               "grReadout: an empty timeline is read, and reads as nothing measured");
+    }
+    {
+        Ring ring;
+        ring.prepare (48000.0, 512);
+        const int64_t nNow = V::readoutCurrentEntries (48000.0, 512);
+        check (nNow == 29, "grReadout: 'now' spans the last 0.3 s - 29 entries at 48 kHz / 512");
+        for (int i = 0; i < 100; ++i) ring.push (0.0f, 0.1f);
+        ring.push (-12.0f, 0.1f);
+        for (int64_t i = 0; i < nNow - 1; ++i) ring.push (0.0f, 0.1f);
+        auto r = V::readingFrom (ring);
+        check (r.taken && juce::exactlyEqual (r.currentDb, -12.0f),
+               "grReadout: the oldest entry of the 0.3 s span is inside 'now'");
+        ring.push (0.0f, 0.1f);
+        r = V::readingFrom (ring);
+        check (juce::exactlyEqual (r.currentDb, 0.0f) && juce::exactlyEqual (r.peakDb, -12.0f),
+               "grReadout: one entry later it has left 'now' and is still the window max");
+        ring.reset();
+        r = V::readingFrom (ring);
+        check (r.taken && r.head == 0, "grReadout: a cleared ring reads as nothing measured");
+    }
+    {
+        Ring ring;
+        ring.prepare (48000.0, 512);
+        const int64_t span = V::readoutSpan (48000.0, 512);
+        const int64_t nNow = V::readoutCurrentEntries (48000.0, 512);
+        std::vector<float> all;
+        uint32_t rng = 7u;
+        bool ok = true;
+        int reads = 0;
+        for (int i = 0; i < 6000; ++i)
+        {
+            rng = rng * 1664525u + 1013904223u;
+            const float g = -(float) ((rng >> 8) % 1200u) / 100.0f;
+            ring.push (g, 0.1f);
+            all.push_back (g);
+            if (i % 97 != 0)
+                continue;
+            const auto    r    = V::readingFrom (ring);
+            const int64_t head = (int64_t) all.size();
+            float pk = 0.0f, cur = 0.0f;
+            for (int64_t e = juce::jmax ((int64_t) 0, head - span); e < head; ++e) pk = juce::jmin (pk, all[(size_t) e]);
+            for (int64_t e = juce::jmax ((int64_t) 0, head - nNow); e < head; ++e) cur = juce::jmin (cur, all[(size_t) e]);
+            ok = ok && r.taken && juce::exactlyEqual (r.peakDb, pk) && juce::exactlyEqual (r.currentDb, cur);
+            ++reads;
+        }
+        check (ok && reads > 50 && span < 6000,
+               "grReadout: 'now' and the max are the exact minima over their spans, past the window's edge too");
+    }
+    {   // A SATURATED pair: the window is the ring's whole safe lap. A scan of
+        // all of it would start one lap behind the head, so ANY push during it
+        // fails the lap check — the readout would never update. The margin
+        // keeps the scan clear of a producer pushing faster than any real one.
+        Ring ring;
+        ring.prepare (384000.0, 16);
+        const int64_t span = V::readoutSpan (384000.0, 16);
+        check (V::windowEntries (384000.0, 16) == (int64_t) Ring::kSize - 1
+                 && span == (int64_t) Ring::kSize - 1 - V::kReadoutLapMargin,
+               "grReadout: (premise) at 384 kHz / 16 the window saturates and the readout keeps its margin");
+        for (int64_t i = 0; i < (int64_t) Ring::kSize + 1000; ++i)
+            ring.push (-3.0f, 0.1f);
+        std::atomic<bool> stop { false };
+        std::thread producer ([&]
+        {
+            while (! stop.load())
+            {
+                ring.push (-3.0f, 0.1f);
+                std::this_thread::sleep_for (std::chrono::microseconds (20));
+            }
+        });
+        int taken = 0, moved = 0;
+        int64_t lastHead = -1;
+        for (int k = 0; k < 60; ++k)
+        {
+            const auto r = V::readingFrom (ring);
+            if (r.taken) ++taken;
+            if (r.taken && lastHead >= 0 && r.head != lastHead) ++moved;
+            if (r.taken) lastHead = r.head;
+        }
+        stop.store (true);
+        producer.join();
+        check (moved > 0, "grReadout: (premise) the producer pushed while the readout scanned");
+        check (taken >= 50,
+               "grReadout: at a saturated pair the readout stays live while the producer pushes during its scan");
+    }
+    const double p512 = 512.0 / 48000.0, p16k = 16384.0 / 48000.0;
+    check (! V::readoutStale (10, 400.0, p512) && V::readoutStale (10, 600.0, p512)
+             && ! V::readoutStale (10, 1300.0, p16k) && V::readoutStale (10, 1400.0, p16k)
+             && V::readoutStale (0, 0.0, p512),
+           "grReadout: 'now' goes to no-data after max (500 ms, 4 entry periods) without movement, or with nothing measured");
+    check (V::grText (-0.04f) == "0.0" && V::grText (0.0f) == "0.0" && V::grText (-8.94f) == "-8.9"
+             && V::grText (-8.96f) == "-9.0" && V::grText (-60.0f) == "-60.0",
+           "grReadout: one decimal, rounded first, never \"-0.0\"");
+}
+
+// The readout through the editor tick (TEST-001's entry), on the real
+// processor: the compressor alone does not move it (it is the LIMITER's
+// figure), a pushed limiter does, to within 0.3 dB of the engine's own
+// per-block figure from the same tap; a stopped host turns "now" to "-" while
+// the window max stays; both views show it, outside the graph well and the
+// STATISTICS panel, and in Advanced inside the LIMITER panel.
+static void testTheTickShowsTheLimiterGrReadout()
+{
+    double fakeNow = 1.0e6;
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "grReadoutTick");
+    if (ed == nullptr)
+        return;
+    ed->setClockForTest ([&fakeNow] { return fakeNow; });
+    auto* nowV = dynamic_cast<juce::Label*> (ed->findChildWithID ("grNowValue"));
+    auto* maxV = dynamic_cast<juce::Label*> (ed->findChildWithID ("grMaxValue"));
+    check (nowV != nullptr && maxV != nullptr, "grReadoutTick: (premise) both value labels were found");
+    if (nowV == nullptr || maxV == nullptr)
+        return;
+    ed->refreshFromModel();
+    check (nowV->getText() == "-" && maxV->getText() == "-", "grReadoutTick: nothing processed reads \"-\"");
+
+    auto set = [&proc] (const char* id, float denorm)
+    {
+        auto* par = proc.apvts.getParameter (id);
+        par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (denorm));
+    };
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    long t = 0;
+    auto feed = [&] (float amp, int blocks)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n, ++t)
+            {
+                const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi * 1000.0f * (float) t / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+        }
+    };
+    proc.apvts.getParameter (pid::loudness)->setValueNotifyingHost (0.0f);
+    proc.getMacroEngine().flushPendingMapping();
+    set (pid::limGain, 0.0f);
+    set (pid::compThreshold, -30.0f);
+    set (pid::compRatio, 4.0f);
+    feed (0.1f, 60);
+    fakeNow += 30.0;
+    ed->refreshFromModel();
+    check (proc.meterCompGrDb() < -3.0f && nowV->getText() == "0.0",
+           "grReadoutTick: the compressor's reduction alone does not move the limiter readout");
+
+    set (pid::compThreshold, 0.0f);
+    set (pid::limGain, 12.0f);
+    feed (0.7f, 80);
+    fakeNow += 30.0;
+    ed->refreshFromModel();
+    const float engineGr = proc.meterGrDb();
+    const float shown    = nowV->getText().getFloatValue();
+    check (engineGr < -3.0f && std::abs (shown - engineGr) <= 0.3f,
+           "grReadoutTick: a pushed limiter reads within 0.3 dB of the engine's own figure from the same tap");
+    check (maxV->getText().getFloatValue() <= shown + 0.05f,
+           "grReadoutTick: the window max is at least as deep as 'now'");
+
+    fakeNow += 600.0;                                    // the host stops: no block, time passes
+    ed->refreshFromModel();
+    check (nowV->getText() == "-" && maxV->getText() != "-",
+           "grReadoutTick: a stopped host turns 'now' to \"-\"; the window max stays with the history");
+
+    auto clearOf = [&] (juce::Component* c, const juce::Rectangle<int>& r)
+    { return c == nullptr || ! c->isVisible() || ! c->getBounds().intersects (r); };
+    auto* spec = findFirstChildOfType<SpectrumView> (*ed);
+    auto* gr   = findFirstChildOfType<GrHistoryView> (*ed);
+    auto* stats = findFirstChildOfType<LoudnessMeterView> (*ed);
+    const auto simpleNow = nowV->getBounds(), simpleMax = maxV->getBounds();
+    check (nowV->isVisible() && maxV->isVisible() && ! simpleNow.isEmpty()
+             && clearOf (gr, simpleNow) && clearOf (gr, simpleMax) && clearOf (spec, simpleMax)
+             && clearOf (stats, simpleNow) && clearOf (stats, simpleMax)
+             && ! simpleNow.intersects (ed->findChildWithID ("outLufsValue")->getBounds()),
+           "grReadoutTick: Simple shows it beside out LUFS, clear of the graph well and STATISTICS");
+    proc.apvts.getParameter (pid::advancedMode)->setValueNotifyingHost (1.0f);
+    ed->refreshFromModel();
+    auto* lane = dynamic_cast<juce::Component*> (ed->findChildWithID ("limGrMeter"));
+    check (nowV->isVisible() && lane != nullptr && nowV->getY() >= lane->getBottom()
+             && std::abs (nowV->getX() - lane->getX()) < 120 && clearOf (gr, maxV->getBounds())
+             && clearOf (stats, maxV->getBounds()),
+           "grReadoutTick: Advanced shows it in the LIMITER panel, under its GR lane");
+}
+
 int main (int argc, char** argv)
 {
     // Unbuffered stdout: CI pipes are fully buffered, so a crash mid-suite
@@ -12670,6 +12874,8 @@ int main (int argc, char** argv)
         testTheTickFlipsTheGraphWell();
         testTheTickShowsTheEditedDot();
         testTheTooltipSwitchGatesEveryTip();
+        testTheGrReadoutReadsTheRingItNames();
+        testTheTickShowsTheLimiterGrReadout();
         testAValueBoxClickIsNotAMacroGesture();
         testTheSettingsCallbacksReachTheLiveTree();
         testAFactoryApplyWritesEachParameterOnce();

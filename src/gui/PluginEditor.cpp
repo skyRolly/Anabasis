@@ -622,7 +622,7 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     learnButton.onClick = [this]
     {
         const auto& a = proc.adaptiveReadout();
-        const double nowMs = learnClockMs();
+        const double nowMs = tickClockMs();
         if (! a.isLearning())
         {
             proc.startLearn();
@@ -656,6 +656,34 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // `popupShield` precedent: nothing reads them at run time, none is a
     // look-and-feel key, and JUCE's accessibility layer does not expose them.
     outLufsValue.setComponentID ("outLufsValue");
+
+    // The numeric limiter GR (audit VIS-007 / VIS-003 step 1): the "out LUFS"
+    // pair's styling and caption grammar (what, then its qualifier), in both
+    // views. "lim" says whose reduction it is — the ring the numbers come
+    // from is the limiter's alone. "-" is the product's no-reading form.
+    for (auto* cap : { &grNowCaption, &grMaxCaption })
+    {
+        cap->setColour (juce::Label::textColourId, colours::textDim);
+        cap->setFont (juce::Font (juce::FontOptions (11.5f)));
+        cap->setJustificationType (juce::Justification::centredRight);
+        addAndMakeVisible (*cap);
+    }
+    grNowCaption.setText ("lim GR", juce::dontSendNotification);
+    grMaxCaption.setText ("GR max", juce::dontSendNotification);
+    grNowCaption.setTooltip (tidyTip (
+        "Limiter gain reduction now, in dB - the deepest over the last 0.3 s; the compressor and clipper are not included"));
+    grMaxCaption.setTooltip (tidyTip (
+        "Deepest limiter gain reduction over the GR history window, in dB"));
+    for (auto* val : { &grNowValue, &grMaxValue })
+    {
+        val->setColour (juce::Label::textColourId, colours::text);
+        val->setFont (juce::Font (juce::FontOptions (15.0f)));
+        val->setJustificationType (juce::Justification::centredLeft);
+        val->setText ("-", juce::dontSendNotification);
+        addAndMakeVisible (*val);
+    }
+    grNowValue.setComponentID ("grNowValue");     // headless-suite handles, as above
+    grMaxValue.setComponentID ("grMaxValue");
 
     editedDot.setTooltip (tidyTip (
         "Advanced edits took knobs off the macros - click to return to the macro sound"));
@@ -1618,6 +1646,16 @@ void AnabasisAudioProcessorEditor::layoutAdvanced (juce::Rectangle<int> body)
         tpToggle.setBounds (row.reduced (2, 2));
         a.removeFromTop (8);
         limGrMeter.setBounds (a.removeFromTop (14));    // [GR meter] — this stage's own
+        // The numeric limiter GR in the panel's empty foot, under the lane it
+        // quantifies and the LIMITER title that attributes it (VIS-007).
+        a.removeFromTop (6);
+        for (auto pair : { std::pair<juce::Label*, juce::Label*> { &grNowCaption, &grNowValue },
+                           std::pair<juce::Label*, juce::Label*> { &grMaxCaption, &grMaxValue } })
+        {
+            auto r = a.removeFromTop (22);
+            pair.first->setBounds (r.removeFromLeft (r.getWidth() / 2));
+            pair.second->setBounds (r.reduced (6, 0));
+        }
     }
     {   // EQ (the densest panel: three-across rows, smaller cells)
         auto a = panel (3);
@@ -1753,6 +1791,18 @@ void AnabasisAudioProcessorEditor::layoutSimple (juce::Rectangle<int> body)
     learnButton.setBounds (toggles.removeFromLeft (78).reduced (0, 2));
     outLufsValue.setBounds (toggles.removeFromRight (72));
     outLufsCaption.setBounds (toggles.removeFromRight (70));
+    // The numeric limiter GR, stacked under out LUFS in its columns (VIS-007):
+    // the free band above the graph well, so no Simple control moves.
+    {
+        auto rows = left.removeFromTop (52).reduced (24, 2);
+        for (auto pair : { std::pair<juce::Label*, juce::Label*> { &grNowCaption, &grNowValue },
+                           std::pair<juce::Label*, juce::Label*> { &grMaxCaption, &grMaxValue } })
+        {
+            auto r = rows.removeFromTop (24);
+            pair.second->setBounds (r.removeFromRight (72));
+            pair.first->setBounds (r.removeFromRight (70));
+        }
+    }
 
     // §6.2 wells: the right meter panel and the bottom graph well — since
     // 2026-08-05 the SAME switchable GR/spectrum well as Advanced (the §6.2
@@ -2059,10 +2109,35 @@ void AnabasisAudioProcessorEditor::refreshFromModel()
                               juce::dontSendNotification);
     }
 
+    // -- numeric limiter GR (audit VIS-007 / VIS-003 step 1), both views ------
+    // From the GR history ring, not the per-call meter atomics: the ring holds
+    // every block, so a 24 Hz read misses no transient reduction. A torn or
+    // lapped read keeps what is shown; "now" reads "-" once the host has
+    // stopped sending audio (the stall rule), the window max stays — it is
+    // the history the graph itself still draws.
+    {
+        const auto r = GrHistoryView::readingFrom (proc.grHistory());
+        if (r.taken)
+        {
+            const double nowMs = tickClockMs();
+            if (r.head != grReadoutHead || r.epoch != grReadoutEpoch)
+            {
+                grReadoutHead    = r.head;
+                grReadoutEpoch   = r.epoch;
+                grReadoutMovedMs = nowMs;
+            }
+            const bool stale = GrHistoryView::readoutStale (r.head, nowMs - grReadoutMovedMs, r.period);
+            grNowValue.setText (stale ? juce::String ("-") : GrHistoryView::grText (r.currentDb),
+                                juce::dontSendNotification);
+            grMaxValue.setText (r.head <= 0 ? juce::String ("-") : GrHistoryView::grText (r.peakDb),
+                                juce::dontSendNotification);
+        }
+    }
+
     // -- Learn button state (§5.4 grammar) -----------------------------------
     {
         const auto& a = proc.adaptiveReadout();
-        const double nowMs = learnClockMs();
+        const double nowMs = tickClockMs();
         juce::String text ("LEARN");
         if (a.isLearning())
         {

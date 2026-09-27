@@ -276,6 +276,15 @@ The **STATISTICS** panel — the same eight readings in both Simple and Advanced
   sample rate or block size changes. Vertically the trace hangs from the top of the graph
   and reaches the bottom at **24 dB** of reduction — the same span the COMP and LIMITER
   panels' own GR meters use, so the two read against each other directly.
+- **The limiter's reduction as a number** (since 0.2.14) — under **out LUFS** in Simple, and in
+  the foot of the LIMITER panel in Advanced: **lim GR** is the limiter's gain reduction now, in
+  dB (the deepest over the last 0.3 s), and **GR max** the deepest over the GR history window.
+  It is the same figure the GR history draws — the **limiter's** reduction only; the
+  compressor's shows on its own COMP meter, and the clipper's is not measured. It works in
+  either graph view. **lim GR** reads "-" when nothing has been processed yet or when your
+  host has stopped sending audio for more than half a second (the max stays, with the history
+  it describes); "0.0" means the limiter is doing nothing. While **BYPASS** is on it keeps
+  showing the limiter's work on the processed signal, which you are not hearing.
 
 **RESET**, on the STATISTICS header line, clears the session figures: the integrated
 measurement (**I**), the loudness range (**LRA**), both peak holds (**TP**, **SP**) — and **PLR**

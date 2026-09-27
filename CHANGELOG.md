@@ -72,6 +72,11 @@ latency, a parameter or the saved state. Measurement trail:
   (on the owner's direction; flagged for review). Evidence: this release. [Verified]
 
 ### Added
+- **The limiter's gain reduction as a number**: **lim GR** (now — the deepest over the last
+  0.3 s) and **GR max** (the deepest over the GR history window), in dB, under out LUFS in Simple
+  and in the LIMITER panel in Advanced, whichever graph is showing. It is the limiter's reduction
+  only — the compressor's has its own meter and the clipper's is not measured — and reads "-"
+  once the host stops sending audio. Evidence: this release. [Verified]
 - **The STATISTICS header shows how much programme the figures cover** (`m:ss`): it stops while
   you listen to BYPASS and while no audio plays, and returns to 0:00 after RESET, a project load
   or a host sample-rate/buffer change. Evidence: this release. [Verified]

@@ -159,3 +159,33 @@ input (−0.44 LUFS against −6.00); offline, SP −0.45 and I −4.00; session
 | RESET does nothing / the whole panel resets again | `statsReset` ×2 / body checks in both layouts |
 | **equivalent, recorded:** the view's child-click flag false | nothing — in the pinned JUCE `Component::hitTest` consults it only when the parent ignores clicks |
 | **equivalent, removed:** `jmax` on the resume watermark | nothing — a resume always follows any reset, so its watermark is never earlier; the `jmax` was dropped rather than claimed |
+
+## Numeric observability — the limiter's reduction as a number (audit VIS-007 / VIS-003 step 1)
+
+Re-checked before building: no GR number existed in either view (`meterGrDb()` had no GUI caller);
+every GR display outside the COMP lane is the limiter's, unlabelled. The readout reads the GR
+history ring on the message thread in the editor tick — both views, either graph — rather than the
+per-call atomics, so a 24 Hz read misses no block. "lim GR" = deepest entry over the last 0.3 s,
+"GR max" = deepest over the history window; the span is capped 4096 entries short of the ring's
+safe lap, because at a saturated pair a full-window scan starts one lap behind the head and any push
+during it would fail the lap check for ever.
+
+Scan cost (scratch bench, full ring, 200 reads each): 48 kHz / 512 — 1875 entries, 0.0025 ms;
+48 kHz / 64 — 15000, 0.019 ms; 96 kHz / 32 — 60000, 0.074 ms; 384 kHz / 16 — 258047, 0.32 ms
+(0.77 % of a core at 24 Hz).
+
+Visual check: the editor rendered headlessly in both views (a temporary snapshot hook in the state
+suite, not committed): Simple stacks "lim GR" / "GR max" under "out LUFS" in its columns, clear of
+the well; Advanced puts them in the LIMITER foot under its lane; the STATISTICS header reads
+"STATISTICS 0:00 … RESET" with the rows unmoved.
+
+| Mutant | Killed by |
+|---|---|
+| no lap margin | the saturated-pair liveness check (and its premises) |
+| "now" boundary off by one | the edge check and the brute-force property |
+| the tick direction deleted | the three tick checks |
+| no stall timeout | the stall rule and the stopped-host tick check |
+| the formatter prints "-0.0" | the formatter check |
+| the max folded over "now" only | the edge check and the brute-force property |
+| the per-call COMP figure read instead | the compressor-alone and within-0.3 dB checks |
+| **survivor, recorded:** the lap re-check removed | not observable by value — a single-threaded or paced producer never laps, and a lapped min-fold reads only real measurements |

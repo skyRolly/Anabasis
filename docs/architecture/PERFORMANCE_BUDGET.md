@@ -148,6 +148,23 @@ re-state the flag set if a future round ever adds LTO to the bench.
 - Worst-block figures include scheduler noise (a 64-sample block stamped at 1.8 ms on a shared
   Xeon is a preemption, not DSP) — treat the median column as the load-bearing one.
 
+## Message thread — the numeric GR readout (2026-09-27, 0.2.14)
+
+Not audio-thread work and outside DESIGN §9's allocation, recorded because it grows with the host's
+block rate: the editor's 24 Hz tick scans the GR history ring for the "lim GR" / "GR max" readout
+(audit VIS-007), one min-fold over the readout span. Measured on the reference Xeon, scratch bench
+over a full ring (method in `worklogs/2026-09-27-phase1-match-statistics-observability.md`):
+
+| Pair | Span (entries) | per read | at 24 Hz |
+|---|---|---|---|
+| 48 kHz / 512 | 1875 | 0.0025 ms | 0.006 % of a core |
+| 48 kHz / 64 | 15000 | 0.019 ms | 0.045 % |
+| 96 kHz / 32 | 60000 | 0.074 ms | 0.18 % |
+| 384 kHz / 16 (saturated) | 258047 | 0.32 ms | 0.77 % |
+
+Only a pair already past the ring's full-window band pays the last row, the same shape as ADR-0040's
+paint scan.
+
 ## Refresh rule
 
 Re-run `AnabasisBench` and replace the table whenever the chain gains a stage, an OS mode

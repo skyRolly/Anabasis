@@ -1101,9 +1101,11 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         float gains[kMaxChannels] = { 1.0f, 1.0f };
         limiter.processSample (tapped, nCh, wOs, ceilingNow, gains);
         // GR TAP SCOPE, since the name does not say it: this is the LIMITER's
-        // reduction, not the chain's. `MasteringComp::currentGainReductionDb()`
-        // exists and is read only by the tests, so the published `pubGrDb`, the
-        // GR history ring and the §2.7 predict floor
+        // reduction, not the chain's. The compressor's own figure
+        // (`MasteringComp::currentGainReductionDb()`) reaches only the COMP
+        // lanes, through `compGrDbCh`; the published `pubGrDb`, the GR history
+        // ring — and so the numeric "lim GR" readout, whose caption says so
+        // (audit VIS-003) — and the §2.7 predict floor
         // (`inputGainDb + limGainDb + grDbNow`) all describe the limiter alone
         // — the floor therefore OVER-estimates the lift whenever the
         // compressor (or the clipper) takes level out, and

@@ -133,11 +133,11 @@ is a compile-time property of the member's type, and the teardown ordering is re
 site that performs it.
 
 ## Related code
-- `src/gui/PluginEditor.h:363` (the atomic and the reasoning at its declaration)
-- `src/gui/PluginEditor.cpp:747` (the wiring, and why it reads `presetMenusOpen` not `shieldRaised`)
+- `src/gui/PluginEditor.h:364` (the atomic and the reasoning at its declaration)
+- `src/gui/PluginEditor.cpp:775` (the wiring, and why it reads `presetMenusOpen` not `shieldRaised`)
 - `src/gui/LookAndFeel.h:203-204` (the hook and the override's two-part caller test)
-- `src/gui/PluginEditor.cpp:1101` (detach before the hooks are cleared)
+- `src/gui/PluginEditor.cpp:1129` (detach before the hooks are cleared)
 
 Evidence [Verified]:
-- Source: `src/gui/PluginEditor.h:363`, `src/gui/PluginEditor.cpp:747`
+- Source: `src/gui/PluginEditor.h:364`, `src/gui/PluginEditor.cpp:775`
 - Test:   `testTheResizableFrameOverrideDiscriminatesItsCallers` (message-thread half only)

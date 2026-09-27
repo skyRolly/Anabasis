@@ -458,6 +458,27 @@ rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStradd
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
 
+**Addendum (2026-09-27, 0.2.14) — the limiter's reduction as a number (audit VIS-007 / VIS-003
+step 1).** Code: `GrHistoryView` gains pure statics (`readingFrom` with `paintHistory`'s epoch/lap
+discipline, `readoutSpan` with a 4096-entry lap margin, `readoutCurrentEntries`, `readoutStale`,
+`grText`); the editor tick reads them in both views and places two caption/value label pairs (under
+out LUFS in Simple, in the LIMITER foot in Advanced); the clock seam TEST-001 added is renamed
+`setClockForTest` now that the readout's stall rule reads it too; the engine's GR-tap comment no
+longer says the compressor figure is "read only by the tests". No new thread, atomic, ordering or
+path — a const message-thread ring read the ring's header already admits — and nothing drawn in the
+graph well (ADR-0023 d7) or the STATISTICS panel (ADR-0020 D6). Rows engaged: **Metering / UI** —
+`USER_MANUAL.md` §3.4 (what the two numbers are, whose reduction, the no-data and 0.0 forms, the
+BYPASS caveat), `CHANGELOG.md` 0.2.14. **Performance** — `PERFORMANCE_BUDGET.md` gains a
+message-thread section with the measured scan (0.0025 ms at 48 kHz / 512 to 0.32 ms at a saturated
+384 kHz / 16). **New/changed test** — `testTheGrReadoutReadsTheRingItNames`,
+`testTheTickShowsTheLimiterGrReadout`; `procedures/TESTING.md` (the clock seam's rename). Wording
+from existing terms: "lim" as in the LIMITER panel, "GR" as in the graph pill and the manual, the
+"out LUFS" caption grammar, "-" as the product's no-reading form, and "max" for the window figure
+so it does not read as the STATISTICS peak holds. Mutation table in the worklog: 7 of 8 killed; the
+survivor (the lap re-check removed) is recorded as not observable by value, since every slot a
+min-fold can read is a real measurement from the ring's last lap. The audit files VIS-007/VIS-003
+under Phase 2; pulled forward as the groundwork this round was asked for.
+
 **Addendum (2026-09-27, 0.2.14) — STATISTICS: RESET, the bypass audition, the session length
 (ADR-0020 amendment 4).** Code: `LoudnessMeter::setSessionPaused` (the session half pauses; resume
 re-applies the straddler watermark); the engine's per-frame `sessionOpen` gate feeding session TP/SP

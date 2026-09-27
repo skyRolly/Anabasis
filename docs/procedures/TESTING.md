@@ -220,8 +220,9 @@ branch (29 of 29 killed, `DOCUMENTATION_COVERAGE.md`). Their handles are test-on
 no behaviour: component IDs on the out-LUFS label, the edited dot, the two GR mini-meters and the
 bypass dim; `GrMiniMeter::shownDb` / `isMono`; `tooltipGateOpen()` (the tooltip switch's predicate —
 a check through `getTipFor` would be vacuous, because JUCE returns no tip to a background process);
-and `setLearnClockForTest`, which replaces the Learn button's wall clock so the 5 s minimum pass and
-the 1.5 s empty-pass flash are stepped rather than slept. A stored-value change can be delivered
+and `setClockForTest`, which replaces the editor tick's wall clock so the Learn button's 5 s
+minimum pass and 1.5 s empty-pass flash, and the GR readout's stall rule, are stepped rather than
+slept (it was `setLearnClockForTest` until the readout joined it). A stored-value change can be delivered
 synchronously where a test needs the load path — `Value::getValueSource().sendChangeMessage (true)`
 is the message loop's own delivery (`testTheTooltipSwitchGatesEveryTip`). The tick's pop-up
 housekeeping is inert with nothing open and stays under ADR-0025, as does a hovered = true combo
