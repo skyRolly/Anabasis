@@ -166,6 +166,8 @@ docs/
 │                   ADR-0042 and ADR-0043 accepted — the PR #42 review closed item by item, and the
 │                   Phase 0 status matrix) and 2026-09-27-phase1-roadmap.md (Phase 1's first
 │                   round per finding, the recommended next order and the open owner decisions)
+│                   and 2026-09-28-pr42-review-closure.md (the third PR #42 review closed item by
+│                   item: two true-peak paths, KI-025, GR max's contract, the copy decisions, CI)
 ├── procedures/     BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS,
 │                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. PACKAGING arrives
 │                   with the OQ-007 installer set (first commercial release)

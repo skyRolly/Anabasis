@@ -3,6 +3,14 @@
 **Date:** 2026-09-27 · **Version:** 0.2.14 (unreleased) · **Class:** dated record in `docs/reports/` —
 a snapshot, superseded by a later record rather than edited in place (`docs/SOURCE_OF_TRUTH.md`).
 
+> **Followed by [`2026-09-28-pr42-review-closure.md`](2026-09-28-pr42-review-closure.md) (0.2.15).**
+> A correctness round, no Phase 1 work: the VIS-007 / VIS-003 step 1 row below is still Done, with its
+> max corrected to the history the graph draws, and the panel tooltip's bypass sentence this round
+> added is now an open copy decision (OQ-018). Every other row and the decisions in §3 stand; the
+> order in §2 stands with one insertion ahead of DSP-005 — KI-024 and KI-025, the true-peak paths
+> still open (the later record, §4) — and the later record adds ADR-0045, OQ-018, OQ-019 and KI-025's
+> closing decision to §3.
+
 The durable follow-up record for Phase 1 of the 2026-09-26 audit
 ([`2026-09-26-anabasis-product-ux-audit.md`](2026-09-26-anabasis-product-ux-audit.md), §Prioritized
 roadmap: "Comparisons and session figures tell the truth"). The audit and its finding records are not

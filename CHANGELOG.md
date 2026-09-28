@@ -50,7 +50,8 @@ read as data, so the sample heading immediately below is not mistaken for struct
 **A correctness round from the review of PR #42: two paths on which true-peak mode could let the
 output over its ceiling are closed, and GR max now reads everything its graph shows.** Nothing here
 moves the reported latency, a parameter or the saved state; with true-peak mode off, and with a
-ceiling that does not move, every rendered sample is what 0.2.14 rendered.
+ceiling that does not move, every rendered sample is what 0.2.14 rendered. Measurement trail:
+[`worklogs/2026-09-28-pr42-review-tp-contract.md`](worklogs/2026-09-28-pr42-review-tp-contract.md).
 
 ### Fixed
 - **True-peak mode now holds the ceiling while the Ceiling is moving.** With TP on, lowering the
