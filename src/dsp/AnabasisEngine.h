@@ -75,6 +75,12 @@ public:
     // constructor, which suppresses the implicit default one.
     AnabasisEngine() = default;
 
+    // The Ceiling's glide: a LINEAR ramp in gain, restarted by every block
+    // whose target differs (DSP_POLICY invariant 8). Public so a test can
+    // rebuild the live smoothed ceiling sample by sample — the value the
+    // output is held under at every automation rate (invariant 4).
+    static constexpr double kCeilingGlideSeconds = 0.020;
+
     void prepare (double sampleRate, int maxBlockSize, int numChannels);
     void reset() noexcept;
 
@@ -480,8 +486,18 @@ private:
 
     // Per-base-sample control values, filled in stage A and indexed by the
     // region at OS rate (i >> osShift): the same instantaneous ceiling the
-    // gain computer uses reaches the clamp, exactly as before.
+    // gain computer uses reaches the clamp — `ceilArr`, the live smoothed
+    // value, in TP-off.
     std::vector<float> ceilArr;
+    // True-peak mode (ADR-0045, amending ADR-0041 decision 3): the TP path
+    // emits each frame clampDelay base samples after it enters, so the limiter
+    // and the clamp judge it against the ceiling in force THEN — `ceilingAhead`
+    // is ceilingLinear run clampDelay samples ahead (re-derived at every block
+    // top), `ceilEmitArr` its per-base-sample value, `ceilInFlight` the new
+    // trajectory's value at the emission of each frame already in flight at a
+    // block top (CeilingClamp::lowerInFlightCeilings).
+    juce::SmoothedValue<float> ceilingAhead { 0.8912509f };
+    std::vector<float> ceilEmitArr, ceilInFlight;
     std::vector<int>   wArr;
     std::vector<float> pushArr;       // limiter push, applied inside the region
 

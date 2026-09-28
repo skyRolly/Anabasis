@@ -50,6 +50,7 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     dryRing.setSize (numChans, dryRingSize);
     staging.setSize (numChans, maxBlock);
     ceilArr.resize ((size_t) maxBlock);
+    ceilEmitArr.resize ((size_t) maxBlock);
     wArr.resize ((size_t) maxBlock);
     pushArr.resize ((size_t) maxBlock);
     specInL.resize ((size_t) maxBlock);
@@ -115,7 +116,9 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     // enough to feel immediate on a gain control.
     inputGain.reset (sampleRate, 0.020);
     pushGain.reset (sampleRate, 0.020);
-    ceilingLinear.reset (sampleRate, 0.020);
+    // A glide, never a snap: ADR-0045's in-flight revision relies on every
+    // retarget starting a ramp (see the block top) and on its bounded slope.
+    ceilingLinear.reset (sampleRate, kCeilingGlideSeconds);
     windowSamples.reset (sampleRate, 0.020);
 
     // The bypass fade length is derived from the sample rate, so it belongs
@@ -132,6 +135,7 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     // with room to spare (42 of 480 samples at 48 kHz); the rail is for the
     // host-supplied rate the comment at the top of this function describes.
     clamp.prepare (sampleRate);
+    ceilInFlight.assign ((size_t) clamp.truePeakDelay(), 0.0f);
     engageTail.prepare (sampleRate);
     tpClampFits = delaySamples - clamp.truePeakDelay()
                   >= (int) std::ceil (kMinLookaheadMs * 0.001 * sampleRate);
@@ -661,6 +665,30 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         windowSamples.setTargetValue (windowTarget);
     }
 
+    // THE TRUE-PEAK PATH IS JUDGED AT EMISSION (ADR-0045). Its audio leaves
+    // clampDelay samples after it enters, and the promise is the ceiling in
+    // force when it leaves. Between block-rate retargets the smoother is a
+    // deterministic ramp, so a copy run clampDelay steps ahead gives that value
+    // exactly (the same float operations in the same order — never skip(),
+    // whose multiply rounds differently); a retarget HERE can only move the
+    // future of the frames already in flight, and the clamp lowers their
+    // ceilings to it. What makes the not-gliding exit exact: every EFFECTIVE
+    // retarget leaves the smoother gliding (its ramp is kCeilingGlideSeconds, so
+    // stepsToTarget > 0 at every supported rate), so a smoother that is not
+    // gliding has had no retarget since the in-flight frames were stamped and
+    // their predictions still hold — the static-ceiling path does no extra
+    // work. Static ceiling: every value is the target, exactly as before.
+    if (appliedTpClamp)
+    {
+        ceilingAhead = ceilingLinear;
+        if (ceilingLinear.isSmoothing())
+        {
+            for (int i = 0; i < clampDelay; ++i)
+                ceilInFlight[(size_t) i] = ceilingAhead.getNextValue();
+            clamp.lowerInFlightCeilings (ceilInFlight.data(), clampDelay);
+        }
+    }
+
     // ---- Invariant 9, the unconditional per-block repairs -----------------
     // POSITION IS LOAD-BEARING: everything below reads state these calls
     // repair — `currentTrims()` on the next line most of all — so they run
@@ -930,7 +958,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     // ======== Stage A - base rate: input gain -> EQ(Pre) -> compressor =====
     // Also fills the per-base-sample control arrays the region indexes, so
     // the SAME instantaneous ceiling the gain computer uses reaches the
-    // clamp, exactly as before the restructure. The EQ ticks in whichever
+    // clamp — `ceilArr` in TP-off, `ceilEmitArr` (the value at emission) in
+    // TP mode (ADR-0045). The EQ ticks in whichever
     // stage processes it - ticking here while Post processes in stage E
     // would hand every Post sample the block's final coefficients, a
     // block-length step that breaks the smoothing contract.
@@ -939,6 +968,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         const float gIn   = inputGain.getNextValue();
         const float gPush = pushGain.getNextValue();
         ceilArr[(size_t) n] = ceilingLinear.getNextValue();
+        if (appliedTpClamp)
+            ceilEmitArr[(size_t) n] = ceilingAhead.getNextValue();
         const int wBase = juce::jlimit (1, delaySamples - clampDelay,
                                         juce::roundToInt (windowSamples.getNextValue()));
         wArr[(size_t) n] = wBase;
@@ -1028,7 +1059,11 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     for (int i = 0; i < regionSamples; ++i)
     {
         const int   b          = i >> osShift;
-        const float ceilingNow = ceilArr[(size_t) b];
+        // The limiter plays each sample to the ceiling in force when the
+        // sample LEAVES the plug-in — at once in TP-off, where the clamp adds
+        // no delay, and clampDelay samples later in TP mode (ADR-0045), where
+        // it is the value the clamp stamps the same base sample with.
+        const float ceilingNow = appliedTpClamp ? ceilEmitArr[(size_t) b] : ceilArr[(size_t) b];
         const int   wOs        = wArr[(size_t) b] << osShift;
 
         float frame[kMaxChannels] = {};
@@ -1062,13 +1097,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // future level-affecting control inside the region, where a slower
         // glide or a higher factor could put an image under the cutoff.
         //
-        // For `ceilArr` the same hold is LOAD-BEARING, not a cost: the region's
-        // gain computer and stage E's CeilingClamp must use the SAME
-        // instantaneous ceiling, which is what CeilingClamp's header promises
-        // ("a backstop, never a second differently-timed threshold"). The
-        // clamp runs at base rate on the decimated signal, so interpolating
-        // `ceilArr` across the region would give the two a different threshold
-        // per sample and break that contract. Do not "improve" it.
+        // For the ceiling the same hold is LOAD-BEARING, not a cost: the
+        // region's gain computer and stage E's CeilingClamp must use the SAME
+        // instantaneous ceiling per base sample (`ceilArr`, or `ceilEmitArr` in
+        // TP mode), which is what CeilingClamp's header promises ("a backstop,
+        // never a second differently-timed threshold"). The clamp runs at base
+        // rate on the decimated signal, so interpolating it across the region
+        // would give the two a different threshold per sample and break that
+        // contract. Do not "improve" it.
         if (const float gPushNow = pushArr[(size_t) b]; ! juce::exactlyEqual (gPushNow, 1.0f))
             for (int ch = 0; ch < nCh; ++ch)
                 frame[ch] *= gPushNow;
@@ -1290,11 +1326,12 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
 
         // ADR-0006 item 3: with true-peak mode applied the gain acts on the
         // clamp's own true-peak estimate, the hard clip under it the backstop;
-        // without, the hard clip alone. The ceiling travels WITH each frame
-        // through the true-peak path's delay, so every sample is still judged
-        // against the instantaneous ceiling the limiter used for it.
+        // without, the hard clip alone. The true-peak path is handed the
+        // ceiling in force when THIS frame will be emitted (above), so every
+        // emitted sample is judged against the live ceiling at its emission;
+        // with a static ceiling that is the limiter's value exactly.
         if (appliedTpClamp)
-            clamp.processFrameTruePeak (clampFrame, nCh, ceilingNow);
+            clamp.processFrameTruePeak (clampFrame, nCh, ceilEmitArr[(size_t) n]);
         else
             for (int ch = 0; ch < nCh; ++ch)
                 clampFrame[ch] = clamp.processSample (clampFrame[ch], ceilingNow);

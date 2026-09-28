@@ -44,6 +44,23 @@
 //  than adding it to the reported latency (ADR-0041, amending ADR-0004 for
 //  TP mode only) — the reported figure never moves.
 //
+//  THE CEILING A FRAME IS JUDGED AGAINST is the one in force when it is
+//  EMITTED, truePeakDelay steps after it enters: the engine hands each frame
+//  the value its ceiling smoother will have then (the smoother is a
+//  deterministic linear ramp between block-rate retargets, so the engine runs
+//  a copy of it truePeakDelay steps ahead). A retarget at a block top can move
+//  that future below what the frames already in flight were judged against;
+//  `lowerInFlightCeilings` then lowers (never raises) their stored ceilings to
+//  the new trajectory and re-derives every requirement not yet applied from
+//  the stored per-segment detector readings. With a static ceiling the
+//  emission-time value IS the entry-time value, and nothing here changes.
+//  (ADR-0045, amending ADR-0041 decision 3. Until 0.2.15 each frame carried
+//  the ceiling in force when it ENTERED, so while the ceiling descended the
+//  output answered to a value truePeakDelay samples old: up to
+//  20·log10(1 + (D/R)(c0/c1 − 1)) dB over the live one — +2.7 dB for an
+//  instant −1 → −20 dB cut at 44.1 kHz — where the TP-off clip, which reads
+//  the live value, had none. The review of PR #42.)
+//
 //  Per step n, all channels together (one LINKED gain, so the image does not
 //  move when one side is caught):
 //    r[j]  = min(1, ceil_j / tp_ch[j]) over channels, j = n−16, where ceil_j
@@ -55,6 +72,21 @@
 //    g[k]  = 1 − max(1 − ga[k], β·(1 − g[k−1]))   — a one-pole release that
 //            can only ever hold the gain LOWER than the attack asks for;
 //    out   = clip(x[k]·g[k], ±ceil_k),  k = n − truePeakDelay.
+//
+//  THE ONE PLACE THE RAMP STEPS (ADR-0045). A revision re-derives m for the
+//  steps the next emissions read, so the frame emitted right after a downward
+//  retarget can take its revised requirement at once: a segment reading it
+//  constrains samples up to 15 steps ahead, so with the output AT the ceiling
+//  the gain drops by about (16 + A/2 + 1) glide steps in one sample
+//  (0.0185 at 48 kHz for a −1 → −20 dB cut on DC held at the ceiling, pinned
+//  by testTruePeakModeBoundsTheStepAtACeilingCut), where a TP-off clip glides
+//  one step per sample. It is invariant 8 yielding to invariant 4, recorded.
+//  THE GUARANTEE DEPENDS ON THE GLIDE'S SLOPE: a revision cannot reach the
+//  already-emitted half of a segment that straddles the emission point, so the
+//  residual scales with how far the ceiling can fall in the ~16 steps after a
+//  frame leaves — negligible for the engine's 20 ms linear glide (≤ +0.023 dB
+//  measured, 22.05–384 kHz), not for a ceiling that could step; an ungated
+//  ceiling path would need its own record.
 //
 //  EXACT PASS-THROUGH WHEN IDLE: every ring holds exactly 1.0 when nothing is
 //  over, the mean of A ones is exactly 1.0f, and the release of 1.0 is 1.0 —
@@ -132,6 +164,13 @@ public:
         requirement.assign ((size_t) ClampTruePeakDetector::kTaps, 1.0f);
         need.assign ((size_t) attack, 1.0f);
         forwardMin.assign ((size_t) attack, 1.0f);
+        // A revision rebuilds m for the last A steps, which reads q over
+        // 2A − 1 steps, which reads r over 2A + 30 segments.
+        const int hist = 2 * attack + ClampTruePeakDetector::kTaps;
+        segPeak.assign ((size_t) hist, 0.0f);
+        segReq.assign ((size_t) hist, 1.0f);
+        for (auto* v : { &scratchA, &scratchB, &scratchC, &scratchQ })
+            v->assign ((size_t) hist, 1.0f);
         estimator.prepare();
         reset();
     }
@@ -146,8 +185,10 @@ public:
         std::fill (requirement.begin(), requirement.end(), 1.0f);
         std::fill (need.begin(), need.end(), 1.0f);
         std::fill (forwardMin.begin(), forwardMin.end(), 1.0f);
+        std::fill (segPeak.begin(), segPeak.end(), 0.0f);
+        std::fill (segReq.begin(), segReq.end(), 1.0f);
         estimator.reset();
-        writePos = reqPos = needPos = minPos = 0;
+        writePos = reqPos = needPos = minPos = histPos = 0;
         reqBelow = needBelow = minBelow = 0;
         gain = 1.0f;
         reduction = 0.0f;
@@ -156,11 +197,13 @@ public:
 
     int truePeakDelay() const noexcept { return delay; }
 
-    // Push one frame (post-EQ, all channels) with the ceiling it was limited
-    // against; `frame` is replaced by the frame that entered `truePeakDelay()`
-    // steps ago, reduced so its true peak (as ClampTruePeakDetector reads it,
-    // the largest of its three readings) stays at or under ITS OWN ceiling,
-    // then hard-clipped against that ceiling. Allocation-free.
+    // Push one frame (post-EQ, all channels) with the ceiling that will be in
+    // force when it is EMITTED, `truePeakDelay()` steps from now; `frame` is
+    // replaced by the frame that entered `truePeakDelay()` steps ago, reduced
+    // so its true peak (as ClampTruePeakDetector reads it, the largest of its
+    // three readings) stays at or under ITS OWN stored ceiling (as lowered by
+    // any `lowerInFlightCeilings` since), then hard-clipped against that
+    // ceiling. Allocation-free.
     void processFrameTruePeak (float* frame, int numCh, float ceilingLinear) noexcept
     {
         const int nCh  = truepeak::min2 (numCh, kMaxChannels);
@@ -192,6 +235,21 @@ public:
         for (int ch = 0; ch < nCh; ++ch)
             if (tp[ch] > segCeil)                 // NaN fails this: see the header
                 r = truepeak::min2 (r, segCeil / tp[ch]);
+
+        // The segment's reading (the channels' largest; NaN loses) and its
+        // requirement, kept so a lowered ceiling can re-derive r without the
+        // audio: segCeil / max(tp) IS the min over channels above, because a
+        // correctly rounded division is monotone in its divisor.
+        {
+            float peak = 0.0f;
+            for (int ch = 0; ch < nCh; ++ch)
+                if (tp[ch] > peak)
+                    peak = tp[ch];
+            segPeak[(size_t) histPos] = peak;
+            segReq[(size_t) histPos]  = r;
+            if (++histPos == (int) segReq.size())
+                histPos = 0;
+        }
 
         // THE THREE WINDOWS BELOW ARE SCANNED ONLY WHILE THEY HOLD SOMETHING
         // BELOW 1. Each ring keeps a count of its entries under unity, so the
@@ -250,6 +308,100 @@ public:
     // The linked gain applied to the frame last emitted (1 = no reduction).
     float currentGain() const noexcept { return gain; }
 
+    // A LOWERED CEILING TRAJECTORY. `emitCeil[i]` is the ceiling in force when
+    // the i-th oldest frame still in flight is emitted (i = 0: the frame the
+    // next processFrameTruePeak emits; `count` ≤ truePeakDelay()). Each stored
+    // ceiling is lowered to it, never raised; if any moved, every requirement
+    // that still constrains a gain not yet applied is re-derived from the
+    // stored detector readings — r for the segments reading a lowered frame,
+    // then q over the last 2A − 1 steps and m over the last A, exactly the
+    // windows the next steps read — so every gain still to be emitted again
+    // satisfies ga[k] ≤ q[k] for the lowered ceilings. The release state is
+    // kept: g ≤ ga holds whatever it is. Allocation-free; bounded work: `count`
+    // compares when no ceiling moves, about 6A + 105 more when ceilings move
+    // but no requirement does, about 24A + 290 in all when one does (A =
+    // attack: ~580 at 48 kHz, ~1440 at 192 kHz), once per block at most.
+    void lowerInFlightCeilings (const float* emitCeil, int count) noexcept
+    {
+        if (! ceilingsPrimed)
+            return;                               // nothing in flight yet
+        const int size = delay + 1;
+        const int nIn  = truepeak::min2 (count, delay);
+        int first = -1;
+        for (int i = 0; i < nIn; ++i)
+        {
+            float& c = ceilings[(size_t) wrap (writePos + 1 + i, size)];
+            if (emitCeil[i] < c)                  // NaN fails: never lowered to NaN
+            {
+                c = emitCeil[i];
+                if (first < 0)
+                    first = i;
+            }
+        }
+        if (first < 0)
+            return;
+
+        // Offsets from the LAST step n: frame x[n − t] sits in ceilings slot
+        // writePos − 1 − t; segment j = n − 16 − u (u = 0: the newest reported)
+        // in history slot histPos − 1 − u and reads x[n − 16 − u], x[n − 15 − u].
+        // In-flight frame i is x[n + 1 − D + i], so only u ≤ D − 16 − first moved.
+        constexpr int lag = ClampTruePeakDetector::kLag;
+        const int hist = (int) segReq.size();
+        bool moved = false;
+        for (int u = 0; u <= delay - lag - first; ++u)
+        {
+            const int   t       = lag + u;
+            const float segCeil = truepeak::min2 (ceilings[(size_t) wrap (writePos - 1 - t, size)],
+                                                  ceilings[(size_t) wrap (writePos - t, size)]);
+            const int   h       = wrap (histPos - 1 - u, hist);
+            const float peak    = segPeak[(size_t) h];
+            if (peak > segCeil && segCeil / peak < segReq[(size_t) h])
+            {
+                segReq[(size_t) h] = segCeil / peak;
+                moved = true;
+            }
+        }
+        if (! moved)
+            return;          // no requirement moved: q and m are functions of r alone
+
+        // r, newest first: rr[u] = r[n − 16 − u], u = 0 .. 2A + 29.
+        constexpr int taps = ClampTruePeakDetector::kTaps;
+        const int nR = 2 * attack + taps - 2;
+        float* rr = scratchA.data();
+        for (int u = 0; u < nR; ++u)
+            rr[u] = segReq[(size_t) wrap (histPos - 1 - u, hist)];
+
+        // q, newest first: qq[v] = q[n − 31 − v] = min rr[v .. v + 31], v = 0 .. 2A − 2.
+        float* qq = scratchQ.data();
+        windowMin (rr, nR, taps, scratchB.data(), scratchC.data(), qq);
+        const int nQ = nR - taps + 1;             // 2A − 1
+
+        reqBelow = 0;
+        for (int u = 0; u < taps; ++u)
+        {
+            float& slot = requirement[(size_t) wrap (reqPos - 1 - u, taps)];
+            slot = rr[u];
+            reqBelow += slot < 1.0f ? 1 : 0;
+        }
+        needBelow = 0;
+        for (int v = 0; v < attack; ++v)
+        {
+            float& slot = need[(size_t) wrap (needPos - 1 - v, attack)];
+            slot = qq[v];
+            needBelow += slot < 1.0f ? 1 : 0;
+        }
+        // m, newest first: the m of step n − w is min qq[w .. w + A − 1].
+        float* mm = scratchA.data();              // rr is no longer needed
+        windowMin (qq, nQ, attack, scratchB.data(), scratchC.data(), mm);
+        minBelow = 0;
+        for (int w = 0; w < attack; ++w)
+        {
+            float& slot = forwardMin[(size_t) wrap (minPos - 1 - w, attack)];
+            slot = mm[w];
+            minBelow += slot < 1.0f ? 1 : 0;
+        }
+    }
+
 private:
     static int attackFor (double sampleRate) noexcept
     {
@@ -259,6 +411,18 @@ private:
     static int wrap (int i, int size) noexcept
     {
         return i < 0 ? i + size : (i >= size ? i - size : i);
+    }
+
+    // y[i] = min (a[i .. i + w − 1]), i = 0 .. n − w, in about 3n operations
+    // (van Herk / Gil-Werman: prefix and suffix minima over blocks of w).
+    static void windowMin (const float* a, int n, int w, float* pre, float* suf, float* y) noexcept
+    {
+        for (int i = 0; i < n; ++i)
+            pre[i] = (i % w == 0) ? a[i] : truepeak::min2 (pre[i - 1], a[i]);
+        for (int i = n - 1; i >= 0; --i)
+            suf[i] = (i == n - 1 || i % w == w - 1) ? a[i] : truepeak::min2 (suf[i + 1], a[i]);
+        for (int i = 0; i + w <= n; ++i)
+            y[i] = truepeak::min2 (suf[i], pre[i + w - 1]);
     }
 
     // Write `v` into a sliding window (a ring) and return the window's
@@ -282,8 +446,10 @@ private:
     ClampTruePeakDetector estimator;
     std::vector<float> audio[kMaxChannels];
     std::vector<float> ceilings, requirement, need, forwardMin;
+    std::vector<float> segPeak, segReq;          // per segment, newest at histPos − 1
+    std::vector<float> scratchA, scratchB, scratchC, scratchQ;   // lowerInFlightCeilings
     int   attack = kMinAttackSamples, delay = kMinAttackSamples + kRequirementLead - 1;
-    int   writePos = 0, reqPos = 0, needPos = 0, minPos = 0;
+    int   writePos = 0, reqPos = 0, needPos = 0, minPos = 0, histPos = 0;
     int   reqBelow = 0, needBelow = 0, minBelow = 0;   // entries under 1 in each window
     float gain = 1.0f, reduction = 0.0f, releaseKeep = 0.0f;
     bool  ceilingsPrimed = false;

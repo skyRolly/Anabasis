@@ -3333,6 +3333,370 @@ static void testOfflineEntryDropsTheEngagementTail()
 }
 
 // ---------------------------------------------------------------------------
+// TRUE-PEAK MODE UNDER CEILING AUTOMATION (the PR #42 review of 0.2.14;
+// DSP_POLICY invariant 4: "any automation rate"). The true-peak path delays
+// its audio by D (42 samples at 48 kHz), and until 0.2.15 it judged and
+// clipped every frame against the ceiling the frame CARRIED IN — so while the
+// 20 ms glide descended, every emitted frame answered to a ceiling D samples
+// old: up to 20·log10(1 + (D/R)(c0/c1 − 1)) dB over the ceiling the smoother
+// held at that instant (R = the glide in samples) — +1.1 dB for an instant
+// 0 → −12 dB cut, +2.7 dB for −1 → −20, worst at the END of the glide, and on
+// both defining meters. TP-off never had it: its clip reads the live value.
+//
+// THE REFERENCE is the live smoothed ceiling at the output sample — the value
+// the TP-off clip holds bit-exactly — rebuilt here with the engine's own
+// smoother, driven exactly as the engine drives it: adopted on the first
+// block, retargeted once per process() call, advanced once per sample. Every
+// reading whose segment starts at or after the automation begins is compared
+// with the lower live value of its two samples; the emitted samples with the
+// live value itself (the backstop clip).
+//
+// WHY IT CANNOT PASS VACUOUSLY: the programmes drive the limiter into the
+// ceiling (a premise checks every descending render reaches within 1 dB of the
+// live ceiling during the glide), the cuts are instant and fast-ramped (the
+// cases the lag is largest for), and each case runs with the blocks of a host
+// that retargets often (64) and seldom (512). Covered as the owner asked:
+// downward, upward, static, fast zig-zag, two rates with a different D, and
+// every oversampling factor.
+namespace tpceiling
+{
+enum class Move { cut0to12, cut1to20, ramp50ms, zigzag6, up12to0, rampUp200ms, still01 };
+
+struct AutomationRun
+{
+    float overLiveMeterDb  = -100.0f, overLiveAnnex2Db = -100.0f;   // worst reading over live, dB
+    float overLiveSampleDb = -100.0f;                                // worst emitted sample over live, dB
+    float nearestDb        = -100.0f;                                // worst reading minus live during the move
+    int   segmentsOver     = 0;                                      // readings > +0.1 dB over live
+    float postLandDipDb    = 0.0f;   // an instant cut: the lowest 1 ms peak under the landed ceiling, 50 ms after it lands
+};
+
+inline float targetDb (Move m, double t)          // t: seconds since the move began (< 0 before)
+{
+    switch (m)
+    {
+        case Move::cut0to12:    return t < 0.0 ? 0.0f : -12.0f;
+        case Move::cut1to20:    return t < 0.0 ? -1.0f : -20.0f;
+        case Move::ramp50ms:    return t < 0.0 ? 0.0f : (float) (-12.0 * juce::jmin (1.0, t / 0.050));
+        case Move::zigzag6:     return t < 0.0 || t >= 0.1 ? 0.0f : (((int) (t / 0.005)) % 2 == 0 ? -6.0f : 0.0f);
+        case Move::up12to0:     return t < 0.0 ? -12.0f : 0.0f;
+        case Move::rampUp200ms: return t < 0.0 ? -12.0f : (float) (-12.0 * (1.0 - juce::jmin (1.0, t / 0.2)));
+        case Move::still01:     break;
+    }
+    return -0.1f;
+}
+
+// kind ≥ 0: the Programme generators at `pt`; kind −1: a full-scale 997 Hz
+// sine pushed 12 dB into the limiter at its default voicing (its reading sits
+// AT the ceiling).
+inline AutomationRun automateCeiling (double sr, int block, int factor, int kind, const Point& pt,
+                                      float postShelfDb, Move move, bool truePeak)
+{
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, block, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode      = truePeak;
+    p.oversample        = (anabasis::OversampleFactor) factor;
+    p.limGainDb         = kind < 0 ? 12.0f : pt.limGainDb;
+    p.compThresholdDb   = kind < 0 ? 0.0f : pt.compThresholdDb;
+    p.compRatio         = kind < 0 ? 1.0f : pt.compRatio;
+    p.clipDriveDb       = kind < 0 ? 0.0f : pt.clipDriveDb;
+    p.dynTiltDb         = kind < 0 ? 0.0f : pt.dynTiltDb;
+    if (kind >= 0)                                     // the sine keeps the limiter's default voicing
+    {
+        p.clipShape         = pt.clipShape;
+        p.limStyle          = pt.style;
+        p.transientPreserve = pt.transientPreserve;
+    }
+    if (! juce::exactlyEqual (postShelfDb, 0.0f))
+    {
+        p.eqPosition        = 1;
+        p.eqHighShelfGainDb = postShelfDb;
+    }
+    Programme prog;
+    prog.kind = juce::jmax (0, kind);
+    prog.sr   = sr;
+
+    juce::SmoothedValue<float> live;                   // the engine's ceiling smoother, rebuilt
+    live.reset (sr, anabasis::AnabasisEngine::kCeilingGlideSeconds);
+    anabasis::TruePeakEstimator meter;
+    meter.prepare();
+    Annex2Meter annex2;
+    std::vector<float> ceil;                           // the live value at every output sample
+    std::vector<float> reading;                        // the product meter's reading at every output sample
+    juce::AudioBuffer<float> buf (2, block);
+    const long moveAt = (long) (0.2 * sr);
+    const long total  = moveAt + (long) ((move == Move::rampUp200ms ? 0.3 : 0.15) * sr);
+    AutomationRun run;
+    const float tol = 0.1f;
+    bool first = true;
+    for (long n = 0; n < total; n += block)
+    {
+        p.ceilingDbTp = targetDb (move, (double) (n - moveAt) / sr);
+        const float target = juce::Decibels::decibelsToGain (p.ceilingDbTp);
+        if (first)
+            live.setCurrentAndTargetValue (target);
+        else
+            live.setTargetValue (target);
+        first = false;
+        for (int i = 0; i < block; ++i)
+        {
+            float l = 0.0f, r = 0.0f;
+            if (kind < 0)
+                l = r = (float) std::sin (juce::MathConstants<double>::twoPi * 997.0 * (double) (n + i) / sr);
+            else
+                prog.frame (l, r);
+            buf.setSample (0, i, l);
+            buf.setSample (1, i, r);
+        }
+        engine.process (buf, p);
+        for (int i = 0; i < block; ++i)
+        {
+            const long  m  = n + i;
+            const float c  = live.getNextValue();
+            ceil.push_back (c);
+            const float fr[2] = { buf.getSample (0, i), buf.getSample (1, i) };
+            float tp[2] = {};
+            meter.processFrame (fr, 2, tp);
+            const float a   = juce::jmax (annex2.push (0, fr[0]), annex2.push (1, fr[1]));
+            const float pm  = juce::jmax (tp[0], tp[1]);
+            reading.push_back (pm);
+            const long  seg = m - 6;                    // both meters report x[m−6]..x[m−5]
+            if (m >= moveAt - 64)
+            {
+                const float peak = juce::jmax (std::abs (fr[0]), std::abs (fr[1]));
+                run.overLiveSampleDb = juce::jmax (run.overLiveSampleDb,
+                                                   juce::Decibels::gainToDecibels (peak / c, -200.0f));
+            }
+            if (seg >= moveAt - 64 && seg + 1 < (long) ceil.size())
+            {
+                const float segCeil = juce::jmin (ceil[(size_t) seg], ceil[(size_t) seg + 1]);
+                const float dm = juce::Decibels::gainToDecibels (pm / segCeil, -200.0f);
+                const float da = juce::Decibels::gainToDecibels (a / segCeil, -200.0f);
+                run.overLiveMeterDb  = juce::jmax (run.overLiveMeterDb, dm);
+                run.overLiveAnnex2Db = juce::jmax (run.overLiveAnnex2Db, da);
+                run.nearestDb        = juce::jmax (run.nearestDb, dm, da);
+                if (dm > tol || da > tol)
+                    ++run.segmentsOver;
+            }
+        }
+    }
+    if (move == Move::cut0to12 || move == Move::cut1to20)
+    {
+        const float landed = juce::Decibels::decibelsToGain (targetDb (move, 1.0));
+        long land = moveAt;
+        while (land < (long) ceil.size() && ! juce::exactlyEqual (ceil[(size_t) land], landed))
+            ++land;
+        const long bin = (long) std::lround (0.001 * sr);
+        for (long b = land; b + bin <= juce::jmin ((long) reading.size(), land + (long) (0.05 * sr)); b += bin)
+        {
+            float peak = 0.0f;
+            for (long m = b; m < b + bin; ++m)
+                peak = juce::jmax (peak, reading[(size_t) m]);
+            run.postLandDipDb = juce::jmin (run.postLandDipDb, juce::Decibels::gainToDecibels (peak / landed, -200.0f));
+        }
+    }
+    return run;
+}
+} // namespace tpceiling
+
+static void testTruePeakModeHoldsTheCeilingUnderAutomation()
+{
+    using tpceiling::Move;
+    using tpceiling::Point;
+    const Point hot { 18.0f, -12.0f, 2.0f, 9.0f, 0.35f, 1.5f, 1, 1.0f, -1.0f };
+    const Move moves[] = { Move::cut0to12, Move::cut1to20, Move::ramp50ms, Move::zigzag6,
+                           Move::up12to0, Move::rampUp200ms, Move::still01 };
+    auto name = [] (Move m)
+    {
+        switch (m)
+        {
+            case Move::cut0to12:    return "0 -> -12 dB instant";
+            case Move::cut1to20:    return "-1 -> -20 dB instant";
+            case Move::ramp50ms:    return "0 -> -12 dB over 50 ms";
+            case Move::zigzag6:     return "+-6 dB every 5 ms";
+            case Move::up12to0:     return "-12 -> 0 dB instant";
+            case Move::rampUp200ms: return "-12 -> 0 dB over 200 ms";
+            case Move::still01:     return "static -0.1 dB";
+        }
+        return "";
+    };
+    auto descending = [] (Move m) { return m == Move::cut0to12 || m == Move::cut1to20 || m == Move::ramp50ms || m == Move::zigzag6; };
+
+    int runs = 0, overMeter = 0, overAnnex2 = 0, samplesOver = 0, farFromCeiling = 0, sineCuts = 0, deepDips = 0;
+    float deepestDip = 0.0f;
+    float worstMeter = -100.0f, worstAnnex2 = -100.0f;
+    auto note = [&] (const tpceiling::AutomationRun& r, Move m, const char* where)
+    {
+        ++runs;
+        if (m == Move::cut1to20 && std::strstr (where, "sine") != nullptr)
+        {
+            ++sineCuts;
+            deepestDip = juce::jmin (deepestDip, r.postLandDipDb);
+            if (r.postLandDipDb < -1.6f)
+            {
+                ++deepDips;
+                std::printf ("       tpAutomation: %s, %s: the output dips %.3f dB under the ceiling after it lands\n",
+                             where, "-1 -> -20 dB instant", (double) r.postLandDipDb);
+            }
+        }
+        worstMeter  = juce::jmax (worstMeter, r.overLiveMeterDb);
+        worstAnnex2 = juce::jmax (worstAnnex2, r.overLiveAnnex2Db);
+        if (r.overLiveMeterDb > 0.1f)  ++overMeter;
+        if (r.overLiveAnnex2Db > 0.1f) ++overAnnex2;
+        if (r.overLiveSampleDb > 1.0e-5f) ++samplesOver;
+        if (descending (m) && r.nearestDb < -1.0f) ++farFromCeiling;
+        if (r.overLiveMeterDb > 0.1f || r.overLiveAnnex2Db > 0.1f || r.overLiveSampleDb > 1.0e-5f)
+            std::printf ("       tpAutomation: %s, %s: %+.3f / %+.3f dB over the live ceiling (product / Annex 2), "
+                         "sample %+.4f dB, %d segments over\n",
+                         where, name (m), (double) r.overLiveMeterDb, (double) r.overLiveAnnex2Db,
+                         (double) r.overLiveSampleDb, r.segmentsOver);
+    };
+
+    // The main grid at 48 kHz: host blocks of 64 and 512, OS off and 4x, the hot
+    // HF programme with and without the +12 dB Post shelf and the driven sine,
+    // every move; then 44.1 kHz (D = 41, a shorter glide) on the four
+    // descending moves.
+    struct Source { int kind; float shelf; const char* label; };
+    const Source sources[] = { { 1, 0.0f, "HF" }, { 1, 12.0f, "HF + 12 dB shelf" }, { -1, 0.0f, "sine" } };
+    for (const int block : { 64, 512 })
+        for (const int factor : { 0, 2 })
+            for (const auto& src : sources)
+                for (const Move m : moves)
+                {
+                    char where[96];
+                    std::snprintf (where, sizeof (where), "48000 Hz / %d / OS %d / %s", block, factor, src.label);
+                    note (tpceiling::automateCeiling (48000.0, block, factor, src.kind, hot, src.shelf, m, true), m, where);
+                }
+    for (const int kind : { 1, -1 })
+        for (const Move m : { Move::cut0to12, Move::cut1to20, Move::ramp50ms, Move::zigzag6 })
+        {
+            char where[64];
+            std::snprintf (where, sizeof (where), "44100 Hz / 64 / OS 0 / %s", kind < 0 ? "sine" : "HF");
+            note (tpceiling::automateCeiling (44100.0, 64, 0, kind, hot, 0.0f, m, true), m, where);
+        }
+    // Every oversampling factor, and two more rates where D and the glide differ.
+    for (const int factor : { 1, 3, 4 })
+        for (const Move m : { Move::cut1to20, Move::zigzag6 })
+        {
+            char where[64];
+            std::snprintf (where, sizeof (where), "48000 Hz / 512 / OS %d / transient", factor);
+            note (tpceiling::automateCeiling (48000.0, 512, factor, 0, hot, 0.0f, m, true), m, where);
+        }
+    for (const double sr : { 96000.0, 192000.0 })
+    {
+        char where[64];
+        std::snprintf (where, sizeof (where), "%.0f Hz / 512 / OS 0 / sine", sr);
+        note (tpceiling::automateCeiling (sr, 512, 0, -1, hot, 0.0f, Move::cut1to20, true), Move::cut1to20, where);
+    }
+
+    check (runs == 100, "tpAutomation: (premise) all 100 TP-mode automation renders ran");
+    check (farFromCeiling == 0,
+           "tpAutomation: (premise) every descending render reaches within 1 dB of the live ceiling during the move");
+    check (overMeter == 0,
+           "tpAutomation: invariant 4 at any automation rate — no product-meter reading is > 0.1 dB over the live smoothed ceiling");
+    check (overAnnex2 == 0,
+           "tpAutomation: invariant 4 at any automation rate — no Annex 2 reading is > 0.1 dB over the live smoothed ceiling");
+    check (samplesOver == 0,
+           "tpAutomation: the backstop clip holds every emitted sample at or under the LIVE ceiling, as TP-off's does");
+    if (overMeter > 0 || overAnnex2 > 0)
+        std::printf ("       tpAutomation: %d / %d of %d renders over; worst %+.3f / %+.3f dB (product / Annex 2)\n",
+                     overMeter, overAnnex2, runs, (double) worstMeter, (double) worstAnnex2);
+    // THE LIMITER FOLLOWS THE MOVING CEILING, not the clamp (ADR-0045 decision 3).
+    // Were the limiter left on the entry-time value, the clamp would take the
+    // whole descent at its 0.25 ms attack and its 10 ms release would then hold
+    // that reduction after the ceiling lands: a sine held at the ceiling (the
+    // default voicing) dips 1.8-2.8 dB under it, where with the limiter on the
+    // emission-time value it dips 1.0-1.3 dB — the clamp's own release, which the
+    // unfixed engine showed too (1.0-1.2 dB).
+    check (sineCuts == 7 && deepDips == 0,
+           "tpAutomation: after an instant -1 -> -20 dB cut lands, a sine at the ceiling dips no more than 1.6 dB under it (the limiter follows the ceiling)");
+    if (deepDips > 0)
+        std::printf ("       tpAutomation: deepest post-landing dip %.3f dB\n", (double) deepestDip);
+
+    // The TP-off path is the reference the fix aligns to: its clip reads the
+    // live value, so no emitted sample of it is above the live ceiling.
+    int offOver = 0;
+    for (const int block : { 64, 512 })
+        for (const Move m : moves)
+            offOver += tpceiling::automateCeiling (48000.0, block, 2, 1, hot, 12.0f, m, false).overLiveSampleDb > 1.0e-5f ? 1 : 0;
+    check (offOver == 0, "tpAutomation: TP off — every emitted sample is at or under the live ceiling");
+}
+
+// ---------------------------------------------------------------------------
+// THE PRICE OF HOLDING THE CEILING AT EMISSION, bounded (ADR-0045; DSP_POLICY
+// invariant 8, where it yields to invariant 4). testCeilingIsSmoothed pins the
+// glide in TP-off. In true-peak mode a DOWNWARD retarget lowers the ceilings of
+// the frames already in flight, and a segment reading the next frame to leave
+// constrains samples up to 15 steps ahead — so when the output sits AT the
+// ceiling the first frame emitted after the retarget takes its revised
+// requirement at once: a one-sample drop of about (16 + A/2 + 1) glide steps
+// (A = the clamp's attack), instead of one. Measured 0.0185 at 48 kHz for a
+// −1 → −20 dB cut on 0.9 DC held at the ceiling, where TP-off glides at 0.0008
+// per sample. This pins the bound so it cannot grow unseen, and the premise
+// that the case really reaches the revision (the TP-off glide is the control).
+static void testTruePeakModeBoundsTheStepAtACeilingCut()
+{
+    for (const double sr : { 44100.0, 48000.0 })
+    {
+        float maxDelta[2] = {};
+        for (const bool tp : { false, true })
+        {
+            anabasis::AnabasisEngine engine;
+            const int block = 256;
+            engine.prepare (sr, block, 2);
+            anabasis::EngineParameters p;
+            p.truePeakMode    = tp;
+            p.ceilingDbTp     = -1.0f;
+            p.limGainDb       = 6.0f;                    // 0.9 DC pushed into the ceiling…
+            p.limStyle          = 1;                     // …by a limiter that lets fronts through
+            p.transientPreserve = 1.0f;                  //    (Punchy, Transients 100 %), so the
+            p.compRatio       = 1.0f;                    //    clamp holds it there in TP mode
+            p.compThresholdDb = 0.0f;
+            p.clipDriveDb     = 0.0f;
+            p.dynTiltDb       = 0.0f;
+            juce::AudioBuffer<float> buf (2, block);
+            std::vector<float> out;
+            size_t cutAt = 0;
+            for (int b = 0; b < 40; ++b)
+            {
+                if (b == 30)
+                {
+                    p.ceilingDbTp = -20.0f;              // an instant, full-range cut
+                    cutAt = out.size();
+                }
+                for (int n = 0; n < block; ++n)
+                {
+                    buf.setSample (0, n, 0.9f);
+                    buf.setSample (1, n, 0.9f);
+                }
+                engine.process (buf, p);
+                for (int n = 0; n < block; ++n)
+                    out.push_back (buf.getSample (0, n));
+            }
+            check (std::abs (out[cutAt - 1] - juce::Decibels::decibelsToGain (-1.0f)) < 0.01f,
+                   "tpStep: (premise) the output sits at the ceiling before the cut");
+            for (size_t n = cutAt; n < out.size(); ++n)
+                maxDelta[tp ? 1 : 0] = juce::jmax (maxDelta[tp ? 1 : 0], std::abs (out[n] - out[n - 1]));
+            check (out.back() < 0.11f, "tpStep: (premise) the cut arrives at its target");
+        }
+        const double glideStep = (juce::Decibels::decibelsToGain (-1.0) - juce::Decibels::decibelsToGain (-20.0))
+                               / std::floor (anabasis::AnabasisEngine::kCeilingGlideSeconds * sr);
+        const int    attack    = anabasis::CeilingClamp::truePeakDelayFor (sr) - 30;
+        const double bound     = (16.0 + attack / 2.0 + 2.0) * glideStep;
+        check (maxDelta[0] < 1.5 * glideStep,
+               "tpStep: (control) TP off glides one smoother step per sample");
+        check (maxDelta[1] > 5.0 * maxDelta[0],
+               "tpStep: (premise) in TP mode the cut reaches the in-flight revision");
+        check (maxDelta[1] <= bound,
+               "tpStep: in TP mode the step at a downward cut is bounded by (16 + A/2 + 2) glide steps (ADR-0045)");
+        if (maxDelta[1] > bound)
+            std::printf ("       tpStep: %.0f Hz: step %.5f against the bound %.5f (TP off %.5f)\n",
+                         sr, (double) maxDelta[1], bound, (double) maxDelta[0]);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ADR-0041's composition, observed where it can be: in true-peak mode the
 // clamp's delay comes OUT of the constant allowance, so (a) the limiter's
 // window is capped at the line that is left — a 10 ms setting engages
@@ -8086,6 +8450,8 @@ int main()
     testTruePeakModeHoldsTheCeiling();
     testTruePeakEngagementHoldsTheCeiling();
     testOfflineEntryDropsTheEngagementTail();
+    testTruePeakModeHoldsTheCeilingUnderAutomation();
+    testTruePeakModeBoundsTheStepAtACeilingCut();
     testTruePeakModeCapsTheWindowNotTheLatency();
     testDuckWrapsTruePeakLatch();
     testTruePeakModeIsExactBelowTheCeiling();
