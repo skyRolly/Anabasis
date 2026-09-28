@@ -59,10 +59,14 @@ ceiling that does not move, every rendered sample is what 0.2.14 rendered.
   as it was just before it left the plugin. The overshoot was largest at the end of a fast cut —
   about +1.1 dB for 0 → −12 dB and +2.7 dB for −1 → −20 dB — and was measurable on slower DAW ramps
   too (+0.3 dB over 50 ms). Every sample is now held to the ceiling in force at the moment it leaves
-  the plugin, as with TP off: inside the 0.1 dB tolerance on either defining meter in every tested
-  case — +0.004 dB at most across the main measurement, +0.023 dB in an adversarial search, and
-  +0.071 dB in one recorded corner (a cut one host block after switching TP on, at 1-sample host
-  buffers). A static Ceiling renders exactly as before, and nothing changes with TP off.
+  the plugin, as with TP off. At 44.1 kHz and above that holds inside the 0.1 dB tolerance on
+  either defining meter in every tested case — +0.004 dB at most across the main measurement, no more
+  than the static-ceiling floor in a search for worst-case bursts, and +0.071 dB in one recorded
+  corner (a cut one host block after switching TP on, at 1-sample host buffers). At 22.05 and 32 kHz
+  a burst constructed to land at the bottom of a fast full-range cut can still read up to +0.16 dB
+  over (0.2.14: +3.6 dB on the same burst) — recorded as
+  [`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-025, with the static-ceiling floor below 22.05 kHz.
+  A static Ceiling renders exactly as before, and nothing changes with TP off.
   [ADR-0045](docs/architecture/design-decisions/ADR-0045-true-peak-mode-answers-to-the-ceiling-in-force-at-emission.md)
   (on the owner's direction; flagged for review). Evidence: this release. [Verified]
 - **A bounce started during a true-peak engagement no longer carries the engagement's fade.**

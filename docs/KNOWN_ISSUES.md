@@ -1644,6 +1644,52 @@ Evidence [Verified — the reviewer's harness]:
 - Test:   none asserts it (a stream spanning a reset is not a render)
 - Commit: PR #42 (recorded)
 
+### KI-025 — Below 44.1 kHz a worst-case burst can read over the true-peak ceiling (2026-09-28)
+
+**Severity:** Low (constructed bursts at sample rates below 44.1 kHz; every programme matrix holds)
+**Status:** Confirmed, measured; found by an adversarial search against the 0.2.15 engine; the static
+half pre-existing (bit-identical in 0.2.14), the automation half larger before 0.2.15. Not changed in
+the round that found it — a true-peak item before Phase 1 resumes, with KI-024.
+**Affects:** true-peak mode at host sample rates below 44.1 kHz — 22.05 and 32 kHz under a falling
+Ceiling, and below 22.05 kHz with a static one
+
+The clamp's gain law bounds each segment's interpolated peak on the assumption that the gain is the
+same across the samples the interpolation reads. An attack ramp that starts a few samples after a
+segment sitting just under the ceiling lowers some of those samples and, through the interpolation
+kernel's negative lobes, RAISES that segment's peak. The effect scales with the ramp's slope — the
+depth of the reduction over the attack length, which is 8 samples at 32 kHz and below — so it grows
+as the sample rate falls. A search for worst-case bursts (a 32-sample pattern and its position,
+hill-climbed on the real engine against both defining meters; the 2026-09-28 worklog) found, over the
+live smoothed ceiling:
+
+| Rate | Static ceiling | Under a 0 → −20 dB cut (the burst at the bottom of the glide) |
+|---|---|---|
+| 4 kHz | **+0.23 dB** (Annex 2) | the static figure |
+| 8 kHz | **+0.11 dB** | the static figure |
+| 16 kHz | **+0.12 dB** | the static figure |
+| 22.05 kHz | +0.056 dB | **+0.157 dB** (Annex 2; product meter +0.033; 0.2.14 on the same burst +3.6 dB) |
+| 32 kHz | +0.020 dB | **+0.125 dB** (Annex 2; product meter −0.004; 0.2.14 on the same burst +3.07 dB) |
+| 44.1 / 48 kHz | +0.058 / +0.026 dB — inside the tolerance | nothing beyond the static figure |
+
+The design ADR-0045 chose over its alternative (a clamp-only prediction without the limiter half) is
+the smaller of the two here: that alternative reads +0.31 dB under its own search at 22.05 kHz, where
+the shipped engine reads −0.76 dB on the same burst. At the bottom of a fast glide at 22.05 kHz the
+ceiling falls ~1.5 % per sample, the limiter leaves the clamp overs of up to ~2.4 dB, and the clamp's
+ramp is correspondingly steep.
+
+**Workaround:** run the session at 44.1 kHz or above, or avoid fast full-range Ceiling cuts in
+true-peak mode at 22.05 / 32 kHz.
+**Cause:** the requirement `r[j]` and the windows built on it (`q`, `m`, the attack mean) keep every
+gain a segment reads at or under that segment's requirement, which bounds the interpolated peak only
+while those gains are equal. Closing it means either a longer attack at low rates (a clamp voicing
+constant, ⊕, and a change to the true-peak path's delay composition — an ADR) or a requirement that
+bounds the ramp's effect on its neighbours.
+
+Evidence [Verified — adversarial search on the real engine; the reproducing bursts are kept with the worklog's scratch record]:
+- Source: `src/dsp/CeilingClamp.h` (`processFrameTruePeak`: `r`, `q`, `m`, the attack mean)
+- Test:   none asserts it (the regression tests run 44.1–192 kHz)
+- Commit: PR #42 (recorded)
+
 ## Standing note for P1 onward
 
 Two categories are known in advance to need entries in this project, from the sibling product's

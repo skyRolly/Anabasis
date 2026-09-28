@@ -469,7 +469,7 @@ two lap-certified chunks, `plotColumns` shared with `paintHistory`; (4) the STAT
 back to its recorded 0.1.1 wording. Rows engaged: **ADR** — ADR-0045 (new), ADR-0041 (dated
 amendment banner for decision 3, implementation note for decision 5), `ADR_INDEX.md` (row and
 amendment registry). **Policy** — `DSP_POLICY.md` invariant 4's guard list (the automation guard with
-its reference stated, the offline-entry guard). **Known issues** — KI-024 added (a reset or an unducked latch cuts the TP stream at full gain; pre-existing, found by the adversarial review), KI-004 corrected (the offline-entry
+its reference stated, the offline-entry guard). **Known issues** — KI-024 added (a reset or an unducked latch cuts the TP stream at full gain; pre-existing, found by the adversarial review), KI-025 added (below 44.1 kHz a worst-case burst reads over the TP ceiling — under a fast cut at 22.05 / 32 kHz, with a static ceiling below 22.05 kHz; found by a search for worst-case bursts after the ADR was taken; the clamp header and ADR-0045 corrected to match), KI-004 corrected (the offline-entry
 route was described as bounded to one sample; the pipeline plays at unity, and the decay no longer
 reaches the render). **User manual** — §3.4 GR max. **Performance** — `PERFORMANCE_BUDGET.md`'s
 readout span and cost. **Procedure** — `procedures/TESTING.md` (a lap is constructed, not raced for).

@@ -127,6 +127,17 @@ smoothed ceiling (the 2026-09-28 worklog carries the method and every figure):
 
 - **The output follows the ceiling as it moves, in both modes alike.** Measured after the change:
   over 1936 main-matrix renders (48 kHz OS off–16×, 44.1/96/192 kHz OS off and 4×, blocks 64/512, Post shelf 0/+12 dB, four programmes, eleven moves), 880 stress renders (blocks of 1, 16 and 64 samples, ±20 dB zig-zags, 1 ms zig-zags) and 135 renders whose host blocks differ from the prepared size, the worst reading is +0.003 dB (product meter) / +0.004 dB (Annex 2) over the live smoothed ceiling — the static-ceiling floor — with no segment over 0.1 dB and no emitted sample above the live ceiling; before, +2.72 / +3.04 dB and 23.9 million samples emitted above it.
+- **Where the promise still depends on the rate (KNOWN_ISSUES KI-025, found after this record was
+  taken, by a search for worst-case bursts hill-climbed on the real engine).** At 44.1 and 48 kHz the
+  search found nothing above the static-ceiling floor (+0.058 / +0.026 dB, identical in 0.2.14). At
+  32 and 22.05 kHz, a burst placed at the bottom of a fast full-range cut reads **+0.125 dB and
+  +0.157 dB** (Annex 2) over the live ceiling — above the tolerance; 0.2.14 read +3.1 / +3.6 dB on the
+  same bursts, and option F without the limiter half reads +0.31 dB under its own search at 22.05 kHz.
+  The cause is the clamp's gain law, not this record's timing: the requirement bounds a segment's peak
+  while the gains it reads are equal, and an attack ramp beside it — steep at these rates, where the
+  attack sits at its 8-sample floor and the ceiling falls ~1.5 % per sample — breaks that. Below
+  22.05 kHz a static ceiling already reaches +0.23 dB (4 kHz), unchanged by this record. Closing it is
+  a clamp-law or attack-length decision of its own, taken before Phase 1 resumes.
 - **A one-sample gain step at a downward retarget — invariant 8 yielding to invariant 4, bounded.**
   The frames already in flight have at most `clampDelay` samples of notice, and a segment reading the
   next frame to leave constrains samples up to 15 steps ahead, so when the output sits AT the ceiling
@@ -177,7 +188,8 @@ smoothed ceiling (the 2026-09-28 worklog carries the method and every figure):
 
 ## Evidence
 
-Confidence: **Verified** at engine level on synthetic programme; **not heard**; not run in a host under
+Confidence: **Verified** at engine level on synthetic programme and constructed bursts, at 44.1 kHz
+and above; **below 44.1 kHz a residual is recorded** (KI-025); **not heard**; not run in a host under
 automation.
 
 - The regression test fails on the unfixed engine (64 of 100 renders over, worst +2.44 / +2.57 dB,
@@ -190,7 +202,7 @@ automation.
 - An adversarial review of the chosen design (3532 runs: 22.05–384 kHz, OS off to 16×, 1-sample,
   irregular and oversize host blocks, prepare/reset, TP, oversampling and offline toggles in mid-glide,
   mono): worst **+0.012 dB (product) / +0.023 dB (Annex 2)** over the live ceiling, no emitted sample
-  above it; a standalone clamp test, 19.5 million frames at six rates, found no revision that raised a
+  above it — a sweep, not a search: the hill-climbed bursts above (KI-025) go further below 44.1 kHz; a standalone clamp test, 19.5 million frames at six rates, found no revision that raised a
   requirement or a gain and no gain above its requirement at emission; TP-off and static-ceiling output
   bit-identical; 0 allocations over ~162 million armed `process()` calls.
 - TP off: 1936 of 1936 renders bit-identical to the unfixed engine (1584 of them under ceiling automation, all eleven moves) and 135 of 135 renders with irregular host blocks; TP on with a static ceiling: 352 of 352 bit-identical, the limiter half included; the reported latency and the measured impulse position identical in 144 cases (4 rates × OS 0–16× × phase × TP on/off × with and without a ceiling move); no allocation inside `process()` over 104 automated TP configurations down to 1-sample blocks; the repository's DSP suite unchanged otherwise.

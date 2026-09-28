@@ -84,9 +84,17 @@
 //  THE GUARANTEE DEPENDS ON THE GLIDE'S SLOPE: a revision cannot reach the
 //  already-emitted half of a segment that straddles the emission point, so the
 //  residual scales with how far the ceiling can fall in the ~16 steps after a
-//  frame leaves — negligible for the engine's 20 ms linear glide (≤ +0.023 dB
-//  measured, 22.05–384 kHz), not for a ceiling that could step; an ungated
-//  ceiling path would need its own record.
+//  frame leaves — within the static floor for the engine's 20 ms linear glide
+//  at 44.1 kHz and above (a search for worst-case bursts included), not for a
+//  ceiling that could step; an ungated ceiling path would need its own record.
+//  BELOW 44.1 kHz THE GAIN LAW ITSELF IS THE LIMIT (KNOWN_ISSUES KI-025): the
+//  requirement keeps every gain a segment reads under that segment's r, which
+//  bounds its interpolated peak only while those gains are equal; an attack
+//  ramp starting beside a segment that sits at the ceiling raises the
+//  segment's peak through the kernel's negative lobes. With the attack at its
+//  8-sample floor and the ceiling falling ~1.5 % per sample at the bottom of a
+//  fast glide, a worst-case burst reads +0.16 dB (Annex 2) at 22.05 kHz and
+//  +0.13 dB at 32 kHz; below 22.05 kHz a static ceiling reaches +0.23 dB.
 //
 //  EXACT PASS-THROUGH WHEN IDLE: every ring holds exactly 1.0 when nothing is
 //  over, the mean of A ones is exactly 1.0f, and the release of 1.0 is 1.0 —
