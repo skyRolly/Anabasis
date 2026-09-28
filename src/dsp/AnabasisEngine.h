@@ -403,7 +403,9 @@ public:
     // §2.9 meter-hold reset, audio thread (the wrapper consumes the request at
     // the top of processBlock and calls this). Clears ONLY the render meter's
     // session-cumulative half — the integrated histogram, the ungated mean and
-    // LRA — and the session length (ADR-0020 amendment 4). Deliberately not
+    // LRA — and the session length (ADR-0020 amendment 4), and starts the
+    // session TP at the reset's position (below); the wrapper clears its two
+    // holds. Deliberately not
     // touched: the §2.7 dry/wet meters (they feed the loudness COMPENSATION,
     // a monitor function — clearing them would bounce the monitor gain, which
     // is not what a meter-reset button means) and the GR ring (a rolling
@@ -417,6 +419,23 @@ public:
     {
         outMeter.resetIntegrated();
         sessionSamples = 0;
+        // The session TP after a reset is the true peak of the output
+        // waveform AT POSITIONS FROM THE RESET ON. The output estimator
+        // reports kReportLag samples late, so its first kReportLag readings
+        // after this call describe positions BEFORE the reset — and they used
+        // to reach the fresh hold: a reset straight after a loud passage
+        // brought the old peak back into the new session (the PR #42 review
+        // of 0.2.15; up to +0.96 dB above the old session's own maximum,
+        // because those last positions had never been reported to it). They
+        // stay out of the session TP now; every later reading describes a
+        // post-reset position, so no post-reset sample or 4x point is skipped.
+        // `outTp` keeps its history on purpose: restarting it from zeros
+        // would invent an onset that is not in the audio (a continuing
+        // programme read up to +0.97 dB high), and the rolling reading and
+        // the GR history are untouched. What a reading of a post-reset
+        // position may still carry is the real waveform there — the kernel's
+        // tail over the samples just before the reset, at most −12 dB.
+        sessionTpSkip = TruePeakEstimator::kReportLag;
     }
 
     // The per-stage GR figures the panel meters read, cleared. Called by the
@@ -645,6 +664,7 @@ private:
     float sessionTpMaxCall = 0.0f, sessionPeakCall = 0.0f;       // see lastSessionTpMax
     float sessionTpMaxChunk = 0.0f, sessionPeakChunk = 0.0f;
     int64_t sessionSamples = 0;
+    int     sessionTpSkip = 0;   // see resetMeterHolds
 
     // THE HISTORY ENTRY UNDER CONSTRUCTION (0.2.12, OQ-017 fix 1): the two
     // statistics an entry carries, folded over the samples it has collected so

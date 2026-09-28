@@ -294,6 +294,7 @@ void AnabasisEngine::reset() noexcept
     sessionTpMaxCall = sessionPeakCall = 0.0f;
     sessionTpMaxChunk = sessionPeakChunk = 0.0f;
     sessionSamples = 0;
+    sessionTpSkip = 0;
     grMinChunk = 1.0f;
     grMinChunkCh[0] = grMinChunkCh[1] = 1.0f;
     // THE HISTORY ACCUMULATOR IS DELIBERATELY NOT IN THIS LIST, and round 16
@@ -1524,11 +1525,19 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
                 renderTpMaxChunk = juce::jmax (renderTpMaxChunk, tp[ch]);
                 renderPeakChunk = juce::jmax (renderPeakChunk, std::abs (renderFrame[ch]));
             }
+            // The readings still describing pre-reset positions stay out of
+            // the session TP (resetMeterHolds). Counted on EVERY frame — it
+            // is a position offset, not a session count, so a bypass pause
+            // does not stretch it.
+            const bool tpInSession = sessionTpSkip == 0;
+            if (sessionTpSkip > 0)
+                --sessionTpSkip;
             if (sessionOpen)
             {
                 for (int ch = 0; ch < nCh; ++ch)
                 {
-                    sessionTpMaxChunk = juce::jmax (sessionTpMaxChunk, tp[ch]);
+                    if (tpInSession)
+                        sessionTpMaxChunk = juce::jmax (sessionTpMaxChunk, tp[ch]);
                     sessionPeakChunk  = juce::jmax (sessionPeakChunk, std::abs (renderFrame[ch]));
                 }
                 ++sessionSamples;

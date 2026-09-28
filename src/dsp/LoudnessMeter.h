@@ -145,14 +145,36 @@ public:
         // at a quarter of the block's energy, which is exactly the bias the
         // watermark exists to prevent. Land the reset on a sub-block boundary
         // (subFill == 0) and there is no straddler, so +4 is right there.
-        integratedFrom = subCount + 4 + (subFill > 0 ? 1 : 0);
+        //
+        // A sub-block that post-dates the reset is still not CLEAN if it
+        // starts right after it: the K-weighting biquads (never cleared — that
+        // would notch the rolling windows too) ring the pre-reset programme
+        // into it. Measured before the guard (the PR #42 review of 0.2.15): a
+        // reset on a boundary after a loud 40 Hz tone, then 5 s of digital
+        // silence, read −33.7 LUFS integrated where the empty value belongs.
+        // So the first admitted sub-block also starts at least 50 ms after
+        // the reset (`firstCleanSubBlock`), by which time the ring-out is
+        // under the energy floor (leaks measured up to 28.7 ms integrated,
+        // 46.7 ms ungated).
+        integratedFrom = firstCleanSubBlock() + 4;
         // The LRA watermark is the SAME rule at the short-term window's
         // length: an LRA sample IS a 3 s window, so the first one carrying no
         // pre-reset material is 30 sub-blocks out, plus the straddler. Getting
         // this wrong would not merely bias the number — one retained loud
         // pre-reset short-term value sets the 95th percentile for the rest of
         // the session, and LRA has no averaging to dilute it.
-        lraFrom = subCount + 30 + (subFill > 0 ? 1 : 0);
+        lraFrom = firstCleanSubBlock() + 30;
+    }
+
+    // The first sub-block that post-dates this instant (the straddler rule)
+    // AND starts at least half a sub-block (50 ms) after it, so the
+    // K-weighting filters' ring-out of the material before it has decayed
+    // below the 1e-12 energy floor before the first admitted sample.
+    int64_t firstCleanSubBlock() const noexcept
+    {
+        const int64_t straddler = subFill > 0 ? 1 : 0;
+        const int gap = subFill > 0 ? subBlockLen - subFill : 0;
+        return subCount + straddler + (gap < subBlockLen / 2 ? 1 : 0);
     }
 
     // PAUSE the session-cumulative half (ADR-0020 amendment 4, audit VIS-001):
@@ -168,9 +190,11 @@ public:
     // all post-date it, and the first LRA sample thirty — the sub-block in
     // progress at the resume (the straddler) counted as paused. Pausing needs
     // no watermark: admission is decided when a sub-block completes, and a
-    // completion while paused admits nothing. The cost, stated: up to one
-    // sub-block (100 ms) of programme either side of a pause is not measured,
-    // and LRA resumes ~3 s after it. A reset issued DURING a pause needs
+    // completion while paused admits nothing. The resume takes the same
+    // ring-out guard as a reset (`firstCleanSubBlock`): the bypassed audio ran
+    // through the K-weighting too. The cost, stated: up to one sub-block
+    // (100 ms) of programme before a pause and up to 150 ms after it is not
+    // measured, and LRA resumes ~3 s after it. A reset issued DURING a pause needs
     // nothing extra: it admits nothing while paused, and the resume comes
     // after it, so the resume's watermark is the later of the two and plain
     // assignment is exact. Audio thread only; an edge-triggered compare.
@@ -181,9 +205,8 @@ public:
         sessionPaused = paused;
         if (! paused)
         {
-            const int64_t straddler = subFill > 0 ? 1 : 0;
-            integratedFrom = subCount + 4 + straddler;
-            lraFrom        = subCount + 30 + straddler;
+            integratedFrom = firstCleanSubBlock() + 4;
+            lraFrom        = firstCleanSubBlock() + 30;
         }
     }
     bool isSessionPaused() const noexcept { return sessionPaused; }

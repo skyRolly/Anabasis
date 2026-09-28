@@ -12655,6 +12655,53 @@ static void testTheStatisticsPanelResetsOnlyFromItsResetControl()
            "statsReset: …and the session then describes only what followed");
 }
 
+// The review case the test above drains away (the PR #42 review of 0.2.15):
+// RESET pressed straight after a loud passage, NOT drained, then silence. The
+// processor's own request/consume path and its published dBTP hold, TP on and
+// off: the loud programme ends at the OUTPUT exactly at the reset (its input
+// stops one reported latency earlier), and the old peak must not come back
+// into the new session — the only reading a post-reset position may carry is
+// the real waveform's tail there, at most 0.2504 of the old sample peak.
+static void testResetRightAfterALoudPassageKeepsTheOldPeakOut()
+{
+    for (const bool tpOn : { false, true })
+    {
+        AnabasisAudioProcessor proc;
+        proc.apvts.getParameter (pid::truePeakMode)->setValueNotifyingHost (tpOn ? 1.0f : 0.0f);
+        proc.prepareToPlay (48000.0, 512);
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        const int64_t resetAt = 188 * 512;
+        const int64_t lat     = proc.getLatencySamples();
+        auto run = [&] (int64_t from, int blocks)
+        {
+            for (int b = 0; b < blocks; ++b)
+            {
+                const int64_t base = from + (int64_t) b * 512;
+                for (int n = 0; n < 512; ++n)
+                {
+                    const int64_t i = base + n;
+                    const float v = i < resetAt - lat
+                                        ? 1.0f * std::sin (0.5f * juce::MathConstants<float>::pi * (float) i + 0.25f * juce::MathConstants<float>::pi)
+                                        : 0.0f;
+                    buf.setSample (0, n, v);
+                    buf.setSample (1, n, v);
+                }
+                proc.processBlock (buf, midi);
+            }
+        };
+        run (0, 188);
+        const float tpBefore = proc.meterDbTpMax(), spBefore = proc.meterPeakMaxDb();
+        check (tpBefore > -1.0f, "statsResetLoud: (premise) the loud passage raised the dBTP hold to the ceiling");
+        proc.requestMeterReset();                         // consumed at the next block top
+        run (resetAt, 96);                                // ~1 s of silence at the output
+        check (proc.meterDbTpMax() <= spBefore - 12.0f,
+               tpOn ? "statsResetLoud (TP on): RESET after a loud passage keeps the old peak out of the new dBTP hold"
+                    : "statsResetLoud (TP off): RESET after a loud passage keeps the old peak out of the new dBTP hold");
+        check (proc.meterPeakMaxDb() < -100.0f, "statsResetLoud: the sample-peak hold starts empty");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The numeric limiter GR readout (audit VIS-007 / VIS-003 step 1), on a
 // standalone ring first: "now" is the deepest entry over the last 0.3 s; the
@@ -13127,6 +13174,7 @@ int main (int argc, char** argv)
         testABypassAuditionStaysOutOfTheSessionFigures();
         testTheSessionDurationFollowsTheSessionFigures();
         testTheStatisticsPanelResetsOnlyFromItsResetControl();
+        testResetRightAfterALoudPassageKeepsTheOldPeakOut();
         testGrRingResetEpoch();
         testTheSettingsPanelFollowsAProjectLoad();
         testTheTickAppliesAPendingModeSwitchAndTheComboHoverFlag();

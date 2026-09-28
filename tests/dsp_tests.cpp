@@ -19,6 +19,7 @@
 
 #include <cstdio>
 #include <cmath>
+#include <functional>
 #include <algorithm>
 #include <type_traits>
 #include <memory>
@@ -6569,6 +6570,175 @@ static void testMeterResetIgnoresTheStraddlingSubBlock()
 }
 
 // ---------------------------------------------------------------------------
+// STATISTICS RESET straight after a loud passage (the PR #42 review of 0.2.15).
+// The session true peak after a reset is the true peak of the output waveform
+// at positions FROM THE RESET ON. The output estimator reports 6 samples late,
+// so its first six readings after a reset describe pre-reset positions — and
+// they reached the fresh hold: RESET after a loud passage (no drain) followed
+// by digital silence brought the old peak back, up to +0.96 dB above the old
+// session's own maximum (those last positions had never been reported to it).
+// Driven at the engine, calling resetMeterHolds() where the wrapper does (a
+// block top) and folding lastSessionTpMax/lastSessionPeak as the wrapper
+// holds do; the loud programme ends at the OUTPUT exactly at the reset (its
+// input stops a reported latency earlier, so nothing in the lookahead line is
+// post-reset programme). Pinned both ways a fix can over-correct: a continuing
+// programme must not read HIGHER than the continuous meter (a zero-started
+// estimator invents an onset), and a click in the first post-reset samples
+// must still be counted (skipping the estimator's whole 11-frame reach misses
+// it). The loudness half of the same class — the K-weighting ring-out into
+// the first admitted sub-block — is pinned last.
+namespace statsReset
+{
+struct Run
+{
+    float preTp = 0.0f, preSp = 0.0f, postTp = 0.0f, postSp = 0.0f, renderAll = 0.0f, renderAfterFirst = 0.0f;
+    float lufsI = 0.0f, lufsIUng = 0.0f;
+    bool  postIsSilent = true;
+};
+
+// `sig(n)` is the INPUT at sample n; the reset is consumed at the top of the
+// block that starts at output index R (a multiple of B); `resets` more resets
+// follow at the next block tops (a repeated press).
+inline Run drive (double sr, int B, bool tp, float ceil, float limGain, long long R, long long post,
+                  const std::function<float (long long)>& sig, bool expectSilentAfter,
+                  bool doReset = true, int resets = 1)
+{
+    anabasis::AnabasisEngine e;
+    e.prepare (sr, B, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode = tp;
+    p.ceilingDbTp  = ceil;
+    p.limGainDb    = limGain;
+    juce::AudioBuffer<float> buf (2, B);
+    Run r;
+    bool firstPost = true;
+    int  pending   = doReset ? resets : 0;
+    for (long long pos = 0; pos < R + post; pos += B)
+    {
+        if (pos >= R && pending > 0)
+        {
+            e.resetMeterHolds();
+            --pending;
+            r.postTp = r.postSp = 0.0f;               // the wrapper clears its holds with it
+        }
+        for (int i = 0; i < B; ++i)
+        {
+            const float v = sig (pos + i);
+            buf.setSample (0, i, v);
+            buf.setSample (1, i, v);
+        }
+        if (! e.process (buf, p))
+            continue;
+        r.renderAll = juce::jmax (r.renderAll, e.lastRenderTpMax());
+        if (pos < R)
+        {
+            r.preTp = juce::jmax (r.preTp, e.lastSessionTpMax());
+            r.preSp = juce::jmax (r.preSp, e.lastSessionPeak());
+        }
+        else
+        {
+            r.postTp = juce::jmax (r.postTp, e.lastSessionTpMax());
+            r.postSp = juce::jmax (r.postSp, e.lastSessionPeak());
+            if (! firstPost)
+                r.renderAfterFirst = juce::jmax (r.renderAfterFirst, e.lastRenderTpMax());
+            firstPost = false;
+            if (expectSilentAfter)
+                for (int i = 0; i < B; ++i)
+                    if (! juce::exactlyEqual (buf.getSample (0, i), 0.0f) || ! juce::exactlyEqual (buf.getSample (1, i), 0.0f))
+                        r.postIsSilent = false;
+        }
+    }
+    r.lufsI    = e.outputLoudness().integratedLufs();
+    r.lufsIUng = e.outputLoudness().integratedUngatedLufs();
+    return r;
+}
+} // namespace statsReset
+
+static void testStatisticsResetStartsTheSessionAtTheReset()
+{
+    using statsReset::drive;
+    using statsReset::Run;
+    const double sr = 48000.0;
+    const double pi = juce::MathConstants<double>::pi;
+    auto fs4 = [&] (long long n) { return (float) std::sin (2.0 * pi * 0.25 * (double) n + 0.25 * pi); };
+
+    // 1. Loud programme ending exactly at the reset, no drain, then silence;
+    //    one press and a repeated press, TP on and off.
+    for (int tp = 0; tp < 2; ++tp)
+        for (int resets : { 1, 3 })
+        {
+            const int B = 512;
+            const long long R = 188LL * B;
+            anabasis::EngineParameters q;
+            q.truePeakMode = tp != 0;
+            const long long lat = anabasis::predictLatencySamples (q, sr);
+            const Run r = drive (sr, B, tp != 0, -1.0f, 12.0f, R, 8 * B,
+                                 [&] (long long n) { return n < R - lat ? fs4 (n) : 0.0f; }, true, true, resets);
+            check (r.postIsSilent, "statsReset: (premise) the render tap is digital silence from the reset on");
+            check (r.preTp > 0.5f, "statsReset: (premise) the pre-reset session true peak is loud");
+            // Once the six readings describing pre-reset positions stay out,
+            // the largest remaining reading is the 4x kernel's tail over the
+            // last pre-reset samples: taps 7..11 of the worst phase, sum|c| =
+            // 0.2504 of the old sample peak (-12.03 dB).
+            check (r.postTp <= 0.2505f * r.preSp,
+                   tp ? "statsReset (TP on): no pre-reset peak reappears in the new session's true-peak hold"
+                      : "statsReset (TP off): no pre-reset peak reappears in the new session's true-peak hold");
+            check (juce::exactlyEqual (r.postSp, 0.0f), "statsReset: the sample-peak hold starts clean");
+        }
+
+    // 2. Programme CONTINUING through the reset: the session reads what the
+    //    continuous meter reads — never more (no phantom onset), and every
+    //    reading after the first post-reset call is covered (nothing skipped).
+    for (int tp = 0; tp < 2; ++tp)
+        for (int B : { 7, 64, 512 })
+        {
+            const long long R = (96000 / B + 1) * B;
+            const Run r   = drive (sr, B, tp != 0, -1.0f, 12.0f, R, 16 * 512, fs4, false, true);
+            const Run ref = drive (sr, B, tp != 0, -1.0f, 12.0f, R, 16 * 512, fs4, false, false);
+            check (r.postTp <= ref.renderAll,
+                   "statsReset: a reset during programme never reads above the continuous meter");
+            check (r.postTp >= ref.renderAfterFirst,
+                   "statsReset: …and covers every reading after its first call");
+        }
+
+    // 3. A click in the first post-reset samples is counted.
+    for (int k = 0; k < 6; ++k)
+    {
+        const int B = 64;
+        const long long R = 1500LL * B;
+        anabasis::EngineParameters q;
+        const long long lat = anabasis::predictLatencySamples (q, sr);
+        const Run r = drive (sr, B, false, -1.0f, 0.0f, R, 16 * B,
+                             [&] (long long n) { return n < R - lat ? 0.5f * fs4 (n) : (n == R - lat + k ? 0.5f : 0.0f); },
+                             false);
+        check (r.postTp >= r.postSp, "statsReset: a click in the first post-reset samples reaches the true-peak hold");
+    }
+
+    // 4. A reset with nothing behind it (straight after prepare) and a reset
+    //    during silence: the holds stay empty.
+    {
+        const Run r = drive (sr, 512, true, -1.0f, 12.0f, 0, 8 * 512, [] (long long) { return 0.0f; }, true);
+        check (juce::exactlyEqual (r.postTp, 0.0f) && juce::exactlyEqual (r.postSp, 0.0f),
+               "statsReset: a reset with no history leaves both holds empty");
+    }
+
+    // 5. The loudness half: a loud 40 Hz tone cut exactly at a 100 ms
+    //    sub-block boundary and 64 samples before one, then 2 s of silence.
+    for (long long R : { 30LL * 4800, 30LL * 4800 - 64 })
+    {
+        const int B = 64;
+        anabasis::EngineParameters q;
+        const long long lat = anabasis::predictLatencySamples (q, sr);
+        auto lf = [&] (long long n) { return n < R - lat ? 0.9f * (float) std::sin (2.0 * pi * 40.0 * (double) n / sr) : 0.0f; };
+        const Run r = drive (sr, B, false, -0.1f, 0.0f, R, (long long) (2.0 * sr), lf, true);
+        check (r.postIsSilent, "statsReset (loudness): (premise) silence after the reset");
+        check (juce::exactlyEqual (r.lufsI, anabasis::LoudnessMeter::kSilentLufs),
+               "statsReset (loudness): 2 s of silence after a reset have no integrated reading (K-weighting ring-out)");
+        check (r.lufsIUng <= -120.0f, "statsReset (loudness): …and the ungated mean sits on the energy floor");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // §2.9 spectrum capture rings (THREAD_MODEL planned edge → implemented at
 // P5): tap 1 is post-input-gain, tap 2 the render, one release-published
 // block per processed chunk. Pinned headlessly: the counts advance exactly
@@ -9010,6 +9180,7 @@ int main()
     testAutoReleaseFollowsTheTrimScale();
     testAStagedFrozenVectorAlwaysGetsABottom();
     testMeterResetIgnoresTheStraddlingSubBlock();
+    testStatisticsResetStartsTheSessionAtTheReset();
     testTheSessionFiguresPauseForABypassAudition();
     testSpectrumRingsCarryTheTaps();
     testGrHistoryEntriesFollowThePreparedBlock();
