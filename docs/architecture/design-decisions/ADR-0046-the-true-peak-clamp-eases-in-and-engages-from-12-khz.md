@@ -190,6 +190,43 @@ ceiling, Annex 2 unless marked; the round's worklog §2 carries the method and t
    5) keeps its words with the figure *(Z + 1 + E) ≈ 4.9 glide steps — 0.0040 on 0.9 DC for a −1 →
    −20 dB cut at 48 kHz* in place of *(16 + A/2 + 1) glide steps — 0.0185*.
 
+> **Implementation note 2026-09-28 (decisions 1, 2 and 4; not an amendment).** The round's
+> independent review of the integrated tree (`0f162c8`) found one defect in decision 1's code and two
+> mechanisms no test pinned; `f03d673` closes all three. Recorded rather than folded in:
+>
+> - **Decision 1's "a window of ones answers exactly 0 whatever the weights round to" was true, and
+>   its mirror was not.** The weights are normalised in double and stored as floats, and at some
+>   attack lengths — A = 22, 96, 192, i.e. 88.2 / 384 / 768 kHz — their float sum is 1 + 1–3 ulp.
+>   A window of ZEROS (a forward minimum at 0, an astronomical input: a required gain below about
+>   −138 dB) then answered a reduction of 1 + 1.19e-7, a gain of −1.19e-7, and the sample backstop
+>   clipped the sign-inverted product to the ceiling: at 1e30 input, 255 samples at the ceiling and
+>   the product meter +1.85 dB over at 88.2 / 384 / 768 kHz, where 0.2.15's boxcar (1 − 0/A) was
+>   exactly silent. The weighted sum is now divided by `easeTotal` — the float weights summed in the
+>   frame loop's own order — and capped at 1, so a window of zeros answers exactly 1 at every rate
+>   (`testTheClampSilencesAnAstronomicalInput`: 44.1–768 kHz, ±1e9 and 1e30 bursts, the gain in
+>   [0, 1], 1e30 exactly silent). A plain cap alone was measured insufficient (a sum just under 1
+>   leaves a gain of ~6e-8). The same review class at 1e9 (+180 dBFS) with the output over the
+>   ceiling is older than this record: `KNOWN_ISSUES.md` KI-027.
+> - **Decision 1's "first step of ~0.25 %"** is 0.29 % at A = 16 (0.18 % at 24, 0.09 % at 48;
+>   derived); **decision 2's "−80 dB floor"** is an additive term in the rise, μ·(1 − r + φ), not a
+>   floor on the gain — a gain silenced to exactly 0 restarts from 0 at μ·φ per sample (measured at
+>   48 kHz: ~1000 samples to half gain, ~7300 to exactly 1). The code comments say so; the decision
+>   texts above keep their words.
+> - **Unpinned until `f03d673`:** reverting decision 4's min stamp in the engine and removing
+>   decision 2's rise cap each passed the whole suite (the tests' clamp driver re-implemented the
+>   stamp). Now `testTruePeakModeLagsAnAscentByTheEntryCeiling` (44.1 / 48 kHz: the engine's TP-on
+>   output lags TP-off by more than half the D-sample glide through > 90 % of an ascent, and is never
+>   above it) and `testTheClampReleaseRiseIsCapped` (48 kHz: the rise after a deep reduction never
+>   exceeds μ·(1 − r + φ) per sample) each fail on its mutant. Mutation on the fixed tree: the
+>   emission-only stamp, the uncapped rise, the unnormalised ease, the uncleared dry ring and the
+>   50 ms loudness guard are all killed.
+>
+> Output: the engine matrix re-run on `f03d673` (14 200 renders, 1775 at each of 12 / 16 / 22.05 /
+> 32 / 44.1 / 48 / 96 / 192 kHz) is 93.0–96.8 % bit-identical per rate to the same jobs on the tree
+> the review read; every reading is within 0.0017 dB of it, the worst at every rate unchanged
+> (+0.0426 / +0.0380 dB), and the only renders over 0.1 dB are the same 21 Force Max splice renders
+> (KI-024 route B).
+
 ## Consequences
 
 - **KI-025 is closed** at every engaged rate (12 kHz and up), the tolerance unchanged: over a
@@ -237,7 +274,10 @@ ceiling, Annex 2 unless marked; the round's worklog §2 carries the method and t
 - `src/dsp/Latency.h` — `truePeakPathEngages`
 - `src/PluginParameters.h` — `CeilingUnitSource::preparedPair`, `truePeakEngaged`; `src/PluginProcessor.cpp` (the wiring)
 - `tests/dsp_tests.cpp` — `testTruePeakModeHoldsTheCeilingBelow44k`, `testTruePeakModeBoundsTheStepAtACeilingCut`
-  (pin 7 glide steps), `testCeilingClampTruePeakPath` (the delay pin, 46); `tests/state_tests.cpp` —
+  (pin 7 glide steps), `testCeilingClampTruePeakPath` (the delay pin, 46),
+  `testTruePeakModeLagsAnAscentByTheEntryCeiling` (decision 4 in the engine),
+  `testTheClampReleaseRiseIsCapped` (decision 2), `testTheClampSilencesAnAstronomicalInput`
+  (decision 1's normalisation); `tests/state_tests.cpp` —
   `testTheCeilingUnitFollowsTheRateTheTruePeakPathEngagesAt`
 
 ## Evidence

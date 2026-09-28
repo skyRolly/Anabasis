@@ -10,6 +10,13 @@ a snapshot, superseded by a later record rather than edited in place (`docs/SOUR
 > order in §2 stands with one insertion ahead of DSP-005 — KI-024 and KI-025, the true-peak paths
 > still open (the later record, §4) — and the later record adds ADR-0045, OQ-018, OQ-019 and KI-025's
 > closing decision to §3.
+>
+> **Then by [`2026-09-28-pr42-round4-closure.md`](2026-09-28-pr42-round4-closure.md) (0.2.16).** Also a
+> correctness round, no Phase 1 work: KI-025 closed (ADR-0046, ⊕; true-peak mode engages from 12 kHz),
+> KI-024 dispositioned, the STATISTICS RESET row's session now starting at the reset. The insertion
+> above is done; DSP-005 is next again in §2's order, not started, its technical preconditions met
+> (that record, §5), after the owner's review of the ⊕ records. §3 gains ADR-0046, OQ-020, KI-026 and
+> KI-027.
 
 The durable follow-up record for Phase 1 of the 2026-09-26 audit
 ([`2026-09-26-anabasis-product-ux-audit.md`](2026-09-26-anabasis-product-ux-audit.md), §Prioritized

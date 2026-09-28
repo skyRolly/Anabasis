@@ -391,17 +391,23 @@ survive statistics reset" (`AnabasisEngine.h`, `resetMeterHolds`).
   post-reset position may still carry is the real waveform there — the 4× kernel's tail over the
   samples just before the reset, bounded analytically at 0.2504 × the pre-reset sample peak
   (−12 dB). The sample-peak hold was never affected (it has no lag).
-- **The integrated reading's first admitted sub-block starts at least 50 ms after a reset or a
-  bypass resume** (`LoudnessMeter::firstCleanSubBlock`): the straddler rule admitted a sub-block
-  starting right at the reset, into which the K-weighting filters (never cleared — that would notch
-  the rolling windows) ring the pre-reset programme; 5 s of digital silence after a reset read
-  −33.7 LUFS integrated where the empty value belongs. Amendment 4's stated cost changes from "up
-  to one 100 ms sub-block either side of a pause" to up to 100 ms before a pause and up to 150 ms
-  after a pause or a reset; LRA's ~3 s is unchanged.
+- **The integrated reading's first admitted sub-block starts at least one whole sub-block
+  (100 ms) after a reset or a bypass resume** (`LoudnessMeter::firstCleanSubBlock`): the straddler
+  rule admitted a sub-block starting right at the reset, into which the K-weighting filters (never
+  cleared — that would notch the rolling windows) ring the pre-reset programme; 5 s of digital
+  silence after a reset read −33.7 LUFS integrated where the empty value belongs. The guard was
+  first built at half a sub-block (50 ms, `0f162c8`); the round's independent review then measured
+  DC at 0.99 cut at that minimum gap leaving the ungated mean at −115.5 LUFS after 2 s of silence
+  (16 of 336 reset positions, 8–192 kHz; integrated empty in all 336), and at odd sub-block lengths
+  the gap was 49.98 ms, not 50. At a whole sub-block (`f03d673`): 0 of 336, worst −120.69 LUFS —
+  the floor. Amendment 4's stated cost changes from "up to one 100 ms sub-block either side of a
+  pause" to up to 100 ms before a pause and up to 200 ms after a pause or a reset; LRA's ~3 s is
+  unchanged.
 - Guards: `AnabasisTests` `testStatisticsResetStartsTheSessionAtTheReset` (the review scenario with
   TP on and off, one and three presses, a reset with no history, a continuing programme — never
   above the continuous meter and every later reading covered — a click in the first post-reset
-  samples, the loudness ring-out on and off a sub-block boundary); `AnabasisStateTests`
+  samples, the loudness ring-out on and off a sub-block boundary, and the review's DC ring-out at
+  the minimum admitted gap on the meter itself at 22.05 / 48 / 96 kHz); `AnabasisStateTests`
   `testResetRightAfterALoudPassageKeepsTheOldPeakOut` (the processor's own request and published
   holds). Unfixed: 6 DSP and 2 state failures; skipping the estimator's whole reach, or restarting
   it from zeros, each fails its own checks (the fourth-round worklog).

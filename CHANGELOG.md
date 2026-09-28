@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Twenty-two such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`, `[0.2.12]`, `[0.2.13]`, `[0.2.14]`, `[0.2.15]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Twenty-three such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`, `[0.2.12]`, `[0.2.13]`, `[0.2.14]`, `[0.2.15]`, `[0.2.16]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,59 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.16] — 2026-09-28
+
+**A correctness round from the fourth review of PR #42: true-peak mode holds the ceiling at every
+sample rate it runs at, a statistics RESET no longer lets the previous session back in, and a
+bounce entered without a re-prepare starts clean.** Nothing here moves the reported latency, a
+parameter or the saved state; with true-peak mode off every rendered sample is what 0.2.15
+rendered, except the head of a Force Max bounce entered without a re-prepare (below). Measurement
+trail: [`worklogs/2026-09-28-pr42-round4-tp-lowrate-reset.md`](worklogs/2026-09-28-pr42-round4-tp-lowrate-reset.md).
+
+### Fixed
+- **True-peak mode now holds the ceiling below 44.1 kHz.** Constructed bursts could read over the
+  ceiling at every rate from 4 to 32 kHz — up to +0.16 dB at the bottom of a fast Ceiling cut at
+  22.05 / 32 kHz, and, found by a longer search this round, up to +0.19–0.23 dB on a static Ceiling
+  at 8–32 kHz ([`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-025). The true-peak ceiling's gain now eases into a
+  reduction instead of ramping at a constant rate, and releases at a bounded rate, so it holds inside
+  the 0.1 dB tolerance at every rate from 12 kHz up — including a Ceiling that reverses while it is
+  still rising, which could read up to +0.3 dB over at 48 kHz in 0.2.15 when the clamp alone had to
+  catch it. With TP on, output that the ceiling clamp acts on changes slightly; output under the
+  ceiling is untouched. [ADR-0046](docs/architecture/design-decisions/ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md)
+  (on the owner's direction; flagged for review). Evidence: commits 4ff71bd, f03d673. [Verified]
+- **An astronomical input is silenced again at every rate with TP on.** The eased attack first
+  shipped with its weights' float sum just over 1 at 88.2 / 384 / 768 kHz, so a finite input around
+  1e30 drove the true-peak ceiling's gain a hair below zero and the output to a sign-inverted
+  full-scale sample (+1.85 dB over the ceiling) where 0.2.15 was silent. Found by the round's own
+  review before release; the sum is now normalised by its own float total. An input near +180 dBFS
+  can still read over the ceiling, as in 0.2.15 ([`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-027).
+  Evidence: commit f03d673. [Verified]
+- **RESET no longer brings the last peak back.** Pressing RESET straight after a loud passage could
+  put that passage's last peak into the new session's TP hold — up to ~1 dB above what the old
+  session itself had shown — and a few seconds of silence after a reset could still show an
+  integrated loudness carried over from before. The new session now starts exactly at the reset;
+  up to the first 0.2 s after a reset (or a return from BYPASS) is left out of the integrated
+  reading so the loudness filter's ring-out of what came before cannot reach it. Evidence: commits
+  0f162c8, f03d673. [Verified]
+- **A Force Max bounce entered without a re-prepare starts clean.** A host that switches to an
+  offline render without preparing the plugin again, with Force Max changing the oversampling,
+  could carry up to ~15 ms of the EQ's ring-out of what was playing (at up to −1 dBFS) into the head
+  of the bounce, and
+  the plugin's own dBTP hold read about +0.9 dB over the ceiling for a file that had none; with
+  **BYPASS** on, the bounce's first ~10 ms carried the realtime input itself (the same in 0.2.15).
+  All three now restart with the render ([`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-024).
+  Evidence: commits a43094b, f03d673. [Verified]
+
+### Changed
+- **True-peak mode needs a sample rate of 12 kHz or more.** Below 12 kHz — 8 and 11.025 kHz
+  included — the Ceiling limits sample peaks and reads `dB` even with **TP** on; 0.2.15 ran the
+  true-peak path down to 3.9 kHz (with the KI-025 overshoot, up to about +0.2 dB there), and no
+  analysis supports the promise through a fast Ceiling cut below 12 kHz. No other rate changes.
+  Evidence: commit 4ff71bd. [Verified]
+- **With TP on, the Lookahead's longest setting engages a little less below 66 kHz** — 9.0 ms at
+  48 kHz, 9.0 ms at 44.1 kHz (was 9.1), because the true-peak ceiling now takes 46 samples of the
+  fixed 10 ms; the reported latency is unchanged. Evidence: commit 4ff71bd. [Verified]
 
 ## [0.2.15] — 2026-09-28
 

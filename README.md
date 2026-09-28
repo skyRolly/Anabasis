@@ -150,7 +150,10 @@ The full technical documentation lives in **[`docs/`](docs/)**:
   record [`2026-09-27-phase1-roadmap.md`](docs/reports/2026-09-27-phase1-roadmap.md) (what landed,
   what is next, what waits for the owner), and the third review round's closure record
   [`2026-09-28-pr42-review-closure.md`](docs/reports/2026-09-28-pr42-review-closure.md) (two
-  true-peak paths closed, a low-rate residual recorded, GR max's contract, the copy decisions)
+  true-peak paths closed, a low-rate residual recorded, GR max's contract, the copy decisions), and
+  the fourth round's [`2026-09-28-pr42-round4-closure.md`](docs/reports/2026-09-28-pr42-round4-closure.md)
+  (the low-rate true-peak contract closed with a stated 12 kHz rail, KI-024 dispositioned, the
+  statistics RESET, the TP matrix and the roadmap)
 - **History & status:** [`CHANGELOG.md`](CHANGELOG.md) ·
   [`docs/HANDOVER.md`](docs/HANDOVER.md) · [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) ·
   [`docs/FUTURE_RISKS.md`](docs/FUTURE_RISKS.md) · [`docs/POSTMORTEMS.md`](docs/POSTMORTEMS.md)

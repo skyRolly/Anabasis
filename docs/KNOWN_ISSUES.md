@@ -1641,7 +1641,7 @@ Evidence [Verified]:
 > |---|---|---|
 > | **A** host `reset()` | nothing — a no-op by design; the pipeline continues | **Preserve** (overriding `reset()` would be a threading-model change, a hard stop) |
 > | **B** host re-prepare | `prepare()` empties the pipeline and restarts every meter; the last 2–4 segments before the zeros read up to +0.884 / +0.918 dB — the same magnitude as any stream that simply ends on loud programme (+0.87 to +0.93 dB measured at the end of an uninterrupted run, up to +1.06 dB on Annex 2 in one). Nothing after the boundary is over, no pre-cut audio follows | **Preserve**. A checked decay at the cut was prototyped and **rejected**: it still reads +0.81 / +0.69 dB across the cut (the decay's check covers only the segments after the junction), and it puts ~6 ms of pre-cut audio into the render, whose file then reads +0.88 dB over at its first sample |
-> | **C** offline entry that latches without a re-prepare (Force Max's factor; a TP / factor change on the entry block) | the EQ's ring-out of the realtime audio and the tap's step reading, above | **FIXED** — the latch now also restarts the EQ and the output dBTP tap, as `prepare()` does (`AnabasisEngine.cpp`, the `! smoothersPrimed \|\| enteringOffline` branch). Measured: tap and hold ≤ +0.003 dB, no pre-cut audio in either EQ position, the file from the boundary unchanged (≤ +0.004 dB). **Not changed, and dispositioned with B:** the continuous stream's own step from the last realtime sample to the emptied pipeline's zeros, which reads what B's does (+0.884 / +0.918 dB on the last 2–4 segments before the zeros) — the render's file starts after it. Guard: `testAForceMaxEntryStartsTheRenderClean` (fails 3 checks unfixed — tap and hold +0.827 dB, old audio; the EQ reset alone or the tap reset alone each fails its half) |
+> | **C** offline entry that latches without a re-prepare (Force Max's factor; a TP / factor change on the entry block) | the EQ's ring-out of the realtime audio and the tap's step reading, above; and, found by the round's independent review, with **BYPASS** on the realtime input itself: the bypass leg's delay ring was not emptied, so the render carried the realtime input at −2.0 dBFS until sample 446 (44.1 kHz) / 485 (48 kHz) — the render latency − 1 (identical in 0.2.15) | **FIXED** — the latch now also restarts the EQ and the output dBTP tap (`a43094b`) and empties the bypass leg's ring (`f03d673`), as `prepare()` does (`AnabasisEngine.cpp`, the `! smoothersPrimed \|\| enteringOffline` branch). Measured: tap and hold ≤ +0.003 dB, no pre-cut audio in either EQ position or through the bypass leg, the file from the boundary unchanged (≤ +0.004 dB). **Not changed, and dispositioned with B:** the continuous stream's own step from the last realtime sample to the emptied pipeline's zeros, which reads what B's does (+0.884 / +0.918 dB on the last 2–4 segments before the zeros) — the render's file starts after it. Guard: `testAForceMaxEntryStartsTheRenderClean` (fails 3 checks unfixed — tap and hold +0.827 dB, old audio; the EQ reset alone or the tap reset alone each fails its half; its bypass case fails without the ring clear) |
 > | **D** offline entry with no composition change; **Dd** the same with a forced duck in flight | the pipeline continues at unity (KI-004); read as a file the render's latency window carries pre-entry audio at the ceiling (+0.97 / +0.96 dB at its head, Annex 2); Dd's duck jumps to unity (+0.92 dB tap) | **Defer** to KI-004's owner decision: emptying the pipeline on every offline entry would change rendered samples on the no-re-prepare route and break `testOfflineEntryDropsTheEngagementTail` part (4), which pins the documented behaviour |
 > | **E** offline → realtime with a composition change; **E0** without | E goes through the §2.8 duck; E0 is continuous | **Preserve** |
 > | **Freeze** (ADR-0042) | acts only through `prepare()`'s stash and `resumeAfterReset`; none of the mechanisms above reads the trims — B and C measured with Freeze off, on for the whole run and engaged halfway: the same readings | no interaction |
@@ -1711,12 +1711,24 @@ Evidence [Verified — the reviewer's harness]:
 > 0.2.15 (the 22.05 / 32 kHz cut bursts +0.1566 / +0.1250 dB, the 16 kHz static burst +0.1157 dB, a
 > 360-render matrix +0.1179 dB, the reversal premise, the rail) and passes.
 >
+> **The round's independent review found a defect in the fix, closed before this entry was
+> pushed further (`f03d673`; ADR-0046's implementation note):** at attack lengths whose float
+> weights summed to 1 + 1–3 ulp (88.2 / 384 / 768 kHz) an astronomical input (a forward minimum at
+> 0, 1e30) drove the clamp gain to −1.19e-7 and the backstop clipped it to the ceiling — +1.85 dB
+> over on the product meter where 0.2.15 was silent. The eased sum is now normalised by the float
+> weights' own total and capped at 1 (`testTheClampSilencesAnAstronomicalInput`); the release cap
+> and the entry-time stamp, which no check had caught reverted, are now pinned
+> (`testTheClampReleaseRiseIsCapped`, `testTruePeakModeLagsAnAscentByTheEntryCeiling`). The engine
+> matrix re-run on the fixed tree (14 200 renders, 12–192 kHz) is unchanged at its worst.
+>
 > **What remains, recorded:** (1) no all-input derived bound was obtained at any rate — the promise
 > rests on a derived bound for inputs not already under reduction when a cut arrives, a search over
 > requirement sequences with an exact inner maximiser for the rest, and clamp and engine searches;
 > (2) at 3901–11999 Hz, 8 and 11.025 kHz included, true-peak mode is not available (the sample clip;
 > the Ceiling reads dB) — a behaviour change from 0.2.15, where the path ran there with this
-> entry's residual (`COMPATIBILITY_MATRIX.md` §Sample rates; OQ-020 for any wording beyond the unit).
+> entry's residual (`COMPATIBILITY_MATRIX.md` §Sample rates; OQ-020 for any wording beyond the unit);
+> (3) a finite input around +180 dBFS is outside what the clamp's float gain can resolve (KI-027,
+> older than this entry).
 >
 > *The entry as recorded in the third round follows, unedited.*
 
@@ -1796,6 +1808,39 @@ limiter's numerics everywhere, so it is its own decision.
 Evidence [Verified — measured on the class and on the engine; the fourth-round worklog §4]:
 - Source: `src/dsp/LookaheadLimiter.h` (`stepEnv`)
 - Test:   none asserts it (no test runs 16× above 48 kHz with a long release)
+- Commit: PR #42 (recorded)
+
+### KI-027 — A finite input near +180 dBFS reads over the true-peak ceiling (2026-09-28)
+
+**Severity:** Low (needs a finite sample around 1e9 — +180 dBFS — reaching the ceiling stage; no
+converter, plug-in chain or file format a host passes produces that from programme)
+**Status:** Confirmed, measured, pre-existing (0.2.15 reads the same class); found by the fourth PR
+#42 review round's independent review of ADR-0046. Not changed in that round.
+**Affects:** true-peak mode, a finite input so large that the clamp's required gain is below float's
+resolution just under 1
+
+The clamp's gain is `1 − reduction` in float. Just below 1 a float's step is 5.96e-8, so the smallest
+gain above 0 the clamp can produce is 5.96e-8 (−144.5 dB); a required gain between 0 and that rounds
+either to exactly 0 (silence) or to 5.96e-8 and above, which leaves an input of 1e9 at ~+35 dB over
+the ceiling for the sample backstop to clip. The clipped waveform's inter-sample peaks then read over
+the ceiling (derived from the float format; the readings below are measured). An input of 1e30 is
+far enough past the resolution that the reduction rounds to exactly 1 — silence, at every rate
+(`testTheClampSilencesAnAstronomicalInput` pins that, and pins the gain in [0, 1]).
+
+Measured on the whole engine, TP on, −1 dBTP, default settings, a ±1e9 burst of 256 samples (the
+product meter over the ceiling): **48 kHz +0.78 dB in 0.2.15, −5.25 dB since `f03d673`; 88.2 kHz
++0.89 dB in both; 384 kHz +1.81 dB in 0.2.15, +1.96 dB since; 768 kHz +1.85 dB in both.** With
+Punchy and Transients 100 %, 0.2.15 read +1.64 dB at 48 kHz and was silent at 88.2 / 384 / 768 kHz;
+the fixed tree is −8.53 dB at 48 kHz and silent at the others.
+
+**Workaround:** none needed — keep programme in the ordinary range; a stage that emits +180 dBFS
+upstream of the plug-in is itself the fault.
+**Cause:** float gain resolution (above). Closing it means a gain domain with resolution at the
+bottom — e.g. carrying the gain, not the reduction, near 0 — a clamp numerics change of its own.
+
+Evidence [Verified — measured on the whole engine, 0.2.15 and the fixed tree; the fourth-round worklog §5.5]:
+- Source: `src/dsp/CeilingClamp.h` (`processFrameTruePeak`: `gain = 1 − reduction`)
+- Test:   `testTheClampSilencesAnAstronomicalInput` covers 1e30 (silenced) and the gain range at 1e9, not the 1e9 reading
 - Commit: PR #42 (recorded)
 
 ## Standing note for P1 onward

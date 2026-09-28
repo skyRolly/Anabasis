@@ -6,7 +6,8 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.14 (2026-09-27) — Phase 1 of the 2026-09-26 audit** (addenda below).
+**Last updated:** for **0.2.16 (2026-09-28) — the fourth PR #42 review round** (addendum below; the
+0.2.15 round added its addendum without moving this line). Before that, for **0.2.14 (2026-09-27) — Phase 1 of the 2026-09-26 audit** (addenda below).
 Before that, for **the Phase 0 closure (2026-09-27, still 0.2.13)** — ADR-0041 and ADR-0042
 accepted by the owner, KI-006 closed as INC-007 (addendum below). Before that, for **the PR #42 review
 round (2026-09-27, still 0.2.13)** — the true-peak engagement fix (ADR-0041 decision 5 revised, then
@@ -457,6 +458,40 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-28, 0.2.16) — the fourth PR #42 review round: the low-rate true-peak contract,
+KI-024, the statistics RESET.** Code: (1) ADR-0046 — `CeilingClamp`'s eased attack (`easeWeight`,
+`kEaseSpan`, `kMinAttackSamples` 16), the release rise cap (`kReleaseRise`, `kRiseFloor`), the
+revision's defining reach (`segReqEntry`, `scratchE`, `kRevisionLead`), `kMinTruePeakRate` (12 kHz);
+stage A's min(entry, emission) stamp; `truePeakPathEngages` in `Latency.h`, read by the engine's rail
+and by `CeilingUnitSource` through `preparedPair` (a new reader of the GR ring's published rate —
+`THREAD_MODEL.md`); (2) the offline-entry latch restarts the EQ and the dBTP tap (KI-024 route C);
+(3) `resetMeterHolds` skips the estimator's report lag (`TruePeakEstimator::kReportLag`,
+`sessionTpSkip`) and `LoudnessMeter::firstCleanSubBlock` guards the watermark. **ADR** — ADR-0046 added;
+dated amendment banners in ADR-0041, ADR-0045 and ADR-0015; ADR-0020 gains an implementation note;
+`ADR_INDEX.md` row and three registry entries. **Policy** — `DSP_POLICY.md` invariant 4 (the rate
+contract, the low-rate guard) and invariant 8 (the step figure), prescribed text in ADR-0046.
+**Architecture** — `LATENCY_MODEL.md` (D = 46, the rail), `COMPATIBILITY_MATRIX.md` (a new §Sample
+rates — this file had no rate row), `THREAD_MODEL.md` (the unit's read). **Known issues** — KI-024
+dispositioned (two statements corrected, route C fixed), KI-025 closed (its under-statement
+corrected), KI-026 added. **Open questions** — OQ-018 resolved; OQ-020 added. **User manual** — §3.2
+(the rate contract), §3.3 (the 9.0 ms window), §3.4 (where a new session starts). **Procedure** —
+`procedures/TESTING.md` (two mandated-stimulus rows; the table's count corrected). **Citations** — 43
+anchors re-anchored after the engine's, the clamp's and the processor's lines moved, read back;
+clean against `8ab0532`, `ed06ad0` and `origin/main`; the fix commit re-anchored the ones it moved
+in the same commit. **The round's own review** (fix commit `f03d673`): code — `easeTotal` (the eased
+reduction normalised by the float weights' own sum, capped at 1), `dryRing.clear()` in the latch,
+`firstCleanSubBlock` a whole sub-block, `<cstddef>` / `std::size_t`; records — ADR-0046's
+implementation note, ADR-0020's note (100 ms; the cost 200 ms), KI-024 row C (the bypass leg),
+KI-025's banner, **KI-027 added**, `USER_MANUAL.md` §3.4 (0.2 s), `procedures/TESTING.md` (the
+statistics-reset row's stimulus); the Phase 1 roadmap (`2026-09-27-phase1-roadmap.md`) gains a dated
+forward pointer only. **New tests** —
+`testTruePeakModeHoldsTheCeilingBelow44k`, `testAForceMaxEntryStartsTheRenderClean`,
+`testStatisticsResetStartsTheSessionAtTheReset`, and after the review
+`testTruePeakModeLagsAnAscentByTheEntryCeiling`, `testTheClampReleaseRiseIsCapped`,
+`testTheClampSilencesAnAstronomicalInput` (DSP), `testTheCeilingUnitFollowsTheRateTheTruePeakPathEngagesAt`,
+`testResetRightAfterALoudPassageKeepsTheOldPeakOut` (state). Evidence:
+`worklogs/2026-09-28-pr42-round4-tp-lowrate-reset.md`; record: `docs/reports/2026-09-28-pr42-round4-closure.md`.
 
 **Addendum (2026-09-28, 0.2.15) — the third PR #42 review round: two true-peak paths, GR max, the copy
 record.** Code: (1) the offline-entry branch of `AnabasisEngine::process` resets `EngagementTail` with

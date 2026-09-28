@@ -301,7 +301,7 @@ the transport stopped they stay blank until audio flows. The new session starts 
 of the reset: nothing played before it reaches the new figures — not even a peak that was still
 on its way through the meter when you pressed RESET (since 0.2.16; before, a reset straight after
 a loud passage could bring its last peak back into the new TP hold, and the first moments of
-silence after it could show a loudness carried over from before). Up to the first 0.15 s after
+silence after it could show a loudness carried over from before). Up to the first 0.2 s after
 a reset is left out of **I**, for the same reason.
 
 **What the session covers.** The time beside the header (`m:ss`, whole seconds) is how much

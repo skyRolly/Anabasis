@@ -3,6 +3,12 @@
 **Date:** 2026-09-28 · **Version:** 0.2.15 (unreleased) · **Class:** dated record in `docs/reports/` —
 a snapshot, superseded by a later record rather than edited in place (`docs/SOURCE_OF_TRUTH.md`).
 
+> **Followed by [`2026-09-28-pr42-round4-closure.md`](2026-09-28-pr42-round4-closure.md) (0.2.16).**
+> The two true-peak paths §2 and §4 leave open are settled there: KI-025 is closed by ADR-0046 at
+> every rate the path engages — from 12 kHz, a stated rail; below it TP mode is not available — and
+> KI-024 is dispositioned (route C fixed; its "host `reset()`" premise corrected). OQ-018 is
+> resolved as this record's interim (option 1). The rows below stand as the state at `8ab0532`.
+
 The closure record for the review findings raised against PR #42 at head `dd983ec` (0.2.14): two
 true-peak correctness defects, the GR max readout's contract, and the STATISTICS tooltip's copy —
 plus the CI failure found on the way. Scope, by the owner's instruction: a correctness and

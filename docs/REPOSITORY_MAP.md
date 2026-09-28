@@ -168,6 +168,9 @@ docs/
 │                   round per finding, the recommended next order and the open owner decisions)
 │                   and 2026-09-28-pr42-review-closure.md (the third PR #42 review closed item by
 │                   item: two true-peak paths, KI-025, GR max's contract, the copy decisions, CI)
+│                   and 2026-09-28-pr42-round4-closure.md (the fourth: the true-peak contract at
+│                   every engaged rate — ADR-0046, the 12 kHz rail — KI-024, the RESET stale peak,
+│                   the TP matrix, CI, the roadmap)
 ├── procedures/     BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS,
 │                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. PACKAGING arrives
 │                   with the OQ-007 installer set (first commercial release)
