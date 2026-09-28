@@ -174,7 +174,7 @@ Universal gestures:
 | Control | Range | What it does |
 |---|---|---|
 | **Loudness** | 0 … 100 | The big knob: how hard the adaptive chain pushes (§4). At 0 it applies no push — but the Ceiling still holds, so anything already hotter than it is still limited. |
-| **Ceiling** | −20 … 0 dB, default −0.1 | The output limit — nothing leaves the plugin above it. Two toggles sit beside it. **TP** decides what the number *means*: off (the default) the limit is on **sample peaks** and the readout says `dB`; on, the limiter detects true peaks and the final ceiling clamp holds the waveform *between* the samples too, at every Oversampling setting — inter-sample peaks are caught and the readout says `dBTP`. A Ceiling move glides over 20 ms, and every sample is held to the value in force at the moment it leaves the plugin, with TP on as with TP off (since 0.2.15; before, TP mode lagged a lowered Ceiling by under a millisecond and could overshoot it by up to ~3 dB during the glide). Below 44.1 kHz a constructed worst case can still read slightly over — up to about 0.16 dB under a fast cut at 22.05 / 32 kHz, and a little over a static Ceiling below 22.05 kHz ([`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) KI-025). It is the same parameter as the Advanced limiter zone's TP switch (§3.3). **LOCK** keeps the ceiling's *value* fixed while you browse presets — the value only: a factory preset still turns TP (and Dither) off (§7.3). |
+| **Ceiling** | −20 … 0 dB, default −0.1 | The output limit — nothing leaves the plugin above it. Two toggles sit beside it. **TP** decides what the number *means*: off (the default) the limit is on **sample peaks** and the readout says `dB`; on, the limiter detects true peaks and the final ceiling clamp holds the waveform *between* the samples too, at every Oversampling setting — inter-sample peaks are caught and the readout says `dBTP`. A Ceiling move glides over 20 ms, and every sample is held to the value in force at the moment it leaves the plugin, with TP on as with TP off (since 0.2.15; before, TP mode lagged a lowered Ceiling by under a millisecond and could overshoot it by up to ~3 dB during the glide). TP holds at every sample rate from 12 kHz up (since 0.2.16; before, a constructed worst case could read up to about 0.2 dB over below 44.1 kHz). Below 12 kHz — 8 and 11.025 kHz included — TP is not available: the Ceiling then limits sample peaks and its readout says `dB` even with **TP** on. It is the same parameter as the Advanced limiter zone's TP switch (§3.3). **LOCK** keeps the ceiling's *value* fixed while you browse presets — the value only: a factory preset still turns TP (and Dither) off (§7.3). |
 | **Character** | 0 … 1 | Clean ↔ Color: how much of the push is done with saturation character rather than clean limiting. |
 | **Tone** | −1 … +1 | Dark ↔ bright tilt of the overall result. |
 
@@ -208,7 +208,7 @@ the automation lane keeps the full name, so "Ratio" here is "Comp Ratio" to your
   Tone, Color Depth, and **Dynamic Tame** — a programme-dependent high-frequency softener.
 - **LIMITER** — the true-peak lookahead limiter: Gain ("Limiter Gain" in automation — the
   push into it), Lookahead (0.5–10 ms; with **TP** on, the longest settings engage a little less —
-  9.1 ms at the top at 48 kHz — because the ceiling's true-peak detection takes its share of the
+  9.0 ms at the top at 48 kHz, less at lower rates — because the ceiling's true-peak detection takes its share of the
   fixed 10 ms, so the reported latency never changes; §6), Release ("Lim Release") with **AUTO**, **Style**
   (Transparent / Punchy / Loud), Stereo Link ("Limiter Stereo Link"), Transients (transient
   preservation), **TP** (true-peak mode — **off by default**; on, the limiter detects true peaks
@@ -297,7 +297,12 @@ Clicking anywhere else on the panel does nothing (since 0.2.14 — until then th
 the reset, so a stray click, right-click or drag discarded the session). The rolling windows (M,
 S, RMS) are not reset — they measure the last few seconds and have nothing session-scoped in
 them — but every reading blanks for an instant at a reset and returns with the next audio; with
-the transport stopped they stay blank until audio flows.
+the transport stopped they stay blank until audio flows. The new session starts at the moment
+of the reset: nothing played before it reaches the new figures — not even a peak that was still
+on its way through the meter when you pressed RESET (since 0.2.16; before, a reset straight after
+a loud passage could bring its last peak back into the new TP hold, and the first moments of
+silence after it could show a loudness carried over from before). Up to the first 0.15 s after
+a reset is left out of **I**, for the same reason.
 
 **What the session covers.** The time beside the header (`m:ss`, whole seconds) is how much
 programme the session figures describe. It stops while you listen to **BYPASS** during

@@ -91,8 +91,12 @@ stage exists; evidence citations are added as the modules land (constraint C7).
 
 4. **The output never exceeds the ceiling.** A final safety clamp sits after the limiter and
    before dither, and holds **under every condition** — any input, any parameter combination, any
-   automation rate, any sample rate, during and after every transition. Tolerance ≤ 0.1 dBTP in
-   true-peak mode, dBTP as defined below.
+   automation rate, any host sample rate, during and after every transition. Tolerance ≤ 0.1 dBTP in
+   true-peak mode, dBTP as defined below. **True-peak mode's inter-sample promise holds wherever the
+   path engages — 12 kHz and up (`truePeakPathEngages`, ADR-0046); below 12 kHz the ceiling holds on
+   sample peaks and the Ceiling reads dB.** *(Until 2026-09-28 this sentence said "any sample rate"
+   with no boundary; the path engaged from 3901 Hz and read up to +0.23 dB over below 44.1 kHz,
+   KI-025.)*
    **Scope: the PROGRAMME path** — the processed signal, and everything an offline render can
    emit. The two monitor-only audition legs are outside it by the same reading that lets bypass
    carry the unclamped dry signal (invariant 7): bypass monitoring plays the input as-is, and
@@ -120,7 +124,9 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    revised in the PR #42 review); for "any automation rate", `testTruePeakModeHoldsTheCeilingUnderAutomation`
    — instant and ramped cuts, a ±6 dB zig-zag, rises and a static ceiling, every reading and every
    emitted sample checked against the LIVE smoothed ceiling at the output sample, the value the TP-off
-   clip holds (ADR-0045); and for a render entered during an engagement,
+   clip holds (ADR-0045); for "any sample rate", `testTruePeakModeHoldsTheCeilingBelow44k` —
+   worst-case bursts and fast cuts at 12–32 kHz, OS off to 4×, the clamp-level reversal, the
+   engagement rail at 11999 / 12000 Hz (ADR-0046); and for a render entered during an engagement,
    `testOfflineEntryDropsTheEngagementTail` (the render read as a file, on both meters and on the
    engine's own dBTP tap).
    **What "dBTP" means in this promise is defined, not assumed** (ADR-0043, 2026-09-27; audit
@@ -186,10 +192,11 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    yields to invariant 4 — no lower than −1.7 dB over a 248-configuration hostile sweep, −3.2 dB
    for a synthetic full-scale Nyquist-rate history.)* *(A second place, since ADR-0045, 2026-09-28: in
    true-peak mode a DOWNWARD Ceiling retarget, with the output at the ceiling, may drop the clamp's
-   gain within one sample by up to about (16 + A/2 + 1) glide steps — 0.0185 on 0.9 DC for a
+   gain within one sample by up to about (Z + 1 + E) ≈ 4.9 glide steps — 0.0040 on 0.9 DC for a
    −1 → −20 dB cut at 48 kHz, where TP-off glides 0.0008 per sample — because frames already in
    flight get the new ceiling with less notice than the attack ramp needs;
-   `testTruePeakModeBoundsTheStepAtACeilingCut` bounds it.)*
+   `testTruePeakModeBoundsTheStepAtACeilingCut` bounds it. The figure is ADR-0046's, whose narrower
+   revision reach replaced ADR-0045's "(16 + A/2 + 1) glide steps — 0.0185".)*
    Guarded by: the click-free transition tests (one per switchable path) — the three bulk-swap
    routes by `testAbSwitchRequestsDuck`, `testUndoRequestsDuck` and the preset bracket's duck
    request; the true-peak mode by `testDuckWrapsTruePeakLatch` and, for the engagement decay's

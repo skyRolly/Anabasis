@@ -123,7 +123,14 @@ review: `GrHistoryBuffer::prepared()`, published inside the clear and read under
 replacing `AudioProcessor::getSampleRate()`/`getBlockSize()`, whose plain members the host's
 reconfiguring thread writes (`setRateAndBufferSizeDetails`, before `prepareToPlay`) while the tick
 and the paint read them. The batch's close is `batchIntact`, an acquire FENCE and a re-read, for
-the reason ADR-0011's second 2026-09-02 amendment gives.
+the reason ADR-0011's second 2026-09-02 amendment gives. **One more reader of the RATE alone, since
+ADR-0046 (2026-09-28, ⊕):** the Ceiling's value text (`CeilingUnitSource::truePeakEngaged`,
+`src/PluginParameters.h`), which the host and the editor may ask for on any thread, reads
+`prepared().rate` once — a single relaxed load of one scalar, paired with nothing, so no epoch
+bracket — to decide whether the true-peak path engages at the prepared rate (12 kHz and up) and the
+unit may say dBTP. No new atomic, writer or ordering: the writer is the ring's `clear`, as above, and
+a read that races a re-prepare returns the old rate or the new one, either of which names a real
+prepared state.
 
 **The ring's own payload became atomic in the same round, and for a different reason** (ADR-0011,
 amended 2026-09-02). The guards above — the epoch, and `readFloor` — are built to notice that a

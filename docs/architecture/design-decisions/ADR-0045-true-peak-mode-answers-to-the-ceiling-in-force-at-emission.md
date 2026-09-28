@@ -16,6 +16,33 @@ there), and a **change to the ceiling stage and the limiter's threshold timing i
 state, signal order, threading or TP-off sample changes. Review finding "Descending ceiling leaks
 delayed peaks" (PR #42, 2026-09-28).
 
+> **Amended 2026-09-28 by [ADR-0046](ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md)
+> (decisions 1, 2 and 5; the fourth PR #42 review round, on the owner's direction, ⊕ for review).
+> The promise of this record is unchanged — every true-peak frame answers to the live ceiling, and
+> a retarget never raises a stored ceiling or a gain; three of its mechanisms and one figure are
+> not.**
+>
+> - **Decision 1 — the stamp is the LOWER of the entry and the predicted emission ceiling.** During
+>   an upward glide the frames in flight carried the rising trajectory, and a reversal mid-ascent
+>   (−20 → 0 → −20 dB) lowered those stamps by both slopes at once: the segment straddling the
+>   emission point read **+0.30 dB (48 kHz), +0.49 dB (22.05 kHz), +0.60 dB (8 kHz)** over the live
+>   ceiling at clamp level (Annex 2, stereo linked; not reproduced at engine level, where the limiter
+>   absorbs it). `ceilEmitArr[n] = min(predicted emission, entry)`: identical on a static ceiling and
+>   on a descent; on an ascent a frame reaches the output up to D samples later — under the ceiling.
+> - **Decision 2 — a revision reaches only what a revised reading defines.** A revised r_j now
+>   constrains the frames x[j−5 .. j+6] its two defining readings read, judges the taps before its
+>   main lobe against the glide one frame ahead (`kRevisionLead`), and leaves the entry-time
+>   requirements' full 32-sample reach alone. "Re-derives every requirement … the 32-wide, forward
+>   and mean windows" below describes the 0.2.15 rebuild.
+> - **Decision 5 and the Consequences' step — the figure.** The one-sample step at a downward
+>   retarget with the output at the ceiling is ~4.9 glide steps at every rate below 66 kHz (0.0040
+>   on 0.9 DC for −1 → −20 dB at 48 kHz), not (16 + A/2 + 1) (0.0185); `DSP_POLICY.md` invariant 8
+>   carries the new figure, and `testTruePeakModeBoundsTheStepAtACeilingCut` pins 7 glide steps.
+>   The tolerance-spending alternative the Consequences leave to the owner is moot at this size.
+> - **The Consequences' "Where the promise still depends on the rate" (KI-025) is closed** by
+>   ADR-0046's gain law, at every rate the path engages (12 kHz and up). Its figures, and the other
+>   figures below, are kept as measured on 0.2.15.
+
 ## Context
 
 The Ceiling reaches the DSP through one smoother, a 20 ms **linear** glide (`kCeilingGlideSeconds`)

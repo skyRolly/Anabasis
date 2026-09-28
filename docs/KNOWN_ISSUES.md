@@ -559,7 +559,7 @@ They are acquired in **both** orders:
 
 | Order | Path |
 |---|---|
-| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:221`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
+| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:223`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
 | M1 → M0 | `APVTS::ParameterAdapter::setDenormalisedValue` holds M1 and calls `setValueNotifyingHost` → `sendValueChangedMessageToListeners`, which takes M0. Reached by the macro mapping, by `reassertFromRaw`/`adoptParamsTree`, and so by every restore path. |
 
 One thread cannot deadlock on this. Two can: the message thread starting a drag on parameter P
@@ -616,7 +616,7 @@ observed against this plugin (the same standing caveat as KI-003).
 listener callback.
 
 Evidence [Verified]:
-- Source: `src/PluginProcessor.cpp:221` (the M0 → M1 edge); JUCE
+- Source: `src/PluginProcessor.cpp:223` (the M0 → M1 edge); JUCE
   `juce_AudioProcessorValueTreeState.cpp:176` (the M1 → M0 edge)
 - Test: `AnabasisStateTests` `testTheFrozenLatchNeedsNoThreadCrossing` provides the two-thread
   stimulus; the finding is the **ThreadSanitizer** `lock-order-inversion` report, not a suite
@@ -1614,7 +1614,47 @@ Evidence [Verified]:
   `worklogs/2026-09-27-phase1-match-statistics-observability.md`
 - Commit: PR #42
 
-### KI-024 — A reset or an unducked latch cuts the true-peak stream to zero at full gain (2026-09-28)
+### KI-024 — A reset or an unducked latch cuts the true-peak stream to zero at full gain (2026-09-28) — **route C FIXED 2026-09-28 (fourth round); the rest dispositioned**
+
+> **Fourth-round disposition (2026-09-28, the PR #42 review of 0.2.15), on a reproduction of every
+> route at engine level (44.1 / 48 kHz, 48 boundary positions per configuration, four programmes,
+> EQ flat or a +12 dB shelf in either position, the Freeze states; the round's worklog §3).**
+>
+> **Two statements in the entry below are wrong, and are corrected here rather than erased:**
+>
+> 1. *"a host `reset()` mid-stream"* — **a host reset never reaches the engine.**
+>    `juce::AudioProcessor::reset()` is empty and `AnabasisAudioProcessor` does not override it
+>    (decided at P5: `THREAD_MODEL.md`, `MODE_AND_ADAPTATION_POLICY.md`, ADR-0011); the only caller
+>    of `AnabasisEngine::reset()` is `prepare()`. The reviewer's harness called `engine.reset()`
+>    directly, so the "reset" route is a host RE-PREPARE (route B below).
+> 2. *"on the no-re-prepare route the render's first samples are the emptied pipeline's zeros"* —
+>    **false whenever the EQ was in use**: the latch cleared the wet ring, limiter, clip, clamp and
+>    oversampler but not the EQ, so the EQ's ring-out of the realtime audio reached the render —
+>    Post position: ~13 samples at up to −1.0 dBFS inside the latency window; Pre position: up to
+>    −1.2 dBFS in the head of the new audio, 637 samples after the cut at 44.1 kHz (676 at 48 kHz),
+>    after the latency window, so in a host-trimmed file too. And the output dBTP tap read the step
+>    into the emptied pipeline, so the session dBTP hold showed **+0.88 dB** over the ceiling for a
+>    render whose file has no over. The reviewer's +0.96 / +0.98 dB was not reproduced; the worst
+>    here is +0.884 / +0.918 dB (product meter / Annex 2), EQ flat.
+>
+> | Route | What happens | Disposition |
+> |---|---|---|
+> | **A** host `reset()` | nothing — a no-op by design; the pipeline continues | **Preserve** (overriding `reset()` would be a threading-model change, a hard stop) |
+> | **B** host re-prepare | `prepare()` empties the pipeline and restarts every meter; the last 2–4 segments before the zeros read up to +0.884 / +0.918 dB — the same magnitude as any stream that simply ends on loud programme (+0.87 to +0.93 dB measured at the end of an uninterrupted run, up to +1.06 dB on Annex 2 in one). Nothing after the boundary is over, no pre-cut audio follows | **Preserve**. A checked decay at the cut was prototyped and **rejected**: it still reads +0.81 / +0.69 dB across the cut (the decay's check covers only the segments after the junction), and it puts ~6 ms of pre-cut audio into the render, whose file then reads +0.88 dB over at its first sample |
+> | **C** offline entry that latches without a re-prepare (Force Max's factor; a TP / factor change on the entry block) | the EQ's ring-out of the realtime audio and the tap's step reading, above | **FIXED** — the latch now also restarts the EQ and the output dBTP tap, as `prepare()` does (`AnabasisEngine.cpp`, the `! smoothersPrimed \|\| enteringOffline` branch). Measured: tap and hold ≤ +0.003 dB, no pre-cut audio in either EQ position, the file from the boundary unchanged (≤ +0.004 dB). **Not changed, and dispositioned with B:** the continuous stream's own step from the last realtime sample to the emptied pipeline's zeros, which reads what B's does (+0.884 / +0.918 dB on the last 2–4 segments before the zeros) — the render's file starts after it. Guard: `testAForceMaxEntryStartsTheRenderClean` (fails 3 checks unfixed — tap and hold +0.827 dB, old audio; the EQ reset alone or the tap reset alone each fails its half) |
+> | **D** offline entry with no composition change; **Dd** the same with a forced duck in flight | the pipeline continues at unity (KI-004); read as a file the render's latency window carries pre-entry audio at the ceiling (+0.97 / +0.96 dB at its head, Annex 2); Dd's duck jumps to unity (+0.92 dB tap) | **Defer** to KI-004's owner decision: emptying the pipeline on every offline entry would change rendered samples on the no-re-prepare route and break `testOfflineEntryDropsTheEngagementTail` part (4), which pins the documented behaviour |
+> | **E** offline → realtime with a composition change; **E0** without | E goes through the §2.8 duck; E0 is continuous | **Preserve** |
+> | **Freeze** (ADR-0042) | acts only through `prepare()`'s stash and `resumeAfterReset`; none of the mechanisms above reads the trims — B and C measured with Freeze off, on for the whole run and engaged halfway: the same readings | no interaction |
+>
+> **Investigate further (outside this entry):** a clean, re-prepared Force Max render that starts on
+> loud programme, trimmed by the reported latency, reads +0.40 / +0.50 dB over at its head in a
+> fresh meter — the 16× oversampler's linear-phase response puts energy ahead of its nominal
+> integer latency, so the trimmed file starts mid-waveform. The emitted stream is not over; the
+> reading is the host's trim. Not investigated further in this round. **Open for ADR-0020:** whether
+> an offline entry without a re-prepare should start a fresh statistics session (today the render's
+> integrated reading, LRA and holds include the realtime playback before it).
+>
+> *The entry as recorded in the third round follows, unedited.*
 
 **Severity:** Low (inter-sample readings straddling a host-drawn stream boundary; the render read as
 a file starts from silence)
@@ -1644,7 +1684,41 @@ Evidence [Verified — the reviewer's harness]:
 - Test:   none asserts it (a stream spanning a reset is not a render)
 - Commit: PR #42 (recorded)
 
-### KI-025 — Below 44.1 kHz a worst-case burst can read over the true-peak ceiling (2026-09-28)
+### KI-025 — Below 44.1 kHz a worst-case burst can read over the true-peak ceiling (2026-09-28) — **CLOSED 2026-09-28 (fourth round, ADR-0046)**
+
+> **✅ CLOSED — fixed at every rate the true-peak path engages (12 kHz and up), the tolerance
+> unchanged; below 12 kHz the path no longer engages.** Closed by
+> [ADR-0046](architecture/design-decisions/ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md)
+> (on the owner's direction, ⊕ for review), which replaces the clamp's boxcar attack ramp with one
+> that eases in (geometric weights, a 16-sample floor), caps the release's rise at 1 % per sample,
+> narrows what a revision reaches, stamps each frame with min(entry, predicted emission ceiling), and
+> engages true-peak mode from 12 kHz through one predicate the Ceiling's unit shares.
+>
+> **The entry below under-stated the issue, and the correction is kept:** a longer search on 0.2.15
+> (~350 hill-climbs, 656k engine evaluations, 64-sample bursts) found **every rate from 4 to 32 kHz
+> over on a STATIC ceiling** — +0.214 dB at 8 kHz, +0.232 at 11.025, +0.197 at 16, +0.189 at 22.05,
+> +0.188 at 24, +0.185 at 32 kHz (Annex 2) — where the table below lists +0.056 / +0.020 dB static
+> at 22.05 / 32 kHz; 44.1 kHz read +0.095 dB, inside the tolerance with little to spare. And a
+> Ceiling REVERSAL mid-ascent read +0.30 dB at 48 kHz at clamp level (ADR-0045's stamping), which
+> the same record closes.
+>
+> **What holds now (measured and derived on the integrated tree; the fourth-round worklog §5):**
+> over a 24 167-render engine matrix (12 kHz–768 kHz engaged, OS off–16× and Force Max, 13 Ceiling
+> automation shapes, a lifecycle tier) the worst reading at every engaged rate is +0.0426 dB
+> (product meter) / +0.0380 dB (Annex 2) — 0.2.15 read over 0.1 dB in 378 of the same renders, all at
+> 32 kHz and below; engine climbs reach +0.0308 dB at 12 kHz; a derived bound on the retarget step is
+> +0.0672 dB at 12 kHz (+0.1008 at 8 kHz, which is why the rail is at 12). The regression guard `testTruePeakModeHoldsTheCeilingBelow44k` fails 12 checks on
+> 0.2.15 (the 22.05 / 32 kHz cut bursts +0.1566 / +0.1250 dB, the 16 kHz static burst +0.1157 dB, a
+> 360-render matrix +0.1179 dB, the reversal premise, the rail) and passes.
+>
+> **What remains, recorded:** (1) no all-input derived bound was obtained at any rate — the promise
+> rests on a derived bound for inputs not already under reduction when a cut arrives, a search over
+> requirement sequences with an exact inner maximiser for the rest, and clamp and engine searches;
+> (2) at 3901–11999 Hz, 8 and 11.025 kHz included, true-peak mode is not available (the sample clip;
+> the Ceiling reads dB) — a behaviour change from 0.2.15, where the path ran there with this
+> entry's residual (`COMPATIBILITY_MATRIX.md` §Sample rates; OQ-020 for any wording beyond the unit).
+>
+> *The entry as recorded in the third round follows, unedited.*
 
 **Severity:** Low (constructed bursts at sample rates below 44.1 kHz; every programme matrix holds)
 **Status:** Confirmed, measured; found by an adversarial search against the 0.2.15 engine; the static
@@ -1688,6 +1762,40 @@ bounds the ramp's effect on its neighbours.
 Evidence [Verified — adversarial search on the real engine; the reproducing bursts are kept with the worklog's scratch record]:
 - Source: `src/dsp/CeilingClamp.h` (`processFrameTruePeak`: `r`, `q`, `m`, the attack mean)
 - Test:   none asserts it (the regression tests run 44.1–192 kHz)
+- Commit: PR #42 (recorded)
+
+### KI-026 — At high rate × oversampling the limiter's release stops short of unity (2026-09-28)
+
+**Severity:** Low (a level error under the ceiling, never over it; audible only as a small
+permanent gain reduction after a limited passage)
+**Status:** Confirmed, measured, pre-existing; found by the fourth PR #42 review round's sample-rate
+audit. Not changed in that round — the limiter's numerics are a DSP change of their own.
+**Affects:** the limiter at a high REGION rate (host rate × oversampling factor): 16× at 48 kHz and
+up, any factor above 192 kHz, and every Force Max bounce (16× at any host rate)
+
+After the limiter has reduced gain, its release should return the gain to unity once the programme
+drops. At a high region rate it stops short and stays there: after a −6 dB hold followed by quiet
+programme, measured on the whole engine (a −30 dBFS sine after a burst, trims frozen), the
+residual reduction is **−0.012 dB at 48 kHz × 1, −0.20 dB at 48 kHz × 16, −0.92 dB at 192 kHz × 16
+and −6.02 dB at 768 kHz × 16** with a 1000 ms manual release (−0.065 / −0.26 / −1.24 dB on AUTO).
+The GR meters show the residual; the output is quieter than it should be, and the ceiling is
+unaffected.
+
+**Workaround:** a shorter release, or a lower oversampling factor for the realtime pass (Force Max
+bounces always run 16×).
+**Cause:** the release is a float one-pole on the ENVELOPE, `env += (needed − env) · aRel`
+(`src/dsp/LookaheadLimiter.h`, `stepEnv`), and the per-sample step falls below half an ulp of `env`
+once `(needed − env) · aRel` is small enough — so the envelope stops moving before it reaches
+`needed`. The stall depends only on the region rate R = sr × OS (the coefficient shrinks as R
+grows). Measured on the class alone, 20 s after a −6 dB hold: −0.011 dB at R = 44.1 kHz, −0.20 dB at
+768 kHz, −0.92 dB at 3.072 MHz, −6.02 dB at 12.288 MHz (never releases) with a 1000 ms release. The
+clamp's release had the same shape of problem and runs on the REDUCTION (1 − g) for that reason
+(`CeilingClamp.h`, "The release runs on the REDUCTION"); doing the same here would change the
+limiter's numerics everywhere, so it is its own decision.
+
+Evidence [Verified — measured on the class and on the engine; the fourth-round worklog §4]:
+- Source: `src/dsp/LookaheadLimiter.h` (`stepEnv`)
+- Test:   none asserts it (no test runs 16× above 48 kHz with a long release)
 - Commit: PR #42 (recorded)
 
 ## Standing note for P1 onward

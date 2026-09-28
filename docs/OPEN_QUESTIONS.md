@@ -613,9 +613,24 @@ reports, not from a measurement in REAPER.
 
 ---
 
-## OQ-018 — Does the STATISTICS tooltip announce that a realtime BYPASS audition is left out of the session figures, and in what words? · `Open`
+## OQ-018 — Does the STATISTICS tooltip announce that a realtime BYPASS audition is left out of the session figures, and in what words? · `Resolved 2026-09-28 (option 1 — no announcement; the recorded wording kept)`
 
-**Owner decision required (C8).** Raised 2026-09-28 in the review of 0.2.14 (PR #42).
+**Decision (2026-09-28, the fourth PR #42 review round, under the owner's instruction for it:
+"If the current tooltip matches the recorded approved convention, keep it and close OQ-018 with
+evidence … Do not invent new product wording").** Option 1. The tooltip stays **"Waveform
+statistics off the output"** — verified verbatim at `src/gui/LoudnessMeterView.cpp:6-11`
+(`LoudnessMeterView::tooltipText`) against its record: the first sentence of the 0.1.1 wording
+added by `d1640bb` (ADR-0020, the owner's 0.1.1 directive item 14, its gate cleared; its words ⊕
+with every 0.1.1 label under `HANDOVER.md`'s fine-review item (j)). No new copy is introduced; the
+realtime bypass pause stays documented where C8 sends behaviour changes — `USER_MANUAL.md` §3.4
+and CHANGELOG 0.2.14. The one test that touches the text pins a truth, not the words
+(`testTheStatisticsPanelResetsOnlyFromItsResetControl`: the tip does not tell the user to click the
+inert body). What stays with the owner is what stays with every 0.1.1 label — the fine review of
+the words themselves — plus option 3 (a visible paused state on the panel, VIS-001's proposal),
+which is new on-panel copy on a signed surface and would be its own decision, not this one.
+
+**Owner decision required (C8).** Raised 2026-09-28 in the review of 0.2.14 (PR #42). *(The
+question as raised, kept as written:)*
 
 **Question.** 0.2.14 (`7166140`, [ADR-0020](architecture/design-decisions/ADR-0020-waveform-statistics-panel.md)
 amendment 4 item 2) stopped a realtime BYPASS audition from feeding the session figures. The same
@@ -636,7 +651,7 @@ worklog's C8 row accounts for RESET's tooltip ("the existing panel tooltip's own
 this clause; `docs/reports/2026-09-27-phase1-roadmap.md` §3 and `HANDOVER.md`'s 0.2.14 Pending
 Tasks row do not list it.
 
-**Intended meaning** (what any wording has to be true to — `src/dsp/AnabasisEngine.cpp:1481`,
+**Intended meaning** (what any wording has to be true to — `src/dsp/AnabasisEngine.cpp:1516`,
 `sessionOpen = bypassMix <= 0 || p.nonRealtime`): while any part of BYPASS is audible in realtime
 processing, the integrated reading (gated and ungated), LRA, the TP and SP holds — and so PLR — and
 the header's session time do not advance; M, S and RMS still follow what plays; an offline render
@@ -709,3 +724,33 @@ opposite orders — stage then quantity ("lim GR"), quantity then statistic ("GR
 
 **Interim.** Keep shipping the placeholders. An unlabelled number is not a neutral fallback,
 because the readout has to name its stage (VIS-003).
+
+---
+
+## OQ-020 — Should the editor say that True Peak mode is not engaged below 12 kHz, and in what words? · `Open`
+
+**Owner decision required (C8).** Raised 2026-09-28 in the fourth review round of PR #42
+([ADR-0046](architecture/design-decisions/ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md)).
+
+**Question.** From 0.2.16 the true-peak path engages only at host rates of 12 kHz and above
+(`truePeakPathEngages`, `src/dsp/Latency.h`); below that the Ceiling limits sample peaks whatever
+the TP switch says. The one thing the product already says about it is the Ceiling's unit, which
+now follows the path rather than the switch: `" dB"` below 12 kHz with TP on (ADR-0046 decision 5,
+`CeilingUnitSource`), existing wording in an existing place. The judge of the design round asked
+for more — a "True Peak unavailable at this sample rate" indication (a tooltip and a state flag)
+whenever TP is requested but not engaged. That is new UI copy on a signed surface, and no convention
+or record covers it.
+
+**Affected surface.** The TP switch (both views) and its tooltip; possibly the Ceiling readout.
+Reachable only at host rates below 12 kHz (8 and 11.025 kHz among them) — no rate the product's host matrix lists
+(`COMPATIBILITY_MATRIX.md` §Sample rates).
+
+**Options.** 1. No indication beyond the unit (the shipped interim). 2. A tooltip clause on the TP
+switch, in the owner's words. 3. A visible state on the switch (dimmed / struck) — a brand-checklist
+item, not a tooltip decision.
+
+**Recommendation.** Option 1 until the owner supplies words: the unit already stops claiming dBTP
+where the path does not run, and `USER_MANUAL.md` §3.2 states the rate contract.
+
+**Interim.** Option 1. No test pins any wording here; `testTheCeilingUnitFollowsTheRateTheTruePeakPathEngagesAt`
+pins the unit.

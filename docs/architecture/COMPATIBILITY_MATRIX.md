@@ -55,6 +55,23 @@ about older systems. The Linux equivalent of that sentence stood for five versio
 measurement above replaced it; the Windows one is the same shape and is a known gap rather than a
 claim.
 
+## Sample rates
+
+*(Added 2026-09-28 with ADR-0046. Until then this document had no rate row, and the DSP policy
+promised the ceiling at "any sample rate" with no boundary.)* The engine accepts any positive host
+rate — nothing in the wrapper, the JUCE plug-in settings or the engine refuses one — so this table
+states what each rate band gets, not which rates load.
+
+| Rate band | Status | What holds | Evidence |
+|---|---|---|---|
+| **44.1 – 192 kHz** | **Verified (headless)** | everything, true-peak mode included | both suites (the TP matrices run 44.1 / 48 / 96 / 192 kHz); pluginval at 44.1 / 48 / 96 kHz in CI |
+| **12 – 32 kHz** | **Verified (headless)** | everything, true-peak mode included (0.2.16; before, KI-025 read up to +0.2 dB over) | `testTruePeakModeHoldsTheCeilingBelow44k` (12 / 16 / 22.05 / 24 / 32 kHz); pluginval at 16 / 22.05 / 32 kHz run locally for the 0.2.16 round, not in CI |
+| **above 192 kHz** | **Partially Verified** | the ceiling held in a 64-run programme sweep at 352.8–768 kHz; the limiter's release has a float-precision stall that grows with rate × oversampling (a GR that does not fully recover — under the ceiling, never over; `KNOWN_ISSUES.md` KI-026, which also reaches 48 kHz at 16×) | the fourth-round worklog §4 |
+| **below 12 kHz** (8, 11.025 kHz …) | **Partially Verified** | the sample-peak ceiling; **true-peak mode is not available** (`truePeakPathEngages`, ADR-0046: no bound supports the promise through a full-range Ceiling cut there) — the Ceiling reads `dB` with TP on, and inter-sample peaks can exceed it by ~2 dB; 3901–11999 Hz engaged TP in 0.2.15 and changes behaviour in 0.2.16. The loudness meter's K-weighting is valid only above ~3.4 kHz; EQ and sidechain frequencies above 0.49 · sr are clamped | `testTruePeakModeHoldsTheCeilingBelow44k` part 1 (the rail); `testTheCeilingUnitFollowsTheRateTheTruePeakPathEngagesAt` |
+
+No host in the audition list below runs below 44.1 kHz by default; no real-host evidence exists for
+any rate outside 44.1 / 48 kHz.
+
 ## I/O layouts
 
 | Layout | Status | Evidence |

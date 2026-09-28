@@ -373,3 +373,36 @@ Evidence [Verified]:
 - `dsp_tests.cpp`'s extreme-level route through the bypassed histogram now runs OFFLINE with a
   premise that the integrated reading is live — it would otherwise have passed vacuously.
 
+**Implementation note — a reset starts the session at the reset's position (2026-09-28, the fourth
+PR #42 review round).** Not an amendment: nothing this record decided moves — what a reset clears,
+the rolling readings, the GR history, the pause — but amendment 4's session figures did not start
+where the reset put them, and the fix states the semantics it enforces. Review finding "Old peaks
+survive statistics reset" (`AnabasisEngine.h`, `resetMeterHolds`).
+- **The session TP hold after a reset is the true peak of the output waveform at positions from
+  the reset on.** The output estimator (`TruePeakEstimator`) reports `kReportLag` = 6 samples late,
+  so its first six readings after a reset describe positions BEFORE it — and they reached the
+  fresh hold: a reset straight after a loud passage, then silence, brought the old peak back into
+  the new session, up to **+0.96 dB above the old session's own maximum** (those last positions
+  had never been reported to it). The session TP now skips exactly those readings
+  (`sessionTpSkip`); every later reading describes a post-reset position, so no post-reset sample
+  or 4× point is skipped. **The estimator keeps its history**, deliberately: restarting it from
+  zeros invents an onset that is not in the audio (a continuing programme read up to +0.97 dB
+  high), and the rolling reading and the GR history stay continuous. What a reading of a
+  post-reset position may still carry is the real waveform there — the 4× kernel's tail over the
+  samples just before the reset, bounded analytically at 0.2504 × the pre-reset sample peak
+  (−12 dB). The sample-peak hold was never affected (it has no lag).
+- **The integrated reading's first admitted sub-block starts at least 50 ms after a reset or a
+  bypass resume** (`LoudnessMeter::firstCleanSubBlock`): the straddler rule admitted a sub-block
+  starting right at the reset, into which the K-weighting filters (never cleared — that would notch
+  the rolling windows) ring the pre-reset programme; 5 s of digital silence after a reset read
+  −33.7 LUFS integrated where the empty value belongs. Amendment 4's stated cost changes from "up
+  to one 100 ms sub-block either side of a pause" to up to 100 ms before a pause and up to 150 ms
+  after a pause or a reset; LRA's ~3 s is unchanged.
+- Guards: `AnabasisTests` `testStatisticsResetStartsTheSessionAtTheReset` (the review scenario with
+  TP on and off, one and three presses, a reset with no history, a continuing programme — never
+  above the continuous meter and every later reading covered — a click in the first post-reset
+  samples, the loudness ring-out on and off a sub-block boundary); `AnabasisStateTests`
+  `testResetRightAfterALoudPassageKeepsTheOldPeakOut` (the processor's own request and published
+  holds). Unfixed: 6 DSP and 2 state failures; skipping the estimator's whole reach, or restarting
+  it from zeros, each fails its own checks (the fourth-round worklog).
+

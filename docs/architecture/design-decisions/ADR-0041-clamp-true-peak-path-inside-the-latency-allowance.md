@@ -37,6 +37,20 @@ completed at acceptance — and explicitly *not* of the voicing constants (attac
 10 ms), which stay ⊕ listening material, nor of the TP-mode cost at ≥ 4× over DESIGN §9's
 limiter + TP-detection row (`PERFORMANCE_BUDGET.md`), which stays recorded.
 
+> **Amended 2026-09-28 by [ADR-0046](ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md)
+> (decisions 3 and 4, and the "rail" sentence of decision 4; on the owner's direction, ⊕ for
+> review).** The gain law of decision 3 — "a linear attack ramp" over A = max(8, round(0.25 ms · fs))
+> — bounded a segment's reading only while the gains its interpolation read were equal, and at the
+> 8-sample floor a worst-case burst read up to +0.157 dB over the ceiling below 44.1 kHz (KI-025).
+> The ramp is now a geometrically weighted mean that eases in, the release rises at most 1 % per
+> sample, and the attack floor is 16 samples, so **D = 46 at every rate below 66 kHz** (41 / 42 at
+> 44.1 / 48 kHz in the figures below; unchanged at 88.2 kHz and up) and the longest engaged window in
+> TP mode is 9.04 ms at 48 kHz (9.125 below). The composition rule, the reported latency, the three
+> readings and the backstop are unchanged. Decision 4's rail — "no conforming rate reaches it" — is
+> replaced by a stated rate contract: the path engages from 12 kHz (`truePeakPathEngages`), and
+> below it the sample clip runs and the Ceiling reads dB. The text below keeps the figures it was
+> accepted with.
+>
 > **Amended 2026-09-28 by [ADR-0045](ADR-0045-true-peak-mode-answers-to-the-ceiling-in-force-at-emission.md)
 > (decision 3; on the owner's direction, ⊕ for review).** "Each frame carries the ceiling the limiter
 > used for it" made every true-peak frame answer to the ceiling in force when it ENTERED the clamp,

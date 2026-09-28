@@ -101,7 +101,8 @@ public:
     // — is what destroys them. So the lambda outlives this holder no matter
     // where it is declared. `apvts` is destroyed before it too, which leaves
     // `truePeakRaw` (a pointer into APVTS storage) dangling for the rest of
-    // the derived teardown.
+    // the derived teardown — and `preparedPair` (ADR-0046: the GR history
+    // ring, declared further down, so destroyed before either) the same.
     //
     // WHAT ACTUALLY MAKES IT SAFE is a runtime fact, not a structural one:
     // `getText` is called by hosts and by the editor while the processor is
