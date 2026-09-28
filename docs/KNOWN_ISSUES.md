@@ -1843,6 +1843,55 @@ Evidence [Verified — measured on the whole engine, 0.2.15 and the fixed tree; 
 - Test:   `testTheClampSilencesAnAstronomicalInput` covers 1e30 (silenced) and the gain range at 1e9, not the 1e9 reading
 - Commit: PR #42 (recorded)
 
+### KI-028 — pluginval sometimes crashes after its `SUCCESS` line, at validator teardown (2026-09-28)
+
+**Severity:** Medium (a release-gate failure on a platform without a crash-retry; whether a real
+host is affected is unknown)
+**Status:** Confirmed (observed in CI and locally), intermittent, not reproduced on demand, cause not
+established. Recorded by the fourth PR #42 review round; not changed.
+**Affects:** pluginval validation — observed on Linux (VST3, the `linux` job and local runs) and, once,
+on macOS Intel (AU, the `macos-intel` job); every observation is after every test has passed
+
+A pluginval pass prints `SUCCESS` for every test and then the validator process dies while it shuts
+down:
+
+- **Linux, VST3:** a segmentation fault at validator exit — seed `0xcb2cae` on `dd983ec` (the third
+  review round's records), seed `0x37bc7e` on the fourth round's first build (1 of 29 replays with
+  the editor tests, 0 of 3 without them, 0 of 8 under gdb). The Linux crash-retry in
+  `scripts/run-pluginval.sh` (written for the X11 / XEmbed editor flake) passed each of these on
+  retry, so CI stayed green.
+- **macOS Intel, AU, randomise pass 3 / 3, seed `0x5161f59`** (push run 36495741278 on `fe29bda`):
+  `libc++abi: terminating due to uncaught exception of type std::__1::bad_function_call` —
+  an EMPTY `std::function` was invoked — and pluginval's own handler turned the abort into exit 9.
+  macOS has no crash-retry by design, so the job failed. The plug-in's source at `fe29bda` is
+  byte-identical to `f03d673`, whose `macos-intel` job passed all twelve passes (VST3 and AU, both
+  modes ×3, other seeds); it is the first such failure on either macOS job in the last 100 push
+  runs of `build.yml` (the others there: the `58107a4` build error, and three Rosetta self-test
+  failures on 2026-09-07). A re-run of the failed job (attempt 2, job 109189497584) passed every lane —
+  AU randomise ×3 on seeds `0x92afc7` / `0x3cc398d` / `0x7808ca6` — which shows the failure is
+  intermittent, not that it is gone.
+- **Local, Linux, VST3, the same seed** (`--randomise --random-seed 0x5161f59`, strictness 10, editor
+  under Xvfb, the `fe29bda` build): 5 of 6 runs clean; 1 segfault INSIDE the Editor test (before
+  `SUCCESS`) — the XEmbed flake the Linux retry exists for, not the exit crash.
+
+What is known about the cause: every `std::function` the plug-in's own code invokes is either
+null-checked at the call (`src/MacroEngine.cpp`, `src/InternalState.h`, the editor's controls,
+`FrameClock`) or always initialised (`tickClockMs`); the processor's destructor stops the macro
+drain before any member is destroyed; the two `SafePointer` lambdas are a menu's and a file
+chooser's, which pluginval never opens. None of this rules the plug-in out: an empty `std::function`
+invoked at teardown is also what a call through a destroyed object whose storage reads as zero looks
+like, in the plug-in or in the validator's host code. Not investigated on macOS (no macOS here).
+
+**Workaround:** none needed by a user as far as is known; for CI, a re-run.
+**Cause:** not established — the validator's host code at shutdown, or the plug-in's teardown.
+Establishing it needs a macOS reproduction with a symbolised crash report (the AU randomise lane, the
+seed above) or the Linux exit crash under a debugger that catches it.
+
+Evidence [Partially Verified — observed; not reproduced on demand]:
+- Source: not identified (the candidates above were read and found guarded)
+- Test:   none — pluginval's own teardown, not reproducible headlessly on demand
+- Commit: PR #42 (recorded)
+
 ## Standing note for P1 onward
 
 Two categories are known in advance to need entries in this project, from the sibling product's

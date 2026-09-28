@@ -483,7 +483,7 @@ in the same commit. **The round's own review** (fix commit `f03d673`): code — 
 reduction normalised by the float weights' own sum, capped at 1), `dryRing.clear()` in the latch,
 `firstCleanSubBlock` a whole sub-block, `<cstddef>` / `std::size_t`; records — ADR-0046's
 implementation note, ADR-0020's note (100 ms; the cost 200 ms), KI-024 row C (the bypass leg),
-KI-025's banner, **KI-027 added**, `USER_MANUAL.md` §3.4 (0.2 s), `procedures/TESTING.md` (the
+KI-025's banner, **KI-027 and KI-028 added**, `USER_MANUAL.md` §3.4 (0.2 s), `procedures/TESTING.md` (the
 statistics-reset row's stimulus); the Phase 1 roadmap (`2026-09-27-phase1-roadmap.md`) gains a dated
 forward pointer only. **New tests** —
 `testTruePeakModeHoldsTheCeilingBelow44k`, `testAForceMaxEntryStartsTheRenderClean`,

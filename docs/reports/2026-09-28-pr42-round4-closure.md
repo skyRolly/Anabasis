@@ -127,9 +127,15 @@ across `8ab0532` / `58107a4` / `f03d673` — all C6262 stack-size warnings on te
 `tests/` (the 7 added are this round's new tests) plus the two pre-existing C6011 of the scanner
 audit's group G3; none under `src/`. Recorded, not dismissed.
 
-The two commits pushed after `f03d673` — `7efbe7f` (three tests moved above a comment they had split;
-737 / 737 locally) and the records commit carrying this file — are reported in the pull request, not
-here: a record cannot carry its own CI.
+**`fe29bda` (the records head; plug-in source byte-identical to `f03d673`):** every check **success**
+except **`macos-intel`, which FAILED** in its AU randomise lane, pass 3 / 3 (seed `0x5161f59`): every
+test passed and printed `SUCCESS`, then the validator aborted at teardown with an uncaught
+`std::bad_function_call` (an empty `std::function` invoked). macOS has no crash-retry by design, so
+the gate failed. Not reproduced (6 local Linux replays of the seed: 5 clean, 1 XEmbed crash in the
+Editor test), cause not established; the first such macOS failure in the last 100 push runs; the same
+teardown position as the pre-existing Linux exit segfault the Linux retry has been absorbing. Recorded
+as **KI-028**. A re-run of the job (attempt 2) passed every lane on other seeds — intermittent, and
+the first attempt's failure stands. CodeQL on `fe29bda`: no new alerts.
 
 ## 5. Roadmap
 
@@ -150,7 +156,8 @@ recorded.
 1. **DSP-005 (KI-023)** — MATCH's predict floor; the whole of the BYPASS comparison's residual (+0.63 LU
    at the calibration point). Its preconditions from the brief — KI-025 closed, KI-024 dispositioned,
    RESET fixed, the TP matrix passing, CI green, no known violation — are **met on `f03d673`** as far as
-this round can establish them: KI-025 closed at every engaged rate, KI-024 dispositioned route by
+this round can establish them, with the CI gate qualified by **KI-028** (an intermittent pluginval
+teardown crash that failed `macos-intel` once on `fe29bda`, whose plug-in code is `f03d673`'s): KI-025 closed at every engaged rate, KI-024 dispositioned route by
 route, RESET fixed, the matrix passing on the fixed tree, every CI check green. One qualification is
 stated rather than hidden: **KI-027** is a known reading over the ceiling, pre-existing, at a finite
 input near +180 dBFS — outside any programme a host delivers; whether it blocks is the owner's call.
@@ -162,7 +169,10 @@ The brief's other precondition is the owner's: the review of the ⊕ records (AD
    heartbeat.
 4. **VIS-014, STATE-008, VIS-004** — documentation or small display changes; then **UX-023, UX-008,
    VIS-013**.
-5. **Recorded, not scheduled:** KI-026 (the limiter's release at high rate × OS — a limiter-numerics
+5. **KI-028 before a release gate is trusted again** — a macOS reproduction of the AU teardown abort
+   with a symbolised report (the seed is recorded); until then a red pluginval lane after `SUCCESS`
+   is re-run and recorded, not waved through.
+6. **Recorded, not scheduled:** KI-026 (the limiter's release at high rate × OS — a limiter-numerics
    decision); KI-027 (the clamp's float gain resolution at +180 dBFS input); the KI-024 D / Dd routes (KI-004's owner decision); whether an offline entry without a
    re-prepare starts a fresh statistics session (ADR-0020).
 
@@ -176,6 +186,7 @@ The brief's other precondition is the owner's: the review of the ⊕ records (AD
 | KI-024 routes D / Dd (empty the pipeline on every offline entry?) | `KNOWN_ISSUES.md` KI-004, KI-024 |
 | KI-026 — a reduction-domain release for the limiter | `KNOWN_ISSUES.md` KI-026 |
 | KI-027 — a gain domain that resolves near 0 for the true-peak clamp (inputs near +180 dBFS) | `KNOWN_ISSUES.md` KI-027 |
+| KI-028 — whether a pluginval teardown crash may be re-run past, or blocks, until diagnosed | `KNOWN_ISSUES.md` KI-028 |
 | Carried: ADR-0044, ADR-0045, ADR-0020 amendment 4 (⊕); OQ-019; STATE-002 (KI-021); UX-003 (KI-022); VIS-002 (KI-020); ADR-0042 option A / KI-007; the TP clamp's voicing constants (listening) | as recorded in the earlier records |
 
 ## 7. Evidence limits

@@ -505,6 +505,21 @@ pluginval gates are GitHub CI's (§6.1), not re-run locally.
   alerts in code changed by this pull request"**, so `58107a4`'s alert is gone; PREfast 36492321799
   success (warnings below); dependency review 36492321802 success. **No failed or cancelled check on
   `f03d673`.**
+- **`fe29bda`** (the records head; its plug-in source byte-identical to `f03d673`): push run
+  36495741278 — every job success except **`macos-intel`, FAILED in `pluginval AU (randomise x3)`,
+  pass 3 / 3, seed `0x5161f59`**: every test printed `SUCCESS`, then the validator aborted with
+  `libc++abi: terminating due to uncaught exception of type std::__1::bad_function_call` (pluginval
+  turned the abort into exit 9; macOS has no crash-retry by design, so the step failed). All other
+  lanes of that job passed — build, self-tests, reproduction, both channel probes, VST3 both modes
+  ×3, AU deterministic ×3, AU randomise passes 1–2. Pull-request run `merge-check`, CodeQL ("No new
+  alerts in code changed by this pull request"), PREfast (101, as below) and dependency review
+  success. Diagnosis attempted: the plug-in's `std::function` call sites read (all null-checked or
+  always initialised; the teardown order holds), the same seed replayed 6 times locally on Linux /
+  VST3 (5 clean; 1 segfault inside the Editor test, the XEmbed class), the branch's last 100 push
+  runs surveyed (no earlier macOS teardown abort). Not reproduced; cause not established — recorded
+  as **KI-028** with the Linux exit segfault it resembles. Re-run of the failed job (attempt 2, job 109189497584): **success** — every lane,
+  AU randomise ×3 on seeds `0x92afc7` / `0x3cc398d` / `0x7808ca6`. Intermittent; the first attempt's
+  failure stands in the record.
 - **PREfast, both heads:** alerts in the PR's changed code 94 on `8ab0532` → 100 on `58107a4` → 101
   on `f03d673`; every one is a C6262 (a test function's stack above 16 KB — an engine or a fixture held
   by value) under `tests/`, plus the two C6011 of the 2026-09-03 scanner audit's group G3 ("DO NOT
@@ -536,7 +551,8 @@ pluginval gates are GitHub CI's (§6.1), not re-run locally.
   offline without re-preparing is not verified in a DAW.
 - **The Ceiling unit below the rail** in a real editor or generic host view (the state test drives the
   host-facing `getText`, headlessly).
-- **The pluginval exit segfault** (pre-existing): not diagnosed.
+- **The pluginval teardown crash** (KI-028; the Linux exit segfault, pre-existing, and the macOS Intel
+  AU `bad_function_call` abort on `fe29bda`): not diagnosed, not reproduced on demand; no macOS here.
 - **The KI-024 D / Dd routes** and **KI-026** are recorded, not changed; **a clean re-prepared Force Max
   render trimmed by the reported latency reads +0.40 / +0.50 dB at its head** (the 16× oversampler's
   energy ahead of its integer latency) — observed, not investigated.
