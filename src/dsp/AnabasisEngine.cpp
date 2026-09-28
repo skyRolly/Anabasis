@@ -513,8 +513,24 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
 
     if (! smoothersPrimed || enteringOffline)
     {
+        // An offline entry that LATCHES (a composition change the render
+        // wants, e.g. Force Max's factor, with no re-prepare) empties the
+        // pipeline at full gain, and a render that starts from an empty
+        // pipeline must not carry the realtime stream into it (KNOWN_ISSUES
+        // KI-024, the PR #42 review of 0.2.15). Two stages outlived the latch
+        // and did: the EQ, whose ring-out of the realtime audio reached the
+        // render — at the Post position inside its latency window (up to
+        // −1.0 dBFS), at the Pre position into the head of the new audio
+        // (−1.2 dBFS up to 637 samples after the cut) — and the output dBTP
+        // tap, which read the step into the emptied pipeline (+0.88 dB over
+        // the ceiling in the session hold for a render whose file has none).
+        // Both restart here, as prepare() restarts them; an entry that does
+        // not latch keeps the continuous stream, exactly as before (KI-004).
+        const bool entryEmptiesPipeline = enteringOffline && latchWanted;
         if (latchWanted)
             latchOsConfig (wantIdx, wantPh, wantTpClamp);
+        if (entryEmptiesPipeline)
+            eq.resetState();
         if (wantEq != appliedEqPos)
         {
             // Paired with the position change on THIS branch too, exactly as
@@ -543,8 +559,9 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         // silence. The output dBTP tap restarts only when a decay was cut, so
         // it does not read the cut as a step across the realtime/offline
         // splice; with no decay in flight the stream is continuous and the tap
-        // keeps its history, exactly as before.
-        if (engageTail.active())
+        // keeps its history, exactly as before — unless the entry emptied the
+        // pipeline (above), which is the same splice.
+        if (engageTail.active() || entryEmptiesPipeline)
             outTp.reset();
         engageTail.reset();
         // A render that STARTS with an empty pipeline is not a transition:

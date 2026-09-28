@@ -3333,6 +3333,121 @@ static void testOfflineEntryDropsTheEngagementTail()
 }
 
 // ---------------------------------------------------------------------------
+// ENTERING OFFLINE WITH A COMPOSITION CHANGE, no re-prepare (KNOWN_ISSUES
+// KI-024, the PR #42 review of 0.2.15). Force Max makes the render want 16x,
+// so the offline-entry branch latches at full gain and the pipeline empties:
+// the render starts from nothing, as after prepare(). Two stages outlived that
+// latch — the EQ (its ring-out of the realtime audio reached the render: at
+// the Post position inside the latency window, at the Pre position into the
+// head of the new audio) and the output dBTP tap (it read the step into the
+// emptied pipeline as +0.88 dB over the ceiling, and the session hold kept
+// it, for a render whose file has no over). Asserted: with silence after the
+// entry NOTHING of the realtime stream reaches the render (exact zero); the
+// engine's tap and session hold stay within the tolerance; the render read as
+// a file holds the ceiling on both defining meters. The stream itself steps to
+// zero at the entry exactly as a re-prepare does (the edge of a stream the host
+// stopped) — not asserted, KI-024.
+static void testAForceMaxEntryStartsTheRenderClean()
+{
+    using tpceiling::Point;
+    const Point hot { 18.0f, -12.0f, 2.0f, 9.0f, 0.35f, 1.5f, 1, 1.0f, -1.0f };
+    struct Eq { int position; float shelfDb; const char* name; };
+    const Eq eqs[] = { { 0, 0.0f, "flat" }, { 1, 12.0f, "Post +12 dB shelf" }, { 0, 12.0f, "Pre +12 dB shelf" } };
+    float worstTapDb = -200.0f, worstHoldDb = -200.0f, worstOld = 0.0f;
+    tpceiling::Over worstFile { -200.0f, -200.0f };
+    float weakestPremise = 1.0e9f;
+    for (const double sr : { 44100.0, 48000.0 })
+        for (const auto& eq : eqs)
+            for (const int kind : { 1, 3 })
+                for (const bool silentAfter : { true, false })
+                {
+                    anabasis::AnabasisEngine engine;
+                    engine.prepare (sr, 512, 2);
+                    anabasis::EngineParameters p;
+                    p.truePeakMode      = true;
+                    p.forceMaxOffline   = true;
+                    p.limGainDb         = hot.limGainDb;
+                    p.compThresholdDb   = hot.compThresholdDb;
+                    p.compRatio         = hot.compRatio;
+                    p.clipDriveDb       = hot.clipDriveDb;
+                    p.clipShape         = hot.clipShape;
+                    p.dynTiltDb         = hot.dynTiltDb;
+                    p.limStyle          = hot.style;
+                    p.transientPreserve = hot.transientPreserve;
+                    p.ceilingDbTp       = hot.ceilingDb;
+                    p.eqPosition        = eq.position;
+                    p.eqHighShelfGainDb = eq.shelfDb;
+                    tpceiling::Programme old;
+                    old.kind = kind;
+                    old.sr   = sr;
+                    tpceiling::Programme fresh;
+                    fresh.kind = 1;
+                    fresh.sr   = sr;
+                    fresh.rng  = 0x1234567u;
+                    tpceiling::Bounce b;
+                    juce::AudioBuffer<float> buf (2, 512);
+                    const long entry = 88 * 512;                   // ~1 s of realtime playback
+                    float tap = 0.0f, hold = 0.0f, preTap = 0.0f;
+                    for (long n = 0; n < entry + 40 * 512; n += 512)
+                    {
+                        const bool offline = n >= entry;
+                        if (offline && b.offlineAt < 0)
+                        {
+                            b.offlineAt   = n;
+                            p.nonRealtime = true;                  // no prepare: the flip alone
+                        }
+                        for (int i = 0; i < 512; ++i)
+                        {
+                            float l = 0.0f, r = 0.0f;
+                            if (! offline)
+                                old.frame (l, r);
+                            else if (! silentAfter)
+                                fresh.frame (l, r);
+                            buf.setSample (0, i, l);
+                            buf.setSample (1, i, r);
+                        }
+                        engine.process (buf, p);
+                        hold = juce::jmax (hold, engine.lastSessionTpMax());
+                        if (offline)
+                            tap = juce::jmax (tap, engine.lastRenderTpMax());
+                        else
+                            preTap = juce::jmax (preTap, engine.lastRenderTpMax());
+                        for (int i = 0; i < 512; ++i)
+                        {
+                            b.l.push_back (buf.getSample (0, i));
+                            b.r.push_back (buf.getSample (1, i));
+                        }
+                    }
+                    auto dB = [&] (float v) { return 20.0f * std::log10 (juce::jmax (v, 1.0e-9f)) - hot.ceilingDb; };
+                    weakestPremise = juce::jmin (weakestPremise, dB (preTap));
+                    worstTapDb  = juce::jmax (worstTapDb, dB (tap));
+                    worstHoldDb = juce::jmax (worstHoldDb, dB (hold));
+                    if (silentAfter)
+                        worstOld = juce::jmax (worstOld, tpceiling::peakOf (b, (size_t) b.offlineAt, b.l.size()));
+                    else
+                    {
+                        const auto o = tpceiling::renderOverDb (b, hot.ceilingDb);
+                        worstFile.meterDb  = juce::jmax (worstFile.meterDb, o.meterDb);
+                        worstFile.annex2Db = juce::jmax (worstFile.annex2Db, o.annex2Db);
+                    }
+                    if (dB (tap) > 0.1f || dB (hold) > 0.1f)
+                        std::printf ("       forceMaxEntry: %.0f Hz / %s / kind %d / %s: tap %+.3f dB, hold %+.3f dB\n",
+                                     sr, eq.name, kind, silentAfter ? "silence" : "programme", dB (tap), dB (hold));
+                }
+    check (weakestPremise > -0.5f,
+           "forceMaxEntry: (premise) the realtime programme reaches the ceiling before every entry");
+    check (juce::exactlyEqual (worstOld, 0.0f),
+           "forceMaxEntry: nothing of the realtime stream reaches a Force Max render entered without a re-prepare (EQ flat, Post and Pre shelf)");
+    check (worstTapDb <= 0.1f,
+           "forceMaxEntry: the engine's own dBTP tap does not read the step into the emptied pipeline");
+    check (worstHoldDb <= 0.1f,
+           "forceMaxEntry: …and neither does the session dBTP hold");
+    check (worstFile.meterDb <= 0.1f && worstFile.annex2Db <= 0.1f,
+           "forceMaxEntry: the render read as a file holds the ceiling on both defining meters");
+}
+
+
+// ---------------------------------------------------------------------------
 // TRUE-PEAK MODE UNDER CEILING AUTOMATION (the PR #42 review of 0.2.14;
 // DSP_POLICY invariant 4: "any automation rate"). The true-peak path delays
 // its audio by D (42 samples at 48 kHz), and until 0.2.15 it judged and
@@ -8856,6 +8971,7 @@ int main()
     testTruePeakModeHoldsTheCeiling();
     testTruePeakEngagementHoldsTheCeiling();
     testOfflineEntryDropsTheEngagementTail();
+    testAForceMaxEntryStartsTheRenderClean();
     testTruePeakModeHoldsTheCeilingUnderAutomation();
     testTruePeakModeBoundsTheStepAtACeilingCut();
     testTruePeakModeHoldsTheCeilingBelow44k();
