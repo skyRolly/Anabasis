@@ -3783,18 +3783,6 @@ static void testTruePeakModeHoldsTheCeilingUnderAutomation()
     check (offOver == 0, "tpAutomation: TP off — every emitted sample is at or under the live ceiling");
 }
 
-// ---------------------------------------------------------------------------
-// THE PRICE OF HOLDING THE CEILING AT EMISSION, bounded (ADR-0045; DSP_POLICY
-// invariant 8, where it yields to invariant 4). testCeilingIsSmoothed pins the
-// glide in TP-off. In true-peak mode a DOWNWARD retarget lowers the ceilings of
-// the frames already in flight, and a segment reading the next frame to leave
-// constrains samples up to 15 steps ahead — so when the output sits AT the
-// ceiling the first frame emitted after the retarget takes its revised
-// requirement at once: a one-sample drop of about (16 + A/2 + 1) glide steps
-// (A = the clamp's attack), instead of one. Measured 0.0185 at 48 kHz for a
-// −1 → −20 dB cut on 0.9 DC held at the ceiling, where TP-off glides at 0.0008
-// per sample. This pins the bound so it cannot grow unseen, and the premise
-// that the case really reaches the revision (the TP-off glide is the control).
 // AN ASCENT ANSWERS TO THE ENTRY CEILING (ADR-0046 decision 4). In TP mode a
 // frame is stamped with min(ceiling at entry, ceiling predicted at emission),
 // so while the Ceiling RISES the frames in flight keep the lower, entry-time
@@ -3934,6 +3922,19 @@ static void testTheClampReleaseRiseIsCapped()
     check (worstExcess <= 1.0e-6f, "clampRise: the gain never rises by more than (1 + kReleaseRise) a sample (+ the floor term)");
 }
 
+// ---------------------------------------------------------------------------
+// THE PRICE OF HOLDING THE CEILING AT EMISSION, bounded (ADR-0045; DSP_POLICY
+// invariant 8, where it yields to invariant 4). testCeilingIsSmoothed pins the
+// glide in TP-off. In true-peak mode a DOWNWARD retarget lowers the ceilings of
+// the frames already in flight, and a segment reading the next frame to leave
+// constrains samples up to 15 steps ahead — so when the output sits AT the
+// ceiling the first frame emitted after the retarget takes its revised
+// requirement at once: a one-sample drop of about (16 + A/2 + 1) glide steps
+// (A = the clamp's attack) under ADR-0045's reach, instead of one — 0.0185 at
+// 48 kHz for a −1 → −20 dB cut on 0.9 DC held at the ceiling, where TP-off
+// glides at 0.0008 per sample; ~4.9 steps (0.0040) since ADR-0046 narrowed the
+// reach (below). This pins the bound so it cannot grow unseen, and the premise
+// that the case really reaches the revision (the TP-off glide is the control).
 static void testTruePeakModeBoundsTheStepAtACeilingCut()
 {
     for (const double sr : { 44100.0, 48000.0 })
