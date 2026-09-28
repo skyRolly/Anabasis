@@ -2116,7 +2116,8 @@ void AnabasisAudioProcessorEditor::refreshFromModel()
     // stopped sending audio (the stall rule), the window max stays — it is
     // the history the graph itself still draws.
     {
-        const auto r = GrHistoryView::readingFrom (proc.grHistory());
+        const auto r = GrHistoryView::readingFrom (proc.grHistory(),
+                                                   GrHistoryView::plotColumns (grView->getLocalBounds()));
         if (r.taken)
         {
             const double nowMs = tickClockMs();

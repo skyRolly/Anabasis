@@ -12606,104 +12606,223 @@ static void testTheStatisticsPanelResetsOnlyFromItsResetControl()
 
 // ---------------------------------------------------------------------------
 // The numeric limiter GR readout (audit VIS-007 / VIS-003 step 1), on a
-// standalone ring first: "now" is the deepest entry over the last 0.3 s, the
-// max the deepest over the history window, both the brute-force minima of
-// their spans; an empty or cleared timeline reads "nothing measured"; a
-// reading stays live while the producer pushes during the scan, which is what
-// the lap margin is for; the stall rule and the formatter.
-static void testTheGrReadoutReadsTheRingItNames()
+// standalone ring first: "now" is the deepest entry over the last 0.3 s; the
+// max is the deepest entry of the history the GRAPH DRAWS at the reading's
+// head — `[buckets (head, windowEntries, cols).first, head)` on either well,
+// the still-collecting newest bucket included — both the brute-force minima
+// of their spans; an empty or cleared timeline reads "nothing measured"; a
+// scan the producer laps is never published and a scan it pushes into within
+// the margin still is, both pinned with a DETERMINISTIC producer (a ring
+// adaptor that pushes at one chosen peek: no thread, so no premise that
+// depends on the scheduler — valgrind serialises threads); the stall rule and
+// the formatter.
+namespace grReadoutFixture
 {
     using Ring = anabasis::GrHistoryBuffer;
-    using V    = GrHistoryView;
+
+    // Forwards to a real ring; at the scan's peek of absolute index `at` it
+    // first runs the producer for `burst` pushes of `value` — the interleaving
+    // a concurrent producer creates, at an exact entry. `lappedPeeks` counts
+    // peeks that returned a slot the producer had already overwritten.
+    struct PushingRing
     {
-        Ring ring;
-        ring.prepare (48000.0, 512);
-        const auto r = V::readingFrom (ring);
+        Ring&   ring;
+        int64_t at    = -1;
+        int64_t burst = 0;
+        float   value = -40.0f;                         // deeper than the programme: a torn read shows
+        mutable bool    fired       = false;
+        mutable int64_t lappedPeeks = 0;
+        uint32_t       resetEpoch() const noexcept             { return ring.resetEpoch(); }
+        Ring::Prepared prepared()   const noexcept             { return ring.prepared(); }
+        int64_t        available()  const noexcept             { return ring.available(); }
+        bool           batchIntact (uint32_t e) const noexcept { return ring.batchIntact (e); }
+        Ring::Entry peek (int64_t n) const noexcept
+        {
+            if (n == at && ! fired)
+            {
+                fired = true;
+                for (int64_t i = 0; i < burst; ++i)
+                    ring.push (value, 0.1f);
+            }
+            if (ring.available() > n + (int64_t) Ring::kSize)
+                ++lappedPeeks;
+            return ring.peek (n);
+        }
+    };
+
+    inline float programme (int64_t i)                  // 0 … −11.99 dB, a hash of the index
+    {
+        uint32_t x = (uint32_t) i * 2654435761u + 12345u;
+        x ^= x >> 15; x *= 2246822519u; x ^= x >> 13;
+        return -(float) (x % 1200u) / 100.0f;
+    }
+    inline float minOver (int64_t from, int64_t to)
+    {
+        float m = 0.0f;
+        for (int64_t e = juce::jmax ((int64_t) 0, from); e < to; ++e)
+            m = juce::jmin (m, programme (e));
+        return m;
+    }
+    inline void refill (Ring& ring, double rate, int block, int64_t count, int64_t deepAt = -1)
+    {
+        ring.prepare (rate + 1.0, block);               // a changed pair: a clear
+        ring.prepare (rate, block);
+        for (int64_t i = 0; i < count; ++i)
+            ring.push (deepAt < 0 ? programme (i) : (i == deepAt ? -12.0f : 0.0f), 0.1f);
+    }
+}
+
+static void testTheGrReadoutReadsTheRingItNames()
+{
+    using namespace grReadoutFixture;
+    using V = GrHistoryView;
+    constexpr int kSimpleCols = 904, kAdvancedCols = 604;
+    check (V::plotColumns ({ 0, 0, 924, 108 }) == kSimpleCols && V::plotColumns ({ 0, 0, 624, 254 }) == kAdvancedCols,
+           "grReadout: (premise) the Simple and Advanced wells plot 904 and 604 columns");
+    auto ring = std::make_unique<Ring>();               // 2 MiB of slots: heap, as the other ring tests
+    {
+        ring->prepare (48000.0, 512);
+        const auto r = V::readingFrom (*ring, kSimpleCols);
         check (r.taken && r.head == 0 && V::readoutStale (r.head, 0.0, r.period),
                "grReadout: an empty timeline is read, and reads as nothing measured");
     }
     {
-        Ring ring;
-        ring.prepare (48000.0, 512);
+        refill (*ring, 48000.0, 512, 0);
         const int64_t nNow = V::readoutCurrentEntries (48000.0, 512);
         check (nNow == 29, "grReadout: 'now' spans the last 0.3 s - 29 entries at 48 kHz / 512");
-        for (int i = 0; i < 100; ++i) ring.push (0.0f, 0.1f);
-        ring.push (-12.0f, 0.1f);
-        for (int64_t i = 0; i < nNow - 1; ++i) ring.push (0.0f, 0.1f);
-        auto r = V::readingFrom (ring);
+        for (int i = 0; i < 100; ++i) ring->push (0.0f, 0.1f);
+        ring->push (-12.0f, 0.1f);
+        for (int64_t i = 0; i < nNow - 1; ++i) ring->push (0.0f, 0.1f);
+        auto r = V::readingFrom (*ring, kSimpleCols);
         check (r.taken && juce::exactlyEqual (r.currentDb, -12.0f),
                "grReadout: the oldest entry of the 0.3 s span is inside 'now'");
-        ring.push (0.0f, 0.1f);
-        r = V::readingFrom (ring);
+        ring->push (0.0f, 0.1f);
+        r = V::readingFrom (*ring, kSimpleCols);
         check (juce::exactlyEqual (r.currentDb, 0.0f) && juce::exactlyEqual (r.peakDb, -12.0f),
                "grReadout: one entry later it has left 'now' and is still the window max");
-        ring.reset();
-        r = V::readingFrom (ring);
+        ring->reset();
+        r = V::readingFrom (*ring, kSimpleCols);
         check (r.taken && r.head == 0, "grReadout: a cleared ring reads as nothing measured");
     }
+
+    // THE CONTRACT: the max is the deepest entry of what the graph draws. At
+    // every head residue of a bucket, a lone deep entry at the graph's OLDEST
+    // drawn index counts, one index older does not, and the NEWEST entry
+    // (still collecting, not yet drawn, inside 'now') counts. An ordinary
+    // pair, where the graph's lead buckets and alignment reach 9-11 entries
+    // past the 20 s the readout used to stop at, and a SATURATED one, where
+    // the graph reaches up to kSize - 1 entries back and the readout used to
+    // stop kReadoutLapMargin short.
     {
-        Ring ring;
-        ring.prepare (48000.0, 512);
-        const int64_t span = V::readoutSpan (48000.0, 512);
-        const int64_t nNow = V::readoutCurrentEntries (48000.0, 512);
-        std::vector<float> all;
-        uint32_t rng = 7u;
-        bool ok = true;
-        int reads = 0;
-        for (int i = 0; i < 6000; ++i)
-        {
-            rng = rng * 1664525u + 1013904223u;
-            const float g = -(float) ((rng >> 8) % 1200u) / 100.0f;
-            ring.push (g, 0.1f);
-            all.push_back (g);
-            if (i % 97 != 0)
-                continue;
-            const auto    r    = V::readingFrom (ring);
-            const int64_t head = (int64_t) all.size();
-            float pk = 0.0f, cur = 0.0f;
-            for (int64_t e = juce::jmax ((int64_t) 0, head - span); e < head; ++e) pk = juce::jmin (pk, all[(size_t) e]);
-            for (int64_t e = juce::jmax ((int64_t) 0, head - nNow); e < head; ++e) cur = juce::jmin (cur, all[(size_t) e]);
-            ok = ok && r.taken && juce::exactlyEqual (r.peakDb, pk) && juce::exactlyEqual (r.currentDb, cur);
-            ++reads;
-        }
-        check (ok && reads > 50 && span < 6000,
-               "grReadout: 'now' and the max are the exact minima over their spans, past the window's edge too");
-    }
-    {   // A SATURATED pair: the window is the ring's whole safe lap. A scan of
-        // all of it would start one lap behind the head, so ANY push during it
-        // fails the lap check — the readout would never update. The margin
-        // keeps the scan clear of a producer pushing faster than any real one.
-        Ring ring;
-        ring.prepare (384000.0, 16);
-        const int64_t span = V::readoutSpan (384000.0, 16);
-        check (V::windowEntries (384000.0, 16) == (int64_t) Ring::kSize - 1
-                 && span == (int64_t) Ring::kSize - 1 - V::kReadoutLapMargin,
-               "grReadout: (premise) at 384 kHz / 16 the window saturates and the readout keeps its margin");
-        for (int64_t i = 0; i < (int64_t) Ring::kSize + 1000; ++i)
-            ring.push (-3.0f, 0.1f);
-        std::atomic<bool> stop { false };
-        std::thread producer ([&]
-        {
-            while (! stop.load())
+        struct Pair { double rate; int block; };
+        int cases = 0, oldest = 0, outside = 0, newest = 0;
+        for (const auto pr : { Pair { 48000.0, 512 }, Pair { 384000.0, 16 } })
+            for (const int cols : { kSimpleCols, kAdvancedCols })
             {
-                ring.push (-3.0f, 0.1f);
-                std::this_thread::sleep_for (std::chrono::microseconds (20));
+                const int64_t want   = V::windowEntries (pr.rate, pr.block);
+                const int64_t stride = V::buckets (1, want, cols).stride;
+                for (int64_t j = 0; j < stride; j += juce::jmax ((int64_t) 1, stride / 5))
+                {
+                    const int64_t head  = (int64_t) Ring::kSize + 1000 + j;
+                    const int64_t first = V::buckets (head, want, cols).first;
+                    const int64_t at[3] = { first, first - 1, head - 1 };
+                    for (int w = 0; w < 3; ++w)
+                    {
+                        refill (*ring, pr.rate, pr.block, head, at[w]);
+                        const auto r = V::readingFrom (*ring, cols);
+                        const bool counted = r.taken && juce::exactlyEqual (r.peakDb, -12.0f);
+                        ++cases;
+                        if (w == 0 && counted) ++oldest;
+                        if (w == 1 && r.taken && juce::exactlyEqual (r.peakDb, 0.0f)) ++outside;
+                        if (w == 2 && counted && juce::exactlyEqual (r.currentDb, -12.0f)) ++newest;
+                    }
+                }
             }
-        });
-        int taken = 0, moved = 0;
-        int64_t lastHead = -1;
-        for (int k = 0; k < 60; ++k)
+        check (cases == 3 * oldest && oldest == outside && oldest == newest,
+               "grReadout: the max counts the oldest entry the graph draws and the newest pushed, and nothing older, on both wells at 48 kHz / 512 and 384 kHz / 16");
+    }
+    {   // …and as a brute-force minimum, read as the ring fills and scrolls,
+        // across both wells and two other widths.
+        int reads = 0, exact = 0;
+        for (const int cols : { kSimpleCols, kAdvancedCols, 97, 1999 })
         {
-            const auto r = V::readingFrom (ring);
-            if (r.taken) ++taken;
-            if (r.taken && lastHead >= 0 && r.head != lastHead) ++moved;
-            if (r.taken) lastHead = r.head;
+            refill (*ring, 48000.0, 512, 0);
+            const int64_t want = V::windowEntries (48000.0, 512);
+            const int64_t nNow = V::readoutCurrentEntries (48000.0, 512);
+            for (int64_t i = 0; i < want + 3000; ++i)
+            {
+                ring->push (programme (i), 0.1f);
+                if (i % 37 != 0)
+                    continue;
+                const auto r = V::readingFrom (*ring, cols);
+                ++reads;
+                exact += r.taken
+                      && juce::exactlyEqual (r.peakDb, minOver (V::buckets (r.head, want, cols).first, r.head))
+                      && juce::exactlyEqual (r.currentDb, minOver (r.head - nNow, r.head)) ? 1 : 0;
+            }
         }
-        stop.store (true);
-        producer.join();
-        check (moved > 0, "grReadout: (premise) the producer pushed while the readout scanned");
-        check (taken >= 50,
-               "grReadout: at a saturated pair the readout stays live while the producer pushes during its scan");
+        check (reads > 400 && exact == reads,
+               "grReadout: 'now' and the max are the exact minima over their spans at every read, filling and scrolling");
+    }
+
+    // THE LAP DISCIPLINE, deterministic. A burst of pushes lands at a chosen
+    // peek of the scan: at the overhang's first entry (saturated pairs only),
+    // at the guarded span's first entry, mid-scan and at the newest. Sized
+    // around the two thresholds — the pushes each chunk can absorb before its
+    // closing re-read, which for the guarded span at a saturated pair IS
+    // kReadoutLapMargin. Every taken reading must be the exact minimum of the
+    // ORIGINAL programme over its range — a burst writes -40 dB, so a lapped
+    // slot that was published shows — and a lap must actually have been read
+    // (the premise that keeps this from passing vacuously).
+    {
+        struct Pair { double rate; int block; };
+        int cases = 0, lappedRead = 0, lappedTaken = 0, inexact = 0, liveUnderPushes = 0;
+        bool guardedBinds = true, overhangBinds = true, sawOverhang = false, marginIsTheSlack = false;
+        for (const auto pr : { Pair { 384000.0, 16 }, Pair { 48000.0, 512 } })
+            for (const int cols : { kSimpleCols, kAdvancedCols })
+            {
+                const int64_t head    = (int64_t) Ring::kSize + 777;
+                const int64_t first   = V::readoutFirst (head, pr.rate, pr.block, cols);
+                const int64_t guarded = juce::jmax (first, head - V::kReadoutGuardedSpan);
+                const int64_t oSlack  = (int64_t) Ring::kSize - 1 - (head - first);     // pushes the overhang absorbs
+                const int64_t gSlack  = (int64_t) Ring::kSize - 1 - (head - guarded);   // …and the guarded span
+                const int64_t nNow    = V::readoutCurrentEntries (pr.rate, pr.block);
+                sawOverhang      = sawOverhang || guarded > first;
+                marginIsTheSlack = marginIsTheSlack || (guarded > first && gSlack == V::kReadoutLapMargin);
+                for (const int64_t at : { first, guarded, (guarded + head) / 2, head - 1 })
+                    for (const int64_t burst : { (int64_t) 1, oSlack, oSlack + 1, oSlack + 2, gSlack, gSlack + 1,
+                                                 (int64_t) Ring::kSize })
+                    {
+                        if (burst < 1)
+                            continue;
+                        refill (*ring, pr.rate, pr.block, head);
+                        PushingRing lapping { *ring, at, burst };
+                        const auto r = V::readingFrom (lapping, cols);
+                        ++cases;
+                        lappedRead += lapping.lappedPeeks > 0 ? 1 : 0;
+                        if (r.taken)
+                        {
+                            lappedTaken     += lapping.lappedPeeks > 0 ? 1 : 0;
+                            liveUnderPushes += 1;
+                            inexact += r.head == head
+                                         && juce::exactlyEqual (r.peakDb, minOver (first, head))
+                                         && juce::exactlyEqual (r.currentDb, minOver (head - nNow, head)) ? 0 : 1;
+                        }
+                        if (at == guarded && ((burst == gSlack && ! r.taken) || (burst == gSlack + 1 && r.taken)))
+                            guardedBinds = false;
+                        if (guarded > first && at == first
+                            && ((burst == oSlack && oSlack >= 1 && ! r.taken) || (burst == oSlack + 1 && r.taken)))
+                            overhangBinds = false;
+                    }
+            }
+        check (sawOverhang && lappedRead > 0,
+               "grReadout: (premise) a saturated pair has an overhang, and a burst made the scan read an overwritten slot");
+        check (lappedTaken == 0 && inexact == 0,
+               "grReadout: a scan the producer lapped is never published; every taken reading is exact");
+        check (liveUnderPushes > 0 && guardedBinds && marginIsTheSlack,
+               "grReadout: the readout stays live with as many pushes during its scan as its range leaves room for - kReadoutLapMargin at a saturated pair - and not one more");
+        check (overhangBinds, "grReadout: the overhang is certified against its own slack, at the saturated pair");
+        juce::ignoreUnused (cases);
     }
     const double p512 = 512.0 / 48000.0, p16k = 16384.0 / 48000.0;
     check (! V::readoutStale (10, 400.0, p512) && V::readoutStale (10, 600.0, p512)
@@ -12808,6 +12927,102 @@ static void testTheTickShowsTheLimiterGrReadout()
            "grReadoutTick: Advanced shows it in the LIMITER panel, under its GR lane");
 }
 
+// The tick's MAX is the deepest entry the GR graph DRAWS in the current layout
+// — from the oldest drawn bucket's own first entry, the lead buckets that reach
+// past the nominal 20 s included — and stays so with the SPECTRUM showing (the
+// GR view hidden, its bounds kept by both layouts) and in Advanced. One burst
+// is aged until it is the graph's oldest drawn entry; 0.37 s blocks and a
+// 10 ms release keep every entry of the nominal window clear of its tail, so
+// the case separates the two ranges (premise). Written against API that
+// predates the fix, so it compiles, and fails, on the code it replaces.
+static void testTheTickMaxIsTheDeepestEntryTheGraphDraws()
+{
+    using V = GrHistoryView;
+    double fakeNow = 1.0e6;
+    AnabasisAudioProcessor proc;
+    proc.setRateAndBufferSizeDetails (44100.0, 16384);
+    proc.prepareToPlay (44100.0, 16384);
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "grMaxDrawn");
+    if (ed == nullptr)
+        return;
+    ed->setClockForTest ([&fakeNow] { return fakeNow; });
+    auto* maxV = dynamic_cast<juce::Label*> (ed->findChildWithID ("grMaxValue"));
+    auto* grV  = findFirstChildOfType<GrHistoryView> (*ed);
+    check (maxV != nullptr && grV != nullptr, "grMaxDrawn: (premise) the max label and the GR view were found");
+    if (maxV == nullptr || grV == nullptr)
+        return;
+    auto set = [&proc] (const char* id, float denorm)
+    {
+        auto* par = proc.apvts.getParameter (id);
+        par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (denorm));
+    };
+    proc.apvts.getParameter (pid::loudness)->setValueNotifyingHost (0.0f);
+    proc.getMacroEngine().flushPendingMapping();
+    set (pid::compThreshold, 0.0f);
+    set (pid::limGain, 12.0f);
+    set (pid::limRelease, 10.0f);
+    proc.apvts.getParameter (pid::limAutoRelease)->setValueNotifyingHost (0.0f);
+
+    const auto& ring = proc.grHistory();
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 16384);
+    long t = 0;
+    auto block = [&] (int loudSamples)
+    {
+        for (int n = 0; n < 16384; ++n, ++t)
+        {
+            const float amp = n < loudSamples ? 0.9f : 0.001f;
+            const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi * 1000.0f * (float) t / 44100.0f);
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+    };
+    const int64_t want = V::windowEntries (44100.0, 16384);
+    auto drawnFirst = [&] (int64_t head)
+    {
+        const int cols = juce::jmax (1, (int) grV->getLocalBounds().toFloat().reduced (10.0f, 8.0f).getWidth());
+        return V::buckets (head, want, cols).first;
+    };
+    auto minOver = [&ring] (int64_t from, int64_t to)
+    {
+        float m = 0.0f;
+        for (int64_t e = juce::jmax ((int64_t) 0, from); e < to; ++e)
+            m = juce::jmin (m, ring.peek (e).grDb);
+        return m;
+    };
+    for (int b = 0; b < 4; ++b)
+        block (0);
+    block (4096);                                        // the burst: the first 93 ms of one block
+    const int64_t burst = ring.available() - 1;
+    while (drawnFirst (ring.available()) < burst)
+        block (0);
+    const int64_t head    = ring.available();
+    const float   drawn   = minOver (drawnFirst (head), head);
+    const float   nominal = minOver (head - want, head);
+    check (drawnFirst (head) == burst && burst < head - want && drawn < -3.0f
+             && V::grText (drawn) != V::grText (nominal),
+           "grMaxDrawn: (premise) the burst is the graph's oldest drawn entry, older than the nominal "
+           "window and deeper than all of it");
+
+    auto& tree = proc.internalState.state();
+    for (const bool spectrum : { false, true })
+    {
+        tree.setProperty (iid::spectrumOn, spectrum, nullptr);
+        fakeNow += 30.0;
+        ed->refreshFromModel();
+        check (grV->isVisible() == ! spectrum && maxV->getText() == V::grText (drawn),
+               spectrum ? "grMaxDrawn: with the SPECTRUM showing, the max is still the deepest entry the GR graph draws"
+                        : "grMaxDrawn: the max is the deepest entry the GR graph draws, past the nominal 20 s");
+    }
+    proc.apvts.getParameter (pid::advancedMode)->setValueNotifyingHost (1.0f);
+    fakeNow += 30.0;
+    ed->refreshFromModel();
+    check (maxV->getText() == V::grText (minOver (drawnFirst (head), head)),
+           "grMaxDrawn: Advanced reads the deepest entry of ITS graph's drawn history");
+}
+
 int main (int argc, char** argv)
 {
     // Unbuffered stdout: CI pipes are fully buffered, so a crash mid-suite
@@ -12876,6 +13091,7 @@ int main (int argc, char** argv)
         testTheTooltipSwitchGatesEveryTip();
         testTheGrReadoutReadsTheRingItNames();
         testTheTickShowsTheLimiterGrReadout();
+        testTheTickMaxIsTheDeepestEntryTheGraphDraws();
         testAValueBoxClickIsNotAMacroGesture();
         testTheSettingsCallbacksReachTheLiveTree();
         testAFactoryApplyWritesEachParameterOnce();
