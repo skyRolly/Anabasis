@@ -12671,7 +12671,7 @@ static void testResetRightAfterALoudPassageKeepsTheOldPeakOut()
         proc.prepareToPlay (48000.0, 512);
         juce::MidiBuffer midi;
         juce::AudioBuffer<float> buf (2, 512);
-        const int64_t resetAt = 188 * 512;
+        const int64_t resetAt = (int64_t) 188 * 512;
         const int64_t lat     = proc.getLatencySamples();
         auto run = [&] (int64_t from, int blocks)
         {

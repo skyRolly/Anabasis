@@ -3387,9 +3387,9 @@ static void testAForceMaxEntryStartsTheRenderClean()
                     fresh.rng  = 0x1234567u;
                     tpceiling::Bounce b;
                     juce::AudioBuffer<float> buf (2, 512);
-                    const long entry = 88 * 512;                   // ~1 s of realtime playback
+                    const long entry = 88L * 512;                   // ~1 s of realtime playback
                     float tap = 0.0f, hold = 0.0f, preTap = 0.0f;
-                    for (long n = 0; n < entry + 40 * 512; n += 512)
+                    for (long n = 0; n < entry + 40L * 512; n += 512)
                     {
                         const bool offline = n >= entry;
                         if (offline && b.offlineAt < 0)
@@ -3445,6 +3445,50 @@ static void testAForceMaxEntryStartsTheRenderClean()
            "forceMaxEntry: …and neither does the session dBTP hold");
     check (worstFile.meterDb <= 0.1f && worstFile.annex2Db <= 0.1f,
            "forceMaxEntry: the render read as a file holds the ceiling on both defining meters");
+
+    // …AND ON THE BYPASS LEG (the review of this round). A render bypassed
+    // from its first sample plays the dry ring, which the latch did not clear:
+    // the realtime input came out of it for the whole latency window (−2 dBFS
+    // measured, the same on 0.2.15). TP off and on; silence after the entry.
+    float worstBypassOld = 0.0f, bypassPremise = 0.0f;
+    for (const double sr : { 44100.0, 48000.0 })
+        for (const bool tp : { false, true })
+        {
+            anabasis::AnabasisEngine engine;
+            engine.prepare (sr, 512, 2);
+            anabasis::EngineParameters p;
+            p.truePeakMode    = tp;
+            p.forceMaxOffline = true;
+            p.bypass          = true;
+            tpceiling::Programme old;
+            old.kind = 1;
+            old.sr   = sr;
+            juce::AudioBuffer<float> buf (2, 512);
+            const long entry = 88L * 512;
+            for (long n = 0; n < entry + 8L * 512; n += 512)
+            {
+                const bool offline = n >= entry;
+                p.nonRealtime = offline;                           // no prepare: the flip alone
+                for (int i = 0; i < 512; ++i)
+                {
+                    float l = 0.0f, r = 0.0f;
+                    if (! offline)
+                        old.frame (l, r);
+                    buf.setSample (0, i, l);
+                    buf.setSample (1, i, r);
+                }
+                engine.process (buf, p);
+                for (int i = 0; i < 512; ++i)
+                {
+                    const float m = juce::jmax (std::abs (buf.getSample (0, i)), std::abs (buf.getSample (1, i)));
+                    (offline ? worstBypassOld : bypassPremise) = juce::jmax (offline ? worstBypassOld : bypassPremise, m);
+                }
+            }
+        }
+    check (bypassPremise > 0.1f,
+           "forceMaxEntry: (premise) the bypassed realtime playback is audible before the entry");
+    check (juce::exactlyEqual (worstBypassOld, 0.0f),
+           "forceMaxEntry: …and nothing of it reaches a bypassed Force Max render entered without a re-prepare");
 }
 
 
@@ -3751,6 +3795,145 @@ static void testTruePeakModeHoldsTheCeilingUnderAutomation()
 // −1 → −20 dB cut on 0.9 DC held at the ceiling, where TP-off glides at 0.0008
 // per sample. This pins the bound so it cannot grow unseen, and the premise
 // that the case really reaches the revision (the TP-off glide is the control).
+// AN ASCENT ANSWERS TO THE ENTRY CEILING (ADR-0046 decision 4). In TP mode a
+// frame is stamped with min(ceiling at entry, ceiling predicted at emission),
+// so while the Ceiling RISES the frames in flight keep the lower, entry-time
+// value and the output follows the ascent clampDelay samples late — under the
+// live ceiling, never over — where emission-only stamping would track it with
+// no lag (and let a reversal mid-ascent pull the stamps down by both slopes:
+// +0.30 dB at 48 kHz at clamp level on 0.2.15). Pinned at the engine, where the
+// limiter plays to the same value: 0.9 DC pushed into the ceiling, −20 → −1 dB.
+static void testTruePeakModeLagsAnAscentByTheEntryCeiling()
+{
+    for (const double sr : { 44100.0, 48000.0 })
+    {
+        std::vector<float> out[2];
+        size_t riseAt = 0;
+        int D = 0;
+        for (const bool tp : { false, true })
+        {
+            anabasis::AnabasisEngine engine;
+            const int block = 256;
+            engine.prepare (sr, block, 2);
+            anabasis::EngineParameters p;
+            p.truePeakMode      = tp;
+            p.ceilingDbTp       = -20.0f;
+            p.limGainDb         = 6.0f;
+            p.limStyle          = 1;
+            p.transientPreserve = 1.0f;
+            p.limAutoRelease    = false;                  // a 1 ms release, so the limiter
+            p.limReleaseMs      = 1.0f;                   // follows a 20 ms rise and the stamp shows
+            p.compRatio         = 1.0f;
+            p.compThresholdDb   = 0.0f;
+            p.clipDriveDb       = 0.0f;
+            p.dynTiltDb         = 0.0f;
+            juce::AudioBuffer<float> buf (2, block);
+            for (int b = 0; b < 44; ++b)
+            {
+                if (b == 30)
+                {
+                    p.ceilingDbTp = -1.0f;               // an instant, full-range RISE
+                    riseAt = out[tp ? 1 : 0].size();
+                }
+                for (int n = 0; n < block; ++n)
+                {
+                    buf.setSample (0, n, 0.9f);
+                    buf.setSample (1, n, 0.9f);
+                }
+                engine.process (buf, p);
+                for (int n = 0; n < block; ++n)
+                    out[tp ? 1 : 0].push_back (buf.getSample (0, n));
+            }
+            if (tp)
+                D = anabasis::CeilingClamp::truePeakDelayFor (sr);
+        }
+        const size_t R = (size_t) std::floor (anabasis::AnabasisEngine::kCeilingGlideSeconds * sr);
+        const double glideStep = (juce::Decibels::decibelsToGain (-1.0) - juce::Decibels::decibelsToGain (-20.0)) / (double) R;
+        check (std::abs (out[0][riseAt - 1] - juce::Decibels::decibelsToGain (-20.0f)) < 0.002f
+                 && std::abs (out[0].back() - juce::Decibels::decibelsToGain (-1.0f)) < 0.002f,
+               "tpAscent: (premise) TP off holds the DC at the ceiling before and after the rise");
+        int lagging = 0, span = 0;
+        float over = -1.0f;
+        for (size_t n = riseAt + (size_t) D; n + (size_t) D < riseAt + R; ++n)
+        {
+            ++span;
+            if (out[0][n] - out[1][n] > 0.5 * D * glideStep)
+                ++lagging;
+        }
+        for (size_t n = riseAt; n < out[1].size(); ++n)
+            over = juce::jmax (over, out[1][n] - out[0][n]);
+        check (lagging > span * 9 / 10,
+               "tpAscent: in TP mode the output rises clampDelay samples behind the live ceiling (the entry-time stamp)");
+        check (over <= 1.0e-4f, "tpAscent: …and never above what TP off holds at the same sample (the live ceiling)");
+        if (lagging <= span * 9 / 10 || over > 1.0e-4f)
+            std::printf ("       tpAscent: %.0f Hz: %d of %d samples lag, worst over %+.6f\n", sr, lagging, span, (double) over);
+    }
+}
+
+// THE CLAMP'S GAIN STAYS IN [0, 1], AND AN ASTRONOMICAL INPUT IS SILENCED —
+// not clipped to a full-scale sample of either sign (the review of this round:
+// at attack lengths whose float weights summed to just over 1 the gain went
+// to −1.2e-7, and just under 1 it stayed at ~6e-8; both clipped a 1e30 input
+// to the ceiling, where 0.2.15's boxcar gave exactly 0). Every rate whose
+// attack length differs, 44.1 kHz to 768 kHz.
+static void testTheClampSilencesAnAstronomicalInput()
+{
+    bool gainInRange = true, silent = true;
+    for (const double sr : { 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0, 352800.0, 384000.0, 705600.0, 768000.0 })
+        for (const float amp : { 1.0e9f, 1.0e30f })
+        {
+            anabasis::CeilingClamp clamp;
+            clamp.prepare (sr);
+            const float ceiling = juce::Decibels::decibelsToGain (-1.0f);
+            for (int n = 0; n < 600 + clamp.truePeakDelay(); ++n)
+            {
+                const float x = n >= 200 && n < 456 ? ((n & 1) != 0 ? amp : -amp) : 0.0f;
+                float fr[2] = { x, -x };
+                clamp.processFrameTruePeak (fr, 2, ceiling);
+                const float g = clamp.currentGain();
+                gainInRange = gainInRange && g >= 0.0f && g <= 1.0f;
+                if (amp > 1.0e20f)          // far past float's gain resolution: exactly 0 or it clips
+                    silent = silent && juce::exactlyEqual (fr[0], 0.0f) && juce::exactlyEqual (fr[1], 0.0f);
+            }
+        }
+    check (gainInRange, "clampAstro: the clamp's linked gain never leaves [0, 1], at every attack length");
+    check (silent, "clampAstro: a 1e30 burst comes out as silence, not as a clipped full-scale sample");
+}
+
+// THE RELEASE RISES AT MOST 1 % A SAMPLE (ADR-0046 decision 2, kReleaseRise).
+// After a deep reduction the 10 ms one-pole alone would raise the gain far
+// faster in relative terms ((1 − β)(1 − g)/g — 19 % a sample at g = 0.01, 48
+// kHz); the cap holds g[k] ≤ (1 + μ)·g[k−1] + μ·φ. Premise: it binds.
+static void testTheClampReleaseRiseIsCapped()
+{
+    const double sr = 48000.0;
+    anabasis::CeilingClamp clamp;
+    clamp.prepare (sr);
+    const float ceiling = juce::Decibels::decibelsToGain (-1.0f);
+    const float mu = anabasis::CeilingClamp::kReleaseRise, phi = anabasis::CeilingClamp::kRiseFloor;
+    float prev = 1.0f, worstExcess = -1.0f, lowest = 1.0f;
+    int binding = 0;
+    for (int n = 0; n < 6000; ++n)
+    {
+        const float x = n >= 200 && n < 264 ? ((n & 1) != 0 ? 40.0f : -40.0f) : 0.01f;   // −32 dB deep, then quiet
+        float fr[2] = { x, x };
+        clamp.processFrameTruePeak (fr, 2, ceiling);
+        const float g = clamp.currentGain();
+        lowest = juce::jmin (lowest, g);
+        if (g > prev)
+        {
+            const float cap = (1.0f + mu) * prev + mu * phi;
+            worstExcess = juce::jmax (worstExcess, g - cap);
+            if (g > (1.0f + 0.9f * mu) * prev)
+                ++binding;
+        }
+        prev = g;
+    }
+    check (lowest < 0.05f, "clampRise: (premise) the burst takes the gain deep");
+    check (binding > 50, "clampRise: (premise) the rise runs at the cap for a stretch (the one-pole would be faster)");
+    check (worstExcess <= 1.0e-6f, "clampRise: the gain never rises by more than (1 + kReleaseRise) a sample (+ the floor term)");
+}
+
 static void testTruePeakModeBoundsTheStepAtACeilingCut()
 {
     for (const double sr : { 44100.0, 48000.0 })
@@ -6692,7 +6875,7 @@ static void testStatisticsResetStartsTheSessionAtTheReset()
     for (int tp = 0; tp < 2; ++tp)
         for (int B : { 7, 64, 512 })
         {
-            const long long R = (96000 / B + 1) * B;
+            const long long R = (96000LL / B + 1) * B;
             const Run r   = drive (sr, B, tp != 0, -1.0f, 12.0f, R, 16 * 512, fs4, false, true);
             const Run ref = drive (sr, B, tp != 0, -1.0f, 12.0f, R, 16 * 512, fs4, false, false);
             check (r.postTp <= ref.renderAll,
@@ -6736,6 +6919,35 @@ static void testStatisticsResetStartsTheSessionAtTheReset()
                "statsReset (loudness): 2 s of silence after a reset have no integrated reading (K-weighting ring-out)");
         check (r.lufsIUng <= -120.0f, "statsReset (loudness): …and the ungated mean sits on the energy floor");
     }
+
+    // 6. The slowest ring-out the review of this round found: DC at 0.99 cut
+    //    half a sub-block before a boundary (the smallest gap a 50 ms guard
+    //    admitted), on the meter itself — the ungated mean read −115.5 LUFS
+    //    after 2 s of silence there. Odd sub-block lengths included (22.05 kHz).
+    float worstUngated = -1000.0f, worstIntegrated = -1000.0f;
+    for (const double rate : { 22050.0, 48000.0, 96000.0 })
+    {
+        const int L = (int) std::lround (0.1 * rate);
+        for (const int fill : { L / 2 - 1, L / 2, L / 2 + 1 })
+        {
+            anabasis::LoudnessMeter m;
+            m.prepare (rate);
+            const long cut = (long) (2 * rate) / L * L + fill;
+            for (long n = 0; n < cut + (long) (2.0 * rate); ++n)
+            {
+                if (n == cut)
+                    m.resetIntegrated();
+                float fr[2] = { n < cut ? 0.99f : 0.0f, n < cut ? 0.99f : 0.0f };
+                m.processFrame (fr, 2);
+            }
+            worstUngated    = juce::jmax (worstUngated, m.integratedUngatedLufs());
+            worstIntegrated = juce::jmax (worstIntegrated, m.integratedLufs());
+        }
+    }
+    check (juce::exactlyEqual (worstIntegrated, anabasis::LoudnessMeter::kSilentLufs),
+           "statsReset (loudness): DC cut at a reset leaves no integrated reading at any sub-block phase");
+    check (worstUngated <= -120.0f,
+           "statsReset (loudness): …and no ungated energy either (the guard is a whole sub-block)");
 }
 
 // ---------------------------------------------------------------------------
@@ -9144,6 +9356,9 @@ int main()
     testAForceMaxEntryStartsTheRenderClean();
     testTruePeakModeHoldsTheCeilingUnderAutomation();
     testTruePeakModeBoundsTheStepAtACeilingCut();
+    testTruePeakModeLagsAnAscentByTheEntryCeiling();
+    testTheClampSilencesAnAstronomicalInput();
+    testTheClampReleaseRiseIsCapped();
     testTruePeakModeHoldsTheCeilingBelow44k();
     testTruePeakModeCapsTheWindowNotTheLatency();
     testDuckWrapsTruePeakLatch();

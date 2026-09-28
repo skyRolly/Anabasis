@@ -651,7 +651,7 @@ worklog's C8 row accounts for RESET's tooltip ("the existing panel tooltip's own
 this clause; `docs/reports/2026-09-27-phase1-roadmap.md` §3 and `HANDOVER.md`'s 0.2.14 Pending
 Tasks row do not list it.
 
-**Intended meaning** (what any wording has to be true to — `src/dsp/AnabasisEngine.cpp:1516`,
+**Intended meaning** (what any wording has to be true to — `src/dsp/AnabasisEngine.cpp:1524`,
 `sessionOpen = bypassMix <= 0 || p.nonRealtime`): while any part of BYPASS is audible in realtime
 processing, the integrated reading (gated and ungated), LRA, the TP and SP holds — and so PLR — and
 the header's session time do not advance; M, S and RMS still follow what plays; an offline render

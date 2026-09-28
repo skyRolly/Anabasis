@@ -527,11 +527,19 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         // the ceiling in the session hold for a render whose file has none).
         // Both restart here, as prepare() restarts them; an entry that does
         // not latch keeps the continuous stream, exactly as before (KI-004).
+        // So does the DRY ring, the bypass leg's line: the latch clears the
+        // wet ring only, and a render bypassed from its first sample played
+        // the realtime input out of it for the whole latency window (−2 dBFS,
+        // measured; the same on 0.2.15 — the review of this round). With
+        // BYPASS off the dry leg is not in the render, so nothing else moves.
         const bool entryEmptiesPipeline = enteringOffline && latchWanted;
         if (latchWanted)
             latchOsConfig (wantIdx, wantPh, wantTpClamp);
         if (entryEmptiesPipeline)
+        {
             eq.resetState();
+            dryRing.clear();
+        }
         if (wantEq != appliedEqPos)
         {
             // Paired with the position change on THIS branch too, exactly as

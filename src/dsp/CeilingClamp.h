@@ -3,6 +3,7 @@
 #include "ClampTruePeakDetector.h"
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <vector>
 
 // ============================================================================
@@ -69,10 +70,12 @@
 //    m[k]  = min(q[k .. k+A−1])        — forward minimum over the attack;
 //    ga[k] = Σ w_a·m[k−a], a = 0..A−1 — the attack ramp, a weighted mean
 //            with w_a ∝ e^(λ·a), λ = 4.8/A (the OLDEST term weighs most), so
-//            ga[k] ≤ q[k] because every term's window contains k;
-//    g[k]  = 1 − max(1 − ga[k], β·(1 − g[k−1]), 1 − (1 + μ)·g[k−1])
+//            ga[k] ≤ q[k] because every term's window contains k (computed
+//            as 1 − Σ w_a·(1 − m) / Σ w_a, on the reductions);
+//    g[k]  = 1 − max(1 − ga[k], β·(1 − g[k−1]), 1 − (1 + μ)·g[k−1] − μ·φ)
 //            — a one-pole release that can only ever hold the gain LOWER than
-//            the attack asks for, and may raise it by at most (1 + μ) a sample;
+//            the attack asks for, and may raise it by at most a factor (1 + μ)
+//            a sample plus μ·φ (φ = kRiseFloor, so a gain at 0 can recover);
 //    out   = clip(x[k]·g[k], ±ceil_k),  k = n − truePeakDelay.
 //
 //  WHY THE RAMP'S SHAPE IS THE GUARANTEE (KNOWN_ISSUES KI-025). The
@@ -90,7 +93,7 @@
 //  the ramp may steepen there. A LINEAR ramp (the 0.2.15 boxcar, A = 8) puts
 //  its steepest slope at the top and read up to +0.39 dB (Annex 2) in the
 //  bound below for a 6 dB-deep requirement; the geometric weights start the
-//  ramp at ~0.25 % of its depth per sample and keep the steep part where the
+//  ramp at ~0.3 % of its depth per sample (at A = 16) and keep the steep part where the
 //  headroom is. Maximised over every input consistent with the requirements
 //  (a linear programme over the 7 defining phases, the accurate kernel's
 //  quarter phases and the sample, the law's gain profile given), a single
@@ -141,9 +144,10 @@
 //
 //  NON-FINITE: the engine's stage-E boundary sanitises every value before it
 //  reaches this stage. A finite but astronomical input can overflow the
-//  estimate: +inf gives r = 0 (the samples are silenced for the window, and
-//  the gain then climbs back under the release's rise cap from its −80 dB
-//  floor, ~920 samples to unity), NaN
+//  estimate: +inf gives r = 0 (the samples are silenced for the window —
+//  the gain is exactly 0 there, the attack's reduction being exactly 1 —
+//  and the gain then climbs back from 0 under the release's rise cap: ~1000
+//  samples to half gain at 48 kHz, ~7300 to exactly 1), NaN
 //  fails the `tp > ceil` test and leaves the requirement at 1, and the
 //  backstop bounds the sample either way — so no finite input produces a
 //  non-finite output, and the only recursive value, the reduction, is a max
@@ -172,7 +176,7 @@ public:
     // The attack ramp is the forward minimum averaged with weights that grow
     // geometrically with age (w ∝ e^(λ·age), λ·A = kEaseSpan), not a boxcar:
     // the ramp leaves the level it starts from with a first step of
-    // ~e^(−kEaseSpan)·λ ≈ 0.25 % of its depth and reaches the deeper level
+    // ~0.3 % of its depth at A = 16 (0.18 % at 24, 0.09 % at 48) and reaches the deeper level
     // with its steepest steps, where every segment reading them sits well under
     // its own requirement. The release may raise the gain by at most a factor
     // (1 + kReleaseRise) per sample, so a release that runs into a later,
@@ -255,6 +259,12 @@ public:
                 total += std::exp (lambda * (double) a);
             for (int a = 0; a < attack; ++a)
                 easeWeight[(size_t) a] = (float) (std::exp (lambda * (double) a) / total);
+            // …and their sum AS FLOATS, accumulated in the frame loop's order
+            // (oldest first), so a window of minima at 0 divides out to
+            // exactly 1 — see processFrameTruePeak.
+            easeTotal = 0.0f;
+            for (int a = attack - 1; a >= 0; --a)
+                easeTotal += easeWeight[(size_t) a];
         }
         // A revision rebuilds m for the last A steps, which reads q over
         // 2A − 1 steps, which reads r over 2A + 30 segments.
@@ -379,6 +389,19 @@ public:
                     if (++s == attack)
                         s = 0;
                 }
+                // The weights are normalised in double and stored as float,
+                // so their float sum is 1 only to within a few ulps (over it
+                // at A = 22, 96, 192 …, under it at others). A window of
+                // forward minima at ~0 — an astronomical input, the NON-FINITE
+                // note — then asked for a reduction just over 1, a NEGATIVE
+                // gain the backstop clipped to a sign-inverted full-scale
+                // sample, or just under 1, a gain of ~6e-8 that still clipped
+                // to the ceiling — where 0.2.15's boxcar gave exactly 0 (the
+                // review of this round). Dividing by the same float sum,
+                // accumulated in this loop's order, makes that window exactly
+                // 1 (and a window of ones is still exactly 0); the bound is
+                // kept explicit.
+                attackReduction = truepeak::min2 (attackReduction / easeTotal, 1.0f);
             }
         }
         // The release runs on the REDUCTION (1 − g), not on the gain. Near
@@ -606,6 +629,7 @@ private:
     ClampTruePeakDetector estimator;
     std::vector<float> audio[kMaxChannels];
     std::vector<float> ceilings, requirement, need, forwardMin, easeWeight;
+    float easeTotal = 1.0f;                            // Σ easeWeight as floats, loop order
     std::vector<float> segPeak, segReq, segReqEntry;   // per segment, newest at histPos − 1
     std::vector<float> scratchA, scratchB, scratchC, scratchQ, scratchE;   // lowerInFlightCeilings
     int   attack = kMinAttackSamples, delay = kMinAttackSamples + kRequirementLead - 1;
