@@ -3030,6 +3030,309 @@ static void testTruePeakEngagementHoldsTheCeiling()
 }
 
 // ---------------------------------------------------------------------------
+// ENTERING OFFLINE during a TP engagement's decay (the PR #42 review of 0.2.14,
+// ADR-0041 decision 5). The offline-entry branch is a render start: it adopts
+// the configuration directly and forces the §2.8 duck to idle at unity. The
+// decay (EngagementTail) stands in for the duck's out-leg, and it used to
+// survive that branch — so the last REALTIME frame's decay played into the
+// head of the bounce, summed onto the unducked processed path (up to +1.46 dB
+// over the ceiling with the Post-EQ ring-out it met there).
+//
+// The route: a host that flips `nonRealtime` without re-preparing, within
+// ~6 ms of a mid-playback TP engagement. What is exact on it and what is not:
+//   • silent input after the toggle, EQ flat — the latch emptied the ring and
+//     the duck is at the bottom, so in the toggle block ONLY the decay can be
+//     non-zero, and after the entry NOTHING can be: asserted exactly;
+//   • the ceiling of the render read as a FILE (fresh meters from its first
+//     sample), on both defining meters, and on the engine's own dBTP tap;
+//   • the render's reported-latency window against a freshly prepared,
+//     offline-from-the-start engine: bit-identical. Past it, state this route
+//     keeps by design (compressor detectors, EQ biquads, the adaptive vector —
+//     KNOWN_ISSUES KI-004) moves the two apart, so that span is not asserted;
+//   • TP off: the offline flip is transparent (the ring's realtime content is
+//     the documented no-re-prepare behaviour), and a clean offline start holds
+//     the ceiling.
+namespace tpceiling
+{
+struct Bounce
+{
+    std::vector<float> l, r;
+    long  toggleAt = -1, offlineAt = -1;
+    int   latency = 0;
+    float engineTpOffline = 0.0f;     // max of the engine's own dBTP tap over the offline calls
+};
+
+// 0.25 s of TP-off programme; one TOGGLE block of `toggleBlock` samples that
+// sets truePeakMode = `engage`, fed programme or silence; `nonRealtime` on the
+// NEXT block with no prepare, fed a new programme (`offlineKind` >= 0) or
+// silence. `stayRealtime` renders the identical sequence without the flip.
+inline Bounce engageThenBounce (double sr, int block, int toggleBlock, bool engage, bool silentToggle,
+                                int offlineKind, const Point& pt, float postShelfDb, bool freeze,
+                                long post, bool stayRealtime = false, int oldKind = 1)
+{
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, block, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode      = false;
+    p.limGainDb         = pt.limGainDb;
+    p.compThresholdDb   = pt.compThresholdDb;
+    p.compRatio         = pt.compRatio;
+    p.clipDriveDb       = pt.clipDriveDb;
+    p.clipShape         = pt.clipShape;
+    p.dynTiltDb         = pt.dynTiltDb;
+    p.limStyle          = pt.style;
+    p.transientPreserve = pt.transientPreserve;
+    p.ceilingDbTp       = pt.ceilingDb;
+    p.freeze            = freeze;
+    if (! juce::exactlyEqual (postShelfDb, 0.0f))
+    {
+        p.eqPosition        = 1;
+        p.eqHighShelfGainDb = postShelfDb;
+    }
+    Programme old;
+    old.kind = oldKind;
+    old.sr   = sr;
+    Programme fresh;
+    fresh.kind = juce::jmax (0, offlineKind);
+    fresh.sr   = sr;
+    fresh.rng  = 0x1234567u;
+    Bounce b;
+    juce::AudioBuffer<float> buf (2, block);
+    const long pre = (long) (0.25 * sr);
+    long n = 0;
+    while (b.offlineAt < 0 || n < b.offlineAt + post)
+    {
+        int len = block;
+        const bool toggleNow = b.toggleAt < 0 && n >= pre;
+        if (toggleNow)
+        {
+            b.toggleAt     = n;
+            len            = toggleBlock;
+            p.truePeakMode = engage;
+        }
+        else if (b.toggleAt >= 0 && b.offlineAt < 0)
+        {
+            b.offlineAt   = n;
+            p.nonRealtime = ! stayRealtime;
+        }
+        for (int i = 0; i < len; ++i)
+        {
+            float l = 0.0f, r = 0.0f;
+            if (b.toggleAt < 0 || (toggleNow && ! silentToggle))
+                old.frame (l, r);
+            else if (b.offlineAt >= 0 && offlineKind >= 0)
+                fresh.frame (l, r);
+            buf.setSample (0, i, l);
+            buf.setSample (1, i, r);
+        }
+        juce::AudioBuffer<float> view (buf.getArrayOfWritePointers(), 2, len);
+        engine.process (view, p);
+        if (b.offlineAt >= 0)
+            b.engineTpOffline = juce::jmax (b.engineTpOffline, engine.lastRenderTpMax());
+        for (int i = 0; i < len; ++i)
+        {
+            b.l.push_back (buf.getSample (0, i));
+            b.r.push_back (buf.getSample (1, i));
+        }
+        n += len;
+    }
+    b.latency = anabasis::predictLatencySamples (p, sr);
+    return b;
+}
+
+// The CLEAN offline start: a freshly prepared engine, offline and in TP mode
+// from its first block, the same parameters and the same new programme.
+inline Bounce cleanBounce (double sr, int block, int offlineKind, const Point& pt, float postShelfDb,
+                           bool freeze, long post)
+{
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, block, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode      = true;
+    p.nonRealtime       = true;
+    p.limGainDb         = pt.limGainDb;
+    p.compThresholdDb   = pt.compThresholdDb;
+    p.compRatio         = pt.compRatio;
+    p.clipDriveDb       = pt.clipDriveDb;
+    p.clipShape         = pt.clipShape;
+    p.dynTiltDb         = pt.dynTiltDb;
+    p.limStyle          = pt.style;
+    p.transientPreserve = pt.transientPreserve;
+    p.ceilingDbTp       = pt.ceilingDb;
+    p.freeze            = freeze;
+    if (! juce::exactlyEqual (postShelfDb, 0.0f))
+    {
+        p.eqPosition        = 1;
+        p.eqHighShelfGainDb = postShelfDb;
+    }
+    Programme fresh;
+    fresh.kind = juce::jmax (0, offlineKind);
+    fresh.sr   = sr;
+    fresh.rng  = 0x1234567u;
+    Bounce b;
+    b.toggleAt  = 0;
+    b.offlineAt = 0;
+    juce::AudioBuffer<float> buf (2, block);
+    for (long n = 0; n < post; n += block)
+    {
+        for (int i = 0; i < block; ++i)
+        {
+            float l = 0.0f, r = 0.0f;
+            if (offlineKind >= 0)
+                fresh.frame (l, r);
+            buf.setSample (0, i, l);
+            buf.setSample (1, i, r);
+        }
+        engine.process (buf, p);
+        b.engineTpOffline = juce::jmax (b.engineTpOffline, engine.lastRenderTpMax());
+        for (int i = 0; i < block; ++i)
+        {
+            b.l.push_back (buf.getSample (0, i));
+            b.r.push_back (buf.getSample (1, i));
+        }
+    }
+    b.latency = anabasis::predictLatencySamples (p, sr);
+    return b;
+}
+
+// The render AS A FILE: fresh meters from its first sample (silence before
+// it), every reading including the tail-off after its last sample. Worst
+// reading over the ceiling, dB: { product meter, Annex 2 }.
+inline Over renderOverDb (const Bounce& b, float ceilingDb)
+{
+    anabasis::TruePeakEstimator meter;
+    meter.prepare();
+    Annex2Meter annex2;
+    float m = 0.0f, a = 0.0f;
+    for (size_t k = (size_t) b.offlineAt; k < b.l.size() + 16; ++k)
+    {
+        const float fr[2] = { k < b.l.size() ? b.l[k] : 0.0f, k < b.r.size() ? b.r[k] : 0.0f };
+        float tp[2] = {};
+        meter.processFrame (fr, 2, tp);
+        m = juce::jmax (m, tp[0], tp[1]);
+        a = juce::jmax (a, annex2.push (0, fr[0]), annex2.push (1, fr[1]));
+    }
+    auto dB = [&] (float v) { return 20.0f * std::log10 (juce::jmax (v, 1.0e-9f)) - ceilingDb; };
+    return { dB (m), dB (a) };
+}
+
+inline float peakOf (const Bounce& b, size_t from, size_t to)
+{
+    float pk = 0.0f;
+    for (size_t k = from; k < juce::jmin (to, b.l.size()); ++k)
+        pk = juce::jmax (pk, std::abs (b.l[k]), std::abs (b.r[k]));
+    return pk;
+}
+} // namespace tpceiling
+
+static void testOfflineEntryDropsTheEngagementTail()
+{
+    using tpceiling::Point;
+    using tpceiling::peakOf;
+    const Point hot   { 18.0f, -12.0f, 2.0f, 9.0f, 0.35f, 1.5f, 1, 1.0f, -1.0f };
+    const Point inert { 12.0f,   0.0f, 1.0f, 0.0f, 0.5f,  0.0f, 0, 0.5f, -1.0f };   // comp ratio 1, no clip / EQ / tilt
+    const float ceilLin = juce::Decibels::decibelsToGain (-1.0f);
+    auto lastRealtime = [] (const tpceiling::Bounce& b)
+    {
+        const auto k = (size_t) b.offlineAt - 1;
+        return juce::jmax (std::abs (b.l[k]), std::abs (b.r[k]));
+    };
+
+    // (1) The defect, exact. The toggle block is silent input, so its output
+    // is the decay alone, and a non-zero last realtime sample proves the decay
+    // was still running when the render began (its shape at the last step is
+    // ~3e-5 of the start). The control's toggle block outlasts the decay
+    // (512 > 288 samples at 48 kHz): the same render is silent on any build.
+    struct Silent { double sr; int toggleBlock; bool decayRunning; };
+    for (const Silent s : { Silent { 48000.0, 32, true }, Silent { 48000.0, 64, true },
+                            Silent { 48000.0, 256, true }, Silent { 96000.0, 512, true },
+                            Silent { 48000.0, 512, false } })
+    {
+        const auto b = tpceiling::engageThenBounce (s.sr, 512, s.toggleBlock, true, true, -1, hot, 0.0f, false, 4096);
+        const float firstToggle = juce::jmax (std::abs (b.l[(size_t) b.toggleAt]), std::abs (b.r[(size_t) b.toggleAt]));
+        const float offlinePeak = peakOf (b, (size_t) b.offlineAt, b.l.size());
+        check (peakOf (b, (size_t) b.toggleAt - 512, (size_t) b.toggleAt) > 0.5f,
+               "tpBounce: (premise) the TP-off programme reached the ceiling before the toggle");
+        if (s.decayRunning)
+        {
+            check (lastRealtime (b) > 0.001f, "tpBounce: (premise) the engagement decay was still running when the render began");
+            check (juce::exactlyEqual (offlinePeak, 0.0f),
+                   "tpBounce: a render entered during an engagement decay carries none of it (exact silence)");
+        }
+        else
+        {
+            check (juce::exactlyEqual (lastRealtime (b), 0.0f) && firstToggle > 0.05f,
+                   "tpBounce: (control premise) the decay started and ended inside the toggle block");
+            check (juce::exactlyEqual (offlinePeak, 0.0f), "tpBounce: (control) no decay in flight — the render is exact silence");
+        }
+        if (! juce::exactlyEqual (offlinePeak, 0.0f))
+            std::printf ("       tpBounce: %.0f Hz, toggle block %d: offline peak %.3g after a silent toggle\n",
+                         s.sr, s.toggleBlock, (double) offlinePeak);
+    }
+
+    // (2) The ceiling of the render as a file, programme after the entry: the
+    // decay summed onto the unducked processed path (and the +12 dB Post
+    // shelf's ring-out) read up to +1.46 dB over; the engine's own dBTP tap,
+    // which the dBTP hold is fed from, read the same.
+    struct Hot { int oldKind; float shelf; };
+    for (const Hot h : { Hot { 1, 12.0f }, Hot { 4, 12.0f }, Hot { 1, 0.0f }, Hot { 4, 0.0f } })
+    {
+        const auto b = tpceiling::engageThenBounce (48000.0, 512, 32, true, false, 0, hot, h.shelf, false, 24000, false, h.oldKind);
+        const auto o = tpceiling::renderOverDb (b, -1.0f);
+        const float tap = 20.0f * std::log10 (juce::jmax (b.engineTpOffline, 1.0e-9f)) + 1.0f;
+        check (lastRealtime (b) > 0.05f, "tpBounce: (premise) the decay was running at the offline entry");
+        check (o.meterDb > -1.0f && o.annex2Db > -1.0f, "tpBounce: (premise) the render reaches the ceiling");
+        check (o.meterDb <= 0.1f, "tpBounce: invariant 4 — the render, read as a file, is <= +0.1 dB on the product meter");
+        check (o.annex2Db <= 0.1f, "tpBounce: invariant 4 — the render, read as a file, is <= +0.1 dB on the Annex 2 meter");
+        check (tap <= 0.1f, "tpBounce: the engine's own dBTP tap reads no over for the render");
+        if (o.meterDb > 0.1f || o.annex2Db > 0.1f || tap > 0.1f)
+            std::printf ("       tpBounce: old kind %d, shelf %+.0f dB: %+.3f / %+.3f dB over (product / Annex 2), tap %+.3f dB\n",
+                         h.oldKind, (double) h.shelf, (double) o.meterDb, (double) o.annex2Db, (double) tap);
+    }
+
+    // (3) Against a clean offline start: bit-identical over the reported-
+    // latency window, the one span this route can make exact (silent toggle
+    // block: the latch left the ring empty, so both emit exact zeros there).
+    for (const int toggleBlock : { 32, 64, 256 })
+        for (const bool inertChain : { true, false })
+        {
+            const long  post = 12000;
+            const auto& pt   = inertChain ? inert : hot;
+            const auto  b    = tpceiling::engageThenBounce (48000.0, 512, toggleBlock, true, true, 0, pt, 0.0f, inertChain, post);
+            const auto  c    = tpceiling::cleanBounce (48000.0, 512, 0, pt, 0.0f, inertChain, post);
+            const auto  L    = (size_t) b.latency;
+            size_t differing = 0;
+            for (size_t k = 0; k < L; ++k)
+                if (! juce::exactlyEqual (b.l[(size_t) b.offlineAt + k], c.l[k])
+                    || ! juce::exactlyEqual (b.r[(size_t) b.offlineAt + k], c.r[k]))
+                    ++differing;
+            check (lastRealtime (b) > 0.001f, "tpBounce: (premise) the decay was running at the offline entry");
+            check (L == (size_t) c.latency && L > 0, "tpBounce: (premise) both renders report the same latency");
+            check (peakOf (c, L, c.l.size()) > 0.5f * ceilLin, "tpBounce: (premise) the clean render is real programme at the ceiling");
+            check (differing == 0, "tpBounce: the render's latency window is bit-identical to a clean offline start's");
+        }
+
+    // (4) The cases without a decay in flight. TP off: entering offline changes
+    // nothing in the rendered samples (the latency window carries the realtime
+    // programme — the documented no-re-prepare behaviour, not a decay). A
+    // normal offline start in TP mode holds the ceiling, as a file and on the
+    // engine's own tap.
+    {
+        const auto a = tpceiling::engageThenBounce (48000.0, 512, 64, false, false, 1, hot, 12.0f, false, 12000, false);
+        const auto b = tpceiling::engageThenBounce (48000.0, 512, 64, false, false, 1, hot, 12.0f, false, 12000, true);
+        check (a.l == b.l && a.r == b.r, "tpBounce: TP off — the offline flip changes no rendered sample");
+        check (peakOf (a, (size_t) a.offlineAt, (size_t) a.offlineAt + (size_t) a.latency) > 0.5f,
+               "tpBounce: (documented) TP off, no re-prepare: the latency window carries the realtime programme");
+        const auto c = tpceiling::cleanBounce (48000.0, 512, 1, hot, 12.0f, false, 24000);
+        const auto o = tpceiling::renderOverDb (c, -1.0f);
+        const float tap = 20.0f * std::log10 (juce::jmax (c.engineTpOffline, 1.0e-9f)) + 1.0f;
+        check (o.meterDb > -1.0f, "tpBounce: (premise) the clean TP render reaches the ceiling");
+        check (o.meterDb <= 0.1f && o.annex2Db <= 0.1f && tap <= 0.1f,
+               "tpBounce: a clean offline start in TP mode holds the ceiling on both meters and on the engine's tap");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ADR-0041's composition, observed where it can be: in true-peak mode the
 // clamp's delay comes OUT of the constant allowance, so (a) the limiter's
 // window is capped at the line that is left — a 10 ms setting engages
@@ -7782,6 +8085,7 @@ int main()
     testCeilingClampTruePeakPath();
     testTruePeakModeHoldsTheCeiling();
     testTruePeakEngagementHoldsTheCeiling();
+    testOfflineEntryDropsTheEngagementTail();
     testTruePeakModeCapsTheWindowNotTheLatency();
     testDuckWrapsTruePeakLatch();
     testTruePeakModeIsExactBelowTheCeiling();

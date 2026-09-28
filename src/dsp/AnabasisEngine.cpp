@@ -460,8 +460,12 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // an ADR-0004 recompute trigger) and, at Force Max, effectiveFactor
     // changes with it. Ducking would fade the HEAD OF A BOUNCE — ~45 ms of
     // envelope written into the rendered file — for a transition no one is
-    // listening to. Adopting directly makes the no-re-prepare path behave
-    // exactly like the re-prepare path most hosts take.
+    // listening to. Adopting directly makes the no-re-prepare path adopt the
+    // configuration the way the re-prepare path most hosts take does — though
+    // NOT the pipeline: without a reset() the lookahead ring, the upstream
+    // stages' state and the dither RNG carry on from the realtime stream
+    // (KNOWN_ISSUES KI-004). What this branch does clear is every TRANSITION
+    // in flight — the duck, and a TP engagement's decay (below).
     //
     // The RETURN edge is the opposite case and must NOT share this branch:
     // offline→realtime lands in live playback, where the same direct adopt
@@ -520,6 +524,19 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         }
         duckState = DuckState::idle;
         duckGain  = 1.0f;
+        // A TP engagement's decay stands in for the duck's out-leg, so it goes
+        // with the duck. Left running it continued the LAST REALTIME FRAME into
+        // the head of the bounce — summed onto the now-unducked processed path,
+        // whose Post-EQ ring-out it could push up to +1.46 dB over the ceiling
+        // (the PR #42 review of 0.2.14; reset() below already covers the
+        // re-prepare path). Its history goes too: the render's pre-history is
+        // silence. The output dBTP tap restarts only when a decay was cut, so
+        // it does not read the cut as a step across the realtime/offline
+        // splice; with no decay in flight the stream is continuous and the tap
+        // keeps its history, exactly as before.
+        if (engageTail.active())
+            outTp.reset();
+        engageTail.reset();
         // A render that STARTS with an empty pipeline is not a transition:
         // the reported latency is the promise that those samples are absent,
         // so no hold, and nothing is owed from before the reset. `duckAsked`
