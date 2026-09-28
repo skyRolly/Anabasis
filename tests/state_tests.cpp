@@ -11047,6 +11047,53 @@ static void testTheCeilingAdvertisesTheUnitItEnforces()
     }
 }
 
+// THE UNIT FOLLOWS THE PATH, NOT JUST THE SWITCH (ADR-0046). True-peak mode
+// engages from `CeilingClamp::kMinTruePeakRate` (12 kHz) up; below it the rail
+// runs the sample clip whatever the parameter says, so a " dBTP" suffix there
+// would be the claim the suffix exists to keep honest. The rate is the one the
+// processor already publishes (the GR history ring's pair, KI-017), read by the
+// same `getText` the host and the value box call. Re-preparing back up restores
+// the claim — the answer is the PREPARED rate's, never a latched one.
+static void testTheCeilingUnitFollowsTheRateTheTruePeakPathEngagesAt()
+{
+    AnabasisAudioProcessor proc;
+    auto* ceil = proc.apvts.getParameter (pid::ceiling);
+    auto* tp   = proc.apvts.getParameter (pid::truePeakMode);
+    check (ceil != nullptr && tp != nullptr,
+           "ceilingUnitRate: (premise) the ceiling and true-peak parameters exist");
+    if (ceil == nullptr || tp == nullptr)
+        return;
+
+    tp->setValueNotifyingHost (1.0f);
+    check (ceil->getCurrentValueAsText().endsWith (" dBTP"),
+           "ceilingUnitRate: (premise) before any prepare, TP on reads dBTP (the 48 kHz fallback)");
+
+    const struct { double rate; bool engaged; const char* what; } rows[] = {
+        { 48000.0, true,  "ceilingUnitRate: 48 kHz with TP on reads dBTP" },
+        { 11999.0, false, "ceilingUnitRate: 11999 Hz with TP on reads plain dB (the path does not engage)" },
+        { 12000.0, true,  "ceilingUnitRate: 12000 Hz with TP on reads dBTP (the lowest engaged rate)" },
+        { 11025.0, false, "ceilingUnitRate: 11.025 kHz with TP on reads plain dB" },
+        {  8000.0, false, "ceilingUnitRate: 8 kHz with TP on reads plain dB" },
+        { 22050.0, true,  "ceilingUnitRate: re-preparing at 22.05 kHz restores dBTP" },
+    };
+    for (const auto& r : rows)
+    {
+        proc.prepareToPlay (r.rate, 256);
+        check (anabasis::truePeakPathEngages (r.rate) == r.engaged,
+               "ceilingUnitRate: (premise) the rail predicate agrees with the table");
+        const auto text = ceil->getCurrentValueAsText();
+        check (r.engaged ? text.endsWith (" dBTP")
+                         : (text.endsWith (" dB") && ! text.contains ("dBTP")), r.what);
+        proc.releaseResources();
+    }
+
+    proc.prepareToPlay (8000.0, 256);
+    tp->setValueNotifyingHost (0.0f);
+    check (ceil->getCurrentValueAsText().endsWith (" dB"),
+           "ceilingUnitRate: TP off below the rail still reads plain dB");
+    proc.releaseResources();
+}
+
 // ---------------------------------------------------------------------------
 // kCacheOrder and CachedParams::toEngine are coupled POSITIONALLY: inserting a
 // row in one without the matching line in the other silently shifts every
@@ -13157,6 +13204,7 @@ int main (int argc, char** argv)
         testLatencyNotifyIsBatchedAcrossARead();
         testRawRoundTripIsIdempotent();
         testTheCeilingAdvertisesTheUnitItEnforces();
+        testTheCeilingUnitFollowsTheRateTheTruePeakPathEngagesAt();
         testCeilingIsQuantisedToTwoDecimals();
         testCachedParamsMapping();
     }

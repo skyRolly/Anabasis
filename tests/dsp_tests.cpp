@@ -2483,7 +2483,7 @@ static void testCeilingClampTruePeakPath()
     const int d = clamp.truePeakDelay();
     check (d == anabasis::CeilingClamp::truePeakDelayFor (sr),
            "clampTp: the prepared delay equals the pure function the engine sizes from");
-    check (d == 42, "clampTp: 42 samples at 48 kHz — a 12-sample attack + the estimator's 30");
+    check (d == 46, "clampTp: 46 samples at 48 kHz — the 16-sample attack floor (KI-025) + the estimator's 30");
 
     const float ceiling = std::pow (10.0f, -1.0f / 20.0f);            // -1 dBTP
     const float tol     = ceiling * std::pow (10.0f, 0.1f / 20.0f);  // invariant 4
@@ -3682,17 +3682,423 @@ static void testTruePeakModeBoundsTheStepAtACeilingCut()
         }
         const double glideStep = (juce::Decibels::decibelsToGain (-1.0) - juce::Decibels::decibelsToGain (-20.0))
                                / std::floor (anabasis::AnabasisEngine::kCeilingGlideSeconds * sr);
-        const int    attack    = anabasis::CeilingClamp::truePeakDelayFor (sr) - 30;
-        const double bound     = (16.0 + attack / 2.0 + 2.0) * glideStep;
+        // KI-025: a revised requirement reaches only the frames its two
+        // defining readings read, judged before its main lobe against the
+        // glide one frame on (Z + 1 = 2 glide steps), plus the eased ramp's
+        // own lookahead (~3): measured 4.9 steps at 44.1 and 48 kHz, where the
+        // 32-sample reach of the 0.2.15 law stepped 22.0–22.5.
+        const double bound     = 7.0 * glideStep;
         check (maxDelta[0] < 1.5 * glideStep,
                "tpStep: (control) TP off glides one smoother step per sample");
-        check (maxDelta[1] > 5.0 * maxDelta[0],
+        check (maxDelta[1] > 3.0 * maxDelta[0],             // 4.9 glide steps since KI-025
                "tpStep: (premise) in TP mode the cut reaches the in-flight revision");
         check (maxDelta[1] <= bound,
-               "tpStep: in TP mode the step at a downward cut is bounded by (16 + A/2 + 2) glide steps (ADR-0045)");
+               "tpStep: in TP mode the step at a downward cut is bounded by 7 glide steps (ADR-0045, KI-025)");
         if (maxDelta[1] > bound)
             std::printf ("       tpStep: %.0f Hz: step %.5f against the bound %.5f (TP off %.5f)\n",
                          sr, (double) maxDelta[1], bound, (double) maxDelta[0]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TRUE-PEAK MODE BELOW 44.1 kHz (KNOWN_ISSUES KI-025, the PR #42 review of
+// 0.2.15; ADR-0046). The clamp's requirement keeps every gain a segment's
+// detector reads under that segment's r, which bounds the segment's
+// interpolated reading only while those gains are EQUAL; a linear attack ramp
+// starting beside a segment at the ceiling lowered its side-lobe taps and
+// RAISED its Annex 2 reading. The 8-sample attack floor made that worst at
+// low rates: constructed bursts read +0.157 dB (22.05 kHz, under a cut),
+// +0.125 (32 kHz, cut), +0.113 (8 kHz, static), +0.116 (16 kHz, static) over
+// the live ceiling on 0.2.15. The eased attack (weights growing with age, a
+// 16-sample floor), the release's 1 %-per-sample rise cap and the revision's
+// defining reach bound it, and the path ENGAGES from 12 kHz — the lowest
+// common rate at which a derived bound, and not only a search, keeps a
+// full-range cut's revision step inside the tolerance (the table at
+// CeilingClamp::kMinTruePeakRate); below that TP mode is not applied and the
+// Ceiling reads dB. Pinned: the rail; three of the four bursts engine-level at
+// the rates they were found at, and the 8 kHz one where TP no longer engages
+// (its sample peaks held); all four across the engaged low rates, three cuts
+// and OS off / 2x / 4x; and, at the clamp, the Ceiling REVERSAL a judge of the
+// fix found (−20 → 0 → −20 dB mid-ascent: +0.60 dB at 8 kHz and +0.30 dB at
+// 48 kHz on 0.2.15), driven exactly as the engine drives the clamp —
+// including the min(entry, emission) stamp that closed it — at 8 kHz, below
+// the rail, because the LAW is rate-free there and 8 kHz is its widest glide
+// step: the vectors hold at clamp level; the rail excludes the rate for want
+// of a bound, not for a failing vector.
+namespace lowrate
+{
+constexpr float kBurst22050[32] = {
+    -1.000000000f, 0.429007410f, -1.000000000f, 1.000000000f, 1.000000000f, 0.734168117f, -0.789264669f, 1.000000000f,
+    -1.000000000f, 0.523777900f, -1.000000000f, 0.362308411f, -1.000000000f, 1.000000000f, -0.679519801f, 0.945788424f,
+    -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f,
+    -1.000000000f, 0.377187397f, -0.931295062f, 0.669922642f, 1.000000000f, -0.582633144f, 1.000000000f, -1.000000000f };
+constexpr float kBurst32000[32] = {
+    -0.792305300f, 1.000000000f, -0.257638993f, 0.460378482f, -0.922271776f, 0.978740593f, 0.954891127f, 0.563425270f,
+    -1.000000000f, 1.000000000f, -0.634415129f, 1.000000000f, -1.000000000f, -1.000000000f, -0.944180599f, 1.000000000f,
+    -0.467501421f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f,
+    -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 0.642117497f, 1.000000000f, -1.000000000f };
+constexpr float kBurst8000[32] = {
+    -0.411449626f, 0.123073463f, -0.654538204f, 1.000000000f, -0.846104096f, -0.755241675f, -1.000000000f, 0.160808466f,
+     0.005622568f, 0.930613920f, -1.000000000f, 0.792933069f, -0.261338149f, 0.486269984f, 0.166862864f, -0.480478565f,
+     0.281235605f, -0.634710110f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f,
+     1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, 0.444415006f, -1.000000000f, 1.000000000f };
+constexpr float kBurst16000[32] = {
+     0.330176902f, -1.000000000f, 1.000000000f, -0.858500933f, -0.881809256f, -0.716979771f, 1.000000000f, -0.624051644f,
+     0.265742564f, -1.000000000f, 1.000000000f, -0.364369086f, 1.000000000f, -1.000000000f, 0.194402448f, -0.499439087f,
+     1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f,
+     1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 0.594265330f, 0.559594095f, -0.606778687f, 1.000000000f };
+
+struct Over
+{
+    float meterDb = -200.0f, annex2Db = -200.0f, sampleDb = -200.0f, reachDb = -200.0f;
+};
+
+// One engine render, blocks of 64: `burst` ×`amp` at input sample `burstAt`
+// on both channels; ceiling target `fromDb` for every block starting before
+// `cutAt`, `toDb` from then on; both meters and every emitted sample against
+// the live smoothed ceiling rebuilt with the engine's own smoother.
+inline Over renderBurst (double sr, const float (&burst)[32], long burstAt, long cutAt, float fromDb, float toDb,
+                         long total, int os = 0, float amp = 0.12f)
+{
+    constexpr int block = 64;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, block, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode      = true;
+    p.oversample        = (anabasis::OversampleFactor) os;
+    p.limGainDb         = 0.0f;
+    p.compThresholdDb   = 0.0f;
+    p.compRatio         = 1.0f;
+    p.clipDriveDb       = 0.0f;
+    p.clipShape         = 0.5f;
+    p.dynTiltDb         = 0.0f;
+    p.limStyle          = 0;
+    p.transientPreserve = 0.5f;
+    juce::SmoothedValue<float> live;
+    live.reset (sr, anabasis::AnabasisEngine::kCeilingGlideSeconds);
+    anabasis::TruePeakEstimator meter;
+    meter.prepare();
+    tpceiling::Annex2Meter annex2;
+    std::vector<float> ceil;
+    juce::AudioBuffer<float> buf (2, block);
+    Over o;
+    bool first = true;
+    for (long n = 0; n < total; n += block)
+    {
+        p.ceilingDbTp = n >= cutAt ? toDb : fromDb;
+        const float target = juce::Decibels::decibelsToGain (p.ceilingDbTp);
+        if (first)
+            live.setCurrentAndTargetValue (target);
+        else
+            live.setTargetValue (target);
+        first = false;
+        for (int i = 0; i < block; ++i)
+        {
+            const long u = n + i - burstAt;
+            const float v = (u >= 0 && u < 32) ? amp * burst[u] : 0.0f;
+            buf.setSample (0, i, v);
+            buf.setSample (1, i, v);
+        }
+        engine.process (buf, p);
+        for (int i = 0; i < block; ++i)
+        {
+            const float c = live.getNextValue();
+            ceil.push_back (c);
+            const float fr[2] = { buf.getSample (0, i), buf.getSample (1, i) };
+            float tp[2] = {};
+            meter.processFrame (fr, 2, tp);
+            const float a  = juce::jmax (annex2.push (0, fr[0]), annex2.push (1, fr[1]));
+            const float pm = juce::jmax (tp[0], tp[1]);
+            o.sampleDb = juce::jmax (o.sampleDb, juce::Decibels::gainToDecibels (juce::jmax (std::abs (fr[0]), std::abs (fr[1])) / c, -200.0f));
+            const long seg = n + i - 6;                          // both meters report x[m−6]..x[m−5]
+            if (seg >= 0)
+            {
+                const float segCeil = juce::jmin (ceil[(size_t) seg], ceil[(size_t) seg + 1]);
+                const float dm = juce::Decibels::gainToDecibels (pm / segCeil, -200.0f);
+                const float da = juce::Decibels::gainToDecibels (a / segCeil, -200.0f);
+                o.meterDb  = juce::jmax (o.meterDb, dm);
+                o.annex2Db = juce::jmax (o.annex2Db, da);
+                o.reachDb  = juce::jmax (o.reachDb, dm, da);
+            }
+        }
+    }
+    return o;
+}
+
+// A stereo clamp-input vector and the Ceiling automation it was found under
+// (dB targets at block-top sample indices), for the clamp-level driver.
+struct ClampVector
+{
+    double sr;
+    int    pos;
+    float  amp;
+    std::vector<std::pair<int, float>> automation;
+    float  l[64], r[64];
+};
+
+// c8rev_dT64 — found -0.1634 A2=+0.2147 (PM / A2) on the tree it was searched on
+const ClampVector kReversal8000 { 8000.0, 341, 1.053031168f, { { 0, -20.0f }, { 336, 0.0f }, { 400, -20.0f } },
+    {
+        0.585908175f, -0.460238308f, 0.546705365f, -0.803773046f, 0.959875226f, -1.000000000f, 0.777032137f, -1.000000000f,
+        0.937881708f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -0.752257645f, 0.895806909f, -0.157874271f,
+        1.000000000f, 0.254768044f, 1.000000000f, -0.886435211f, 0.736482501f, 0.340877205f, -1.000000000f, -1.000000000f,
+        0.043939281f, -0.389739454f, -0.218113214f, 0.617720664f, 0.222130388f, 0.369754106f, -1.000000000f, 1.000000000f,
+        -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f,
+        -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f,
+        1.000000000f, -1.000000000f, 0.982860267f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f,
+        1.000000000f, -1.000000000f, 0.577142775f, -0.931084037f, -0.876887023f, -0.412120402f, 0.922554612f, 0.121044517f },
+    {
+        0.446151406f, -0.740775287f, -0.086940363f, 0.854964733f, -0.710951269f, 0.549308479f, 0.287540764f, -0.828874707f,
+        -0.273025274f, -0.871479452f, 1.000000000f, -0.635187149f, -1.000000000f, -0.946984768f, 0.720593333f, 0.998080730f,
+        0.502345204f, -0.833229721f, -0.289793134f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -0.760178924f,
+        -0.559357226f, -0.219624192f, 0.902544081f, 0.630204558f, 0.036493722f, 1.000000000f, 1.000000000f, 0.805131555f,
+        -1.000000000f, -0.544971824f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f,
+        -1.000000000f, 1.000000000f, -1.000000000f, 0.971656740f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f,
+        -0.396460801f, 0.609316051f, 0.811646879f, 0.282967985f, -1.000000000f, 1.000000000f, -0.196956515f, -0.552177072f,
+        0.576006413f, 0.515097082f, -1.000000000f, 0.973406792f, 0.168403953f, 1.000000000f, 0.057853043f, 0.591432691f } };
+// b8000rev — found +0.0734 A2=+0.6039 (PM / A2) on the tree it was searched on
+const ClampVector kBaseReversal8000 { 8000.0, 349, 2.048087000f, { { 0, -20.0f }, { 336, 0.0f }, { 400, -20.0f } },
+    {
+        -0.423052430f, -0.344451964f, 0.634945512f, -0.174847901f, -0.601637363f, -0.190757379f, -1.000000000f, 0.449293375f,
+        -0.079085529f, -0.274832189f, 0.720642686f, -0.114503562f, 0.687466145f, -1.000000000f, 1.000000000f, -1.000000000f,
+        1.000000000f, -1.000000000f, 1.000000000f, -0.569500387f, 0.932971239f, -1.000000000f, -0.100018799f, -1.000000000f,
+        0.295213282f, -0.761476278f, -0.218113214f, 0.824332416f, 1.000000000f, 0.449380100f, -1.000000000f, 1.000000000f,
+        -1.000000000f, 0.467236698f, -1.000000000f, 1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f,
+        1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f,
+        1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, -1.000000000f, 1.000000000f,
+        0.634770274f, -1.000000000f, 0.439779043f, 1.000000000f, -0.876887023f, -0.412120402f, -1.000000000f, 0.264562845f },
+    {
+        0.065572649f, -0.074999280f, 0.894638121f, 0.299371719f, 0.676284254f, -0.255213797f, 0.306326747f, -0.828874707f,
+        -0.273025274f, -0.969180107f, 1.000000000f, -0.644791603f, -1.000000000f, -0.946984768f, 0.791421533f, 0.933835268f,
+        0.580475211f, -0.936037302f, -0.013705485f, -1.000000000f, 0.914259672f, -0.931030810f, 0.883137345f, -0.760178924f,
+        -0.482137293f, -0.263958544f, 0.902544081f, 0.575721025f, 0.047778796f, 1.000000000f, 1.000000000f, 0.805131555f,
+        -1.000000000f, -0.613483429f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f,
+        -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, 0.789505601f, 1.000000000f, -1.000000000f, 1.000000000f,
+        -0.996393502f, 1.000000000f, 0.811646879f, -0.068718016f, -0.759569645f, 1.000000000f, -1.000000000f, -1.000000000f,
+        1.000000000f, -1.000000000f, -1.000000000f, 0.040592007f, -0.868668079f, 1.000000000f, 1.000000000f, 1.000000000f } };
+// b48000rev — found +0.0791 A2=+0.2993 (PM / A2) on the tree it was searched on
+const ClampVector kReversal48000 { 48000.0, 345, 0.755201281f, { { 0, -20.0f }, { 80, 0.0f }, { 400, -20.0f } },
+    {
+        0.689021409f, 0.576742232f, 0.112496883f, 0.919959903f, 0.067623317f, 0.210719973f, -1.000000000f, 1.000000000f,
+        -0.984724820f, 0.253996909f, -0.604607999f, 1.000000000f, 1.000000000f, 0.625660181f, -1.000000000f, 0.856843710f,
+        -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, 0.180842966f, 1.000000000f, -1.000000000f, 0.522755682f,
+        -1.000000000f, 1.000000000f, -1.000000000f, 0.919525862f, -0.072321787f, 1.000000000f, -1.000000000f, -0.717976272f,
+        -0.973847866f, 0.607306302f, -0.754281402f, -1.000000000f, -1.000000000f, 0.412497163f, -0.894339919f, 0.694411874f,
+        -1.000000000f, 1.000000000f, 0.900016010f, -1.000000000f, 1.000000000f, -0.789451480f, 1.000000000f, 0.530485511f,
+        1.000000000f, -0.101489782f, -1.000000000f, 0.648797274f, 1.000000000f, -1.000000000f, -1.000000000f, 1.000000000f,
+        0.634770274f, -1.000000000f, 1.000000000f, 1.000000000f, -0.876887023f, 1.000000000f, 0.922554612f, -1.000000000f },
+    {
+        -0.375295699f, 0.094650805f, -1.000000000f, 1.000000000f, 0.052961007f, -0.483137846f, -1.000000000f, -0.973741651f,
+        -0.687805295f, 0.564585745f, 0.333933860f, -0.625517011f, 0.684531748f, -0.478730261f, -0.762401998f, -0.695582211f,
+        0.905745029f, -0.840309799f, -0.005274124f, 1.000000000f, 0.441521704f, 0.898828030f, -0.871802926f, 0.932496250f,
+        -0.017515365f, -0.798352957f, 1.000000000f, 0.121890530f, 1.000000000f, 0.443173885f, -1.000000000f, 0.052723859f,
+        -0.429943562f, -0.133907095f, 1.000000000f, -0.882912934f, 1.000000000f, -1.000000000f, 0.983736873f, -1.000000000f,
+        -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f,
+        -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f, -1.000000000f, 1.000000000f,
+        0.124684729f, 0.907238662f, -0.678728819f, 0.973406792f, -0.688843966f, 1.000000000f, -1.000000000f, 0.284952700f } };
+// c8cut_st_s1 — found +0.0144 A2=+0.0867 (PM / A2) on the tree it was searched on
+const ClampVector kCut8000 { 8000.0, 338, 1.350612757f, { { 0, 0.0f }, { 400, -20.0f } },
+    {
+        0.758660316f, 0.366707057f, 0.138337046f, 1.000000000f, -0.407122433f, -0.373628914f, 0.927923799f, -0.206988111f,
+        0.064278588f, -0.834791481f, 0.017150503f, -0.511778235f, 0.672438145f, -0.558789611f, 0.682782650f, 0.952797472f,
+        0.535843670f, -1.000000000f, 0.087490432f, -0.994811237f, 0.773135900f, 0.310201764f, 0.535371006f, -0.534370840f,
+        -0.562981904f, 0.183497205f, 0.121005453f, 0.411815017f, 0.194789484f, 0.534712970f, -0.130559906f, 0.541314542f,
+        -0.499864995f, -0.042162225f, 0.497839123f, 0.817236066f, -0.851863027f, -0.284733415f, -0.345073789f, 0.757274151f,
+        -0.488704562f, 0.075585648f, 0.449900687f, 0.693416476f, -0.225712955f, 0.251271933f, -1.765298843f, -4.000000000f,
+        3.759550333f, -1.370939970f, 1.000000000f, -3.933202982f, 4.000000000f, -4.000000000f, 1.000000000f, -1.000000000f,
+        0.655402184f, -1.000000000f, 0.705291808f, -0.945352614f, -0.527658522f, -0.836104274f, 1.000000000f, 0.748550653f },
+    {
+        -0.004673764f, -0.508635283f, 0.296456158f, -0.349794686f, 0.528249621f, 0.334750175f, 0.292486131f, -1.000000000f,
+        -0.270194829f, -0.778216422f, 1.000000000f, -0.538495421f, 0.182634577f, -0.557112038f, 0.682782650f, 0.951393485f,
+        0.535843670f, -1.000000000f, 0.087490432f, -1.000000000f, 0.773135900f, 0.310201764f, 0.535371006f, -0.534370840f,
+        -0.551517546f, 0.183497205f, 0.414816976f, 0.411815017f, 0.194789484f, 0.915855467f, -0.130559906f, 0.541314542f,
+        -0.499864995f, -0.042162225f, -0.011821717f, 0.941408575f, -0.852372289f, -0.083598562f, 0.157636210f, 0.885215640f,
+        -0.401347786f, 0.340323806f, 0.079324856f, 0.851220727f, -0.421760589f, -0.495847285f, -0.258652747f, -0.512030602f,
+        0.307262689f, -1.000000000f, -0.937043190f, 1.000000000f, 0.297073990f, -0.773521841f, 0.942769527f, -0.410343170f,
+        -1.000000000f, -0.926929832f, -0.922835350f, 1.000000000f, -1.000000000f, 0.173569828f, 0.954555035f, -0.160786211f } };
+
+// Drives CeilingClamp EXACTLY as AnabasisEngine does in true-peak mode, blocks
+// of 8: the 20 ms ceiling smoother retargeted at each block top; a copy run
+// clampDelay steps ahead and, while gliding, those in-flight values handed to
+// lowerInFlightCeilings; each frame stamped with min(ceiling at entry,
+// predicted ceiling at emission) — stage A's `ceilEmitArr`. Arbitrary clamp
+// input (a Post EQ may sit between the limiter and the clamp), both defining
+// meters on the output against the live ceiling. Worst {PM, A2} over it, dB.
+inline Over driveClamp (const ClampVector& v, bool entryMin = true, int dur = 1000)
+{
+    constexpr int blk = 8;
+    anabasis::CeilingClamp clamp;
+    clamp.prepare (v.sr);
+    const int D = clamp.truePeakDelay();
+    std::vector<float> inFlight ((size_t) D, 0.0f), outL ((size_t) dur, 0.0f), outR ((size_t) dur, 0.0f), live ((size_t) dur, 0.0f);
+    juce::SmoothedValue<float> ceilingLinear { 0.8912509f }, ceilingAhead { 0.8912509f };
+    ceilingLinear.reset (v.sr, anabasis::AnabasisEngine::kCeilingGlideSeconds);
+    auto targetAt = [&] (int n)
+    {
+        float t = v.automation.front().second;
+        for (const auto& a : v.automation)
+            if (a.first <= n)
+                t = a.second;
+        return t;
+    };
+    for (int start = 0; start < dur; start += blk)
+    {
+        const float tgt = juce::Decibels::decibelsToGain (targetAt (start));
+        if (start == 0)
+            ceilingLinear.setCurrentAndTargetValue (tgt);
+        else
+            ceilingLinear.setTargetValue (tgt);
+        ceilingAhead = ceilingLinear;
+        if (ceilingLinear.isSmoothing())
+        {
+            for (int i = 0; i < D; ++i)
+                inFlight[(size_t) i] = ceilingAhead.getNextValue();
+            clamp.lowerInFlightCeilings (inFlight.data(), D);
+        }
+        for (int n = 0; n < blk && start + n < dur; ++n)
+        {
+            const int   m  = start + n;
+            const float c  = ceilingLinear.getNextValue();
+            const float ahead = ceilingAhead.getNextValue();
+            const float ce = entryMin ? juce::jmin (ahead, c) : ahead;
+            const int   u  = m - v.pos;
+            float fr[2] = { u >= 0 && u < 64 ? v.amp * v.l[u] : 0.0f, u >= 0 && u < 64 ? v.amp * v.r[u] : 0.0f };
+            clamp.processFrameTruePeak (fr, 2, ce);
+            outL[(size_t) m] = fr[0];
+            outR[(size_t) m] = fr[1];
+            live[(size_t) m] = c;
+        }
+    }
+    anabasis::TruePeakEstimator meter;
+    meter.prepare();
+    tpceiling::Annex2Meter annex2;
+    Over o;
+    for (int m = 0; m < dur; ++m)
+    {
+        const float fr[2] = { outL[(size_t) m], outR[(size_t) m] };
+        float tp[2] = {};
+        meter.processFrame (fr, 2, tp);
+        const float a = juce::jmax (annex2.push (0, fr[0]), annex2.push (1, fr[1]));
+        o.sampleDb = juce::jmax (o.sampleDb, juce::Decibels::gainToDecibels (juce::jmax (std::abs (fr[0]), std::abs (fr[1])) / live[(size_t) m], -200.0f));
+        const int seg = m - 6;
+        if (seg < 0 || seg + 1 >= dur)
+            continue;
+        const float ref = juce::jmin (live[(size_t) seg], live[(size_t) seg + 1]);
+        o.meterDb  = juce::jmax (o.meterDb, juce::Decibels::gainToDecibels (juce::jmax (tp[0], tp[1]) / ref, -200.0f));
+        o.annex2Db = juce::jmax (o.annex2Db, juce::Decibels::gainToDecibels (a / ref, -200.0f));
+    }
+    o.reachDb = juce::jmax (o.meterDb, o.annex2Db);
+    return o;
+}
+} // namespace lowrate
+
+static void testTruePeakModeHoldsTheCeilingBelow44k()
+{
+    // 1. THE RAIL: one predicate, the engine's and the Ceiling unit's.
+    check (! anabasis::truePeakPathEngages (11999.0) && anabasis::truePeakPathEngages (12000.0),
+           "tpLowRate: true-peak mode engages from 12 kHz (11999 Hz: not)");
+    check (! anabasis::truePeakPathEngages (11025.0) && ! anabasis::truePeakPathEngages (8000.0),
+           "tpLowRate: …not at 11.025 or 8 kHz, where no bound supports the promise through a full-range cut");
+    check (! anabasis::truePeakPathEngages (4801.0) && ! anabasis::truePeakPathEngages (3901.0),
+           "tpLowRate: …nor in the rest of the band the path would fit (4801 Hz up)");
+    check (! anabasis::truePeakPathEngages (0.0) && ! anabasis::truePeakPathEngages (-96000.0),
+           "tpLowRate: …and never at a zero or negative rate");
+    bool allHostRates = true;
+    for (const double sr : { 12000.0, 16000.0, 22050.0, 24000.0, 32000.0, 44100.0, 48000.0,
+                             88200.0, 96000.0, 176400.0, 192000.0, 352800.0, 384000.0, 705600.0, 768000.0 })
+        allHostRates = allHostRates && anabasis::truePeakPathEngages (sr);
+    check (allHostRates, "tpLowRate: …at every common host rate from 12 kHz to 768 kHz");
+    for (const double sr : { 11999.0, 12000.0 })
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 64, 2);
+        anabasis::EngineParameters p;
+        p.truePeakMode = true;
+        p.lookaheadMs  = 10.0f;
+        juce::AudioBuffer<float> buf (2, 64);
+        buf.clear();
+        for (int b = 0; b < 250; ++b)
+            engine.process (buf, p);
+        const int line = anabasis::maxLookaheadSamples (sr)
+                       - (sr >= 12000.0 ? anabasis::CeilingClamp::truePeakDelayFor (sr) : 0);
+        check (engine.engagedWindowSamples() == line,
+               sr >= 12000.0 ? "tpLowRate: at 12 kHz the engine runs the true-peak path (the 10 ms window is the line it leaves)"
+                             : "tpLowRate: at 11999 Hz it does not (the whole allowance is the limiter's)");
+    }
+
+    // 2. THE BURSTS THAT READ OVER ON 0.2.15, engine-level, where they were
+    //    found — the three at engaged rates against the true-peak promise.
+    struct Case { double sr; const float (*burst)[32]; long offset; float fromDb, toDb; long total; const char* name; };
+    const Case cases[] = { { 22050.0, &lowrate::kBurst22050, 196, 0.0f, -20.0f, 2688, "22.05 kHz cut" },
+                           { 32000.0, &lowrate::kBurst32000, 315, 0.0f, -20.0f, 3200, "32 kHz cut" },
+                           { 16000.0, &lowrate::kBurst16000,   0, -20.0f, -20.0f, 2432, "16 kHz static" } };
+    for (const auto& c : cases)
+    {
+        const long cutAt = 1024;
+        const auto o = lowrate::renderBurst (c.sr, *c.burst, cutAt + c.offset, juce::exactlyEqual (c.fromDb, c.toDb) ? 0 : cutAt,
+                                             c.fromDb, c.toDb, c.total);
+        const juce::String what = juce::String ("tpLowRate: ") + c.name;
+        check (o.sampleDb <= 1.0e-5f, (what + ": (premise) every emitted sample is at or under the live ceiling").toRawUTF8());
+        check (o.reachDb > -0.5f, (what + ": (premise) the burst's reading reaches the live ceiling").toRawUTF8());
+        check (o.meterDb <= 0.1f && o.annex2Db <= 0.1f,
+               (what + ": the burst that read up to +0.157 dB over on 0.2.15 holds 0.1 dB on both defining meters").toRawUTF8());
+        if (o.meterDb > 0.1f || o.annex2Db > 0.1f)
+            std::printf ("       tpLowRate %s: %+.4f / %+.4f dB\n", c.name, (double) o.meterDb, (double) o.annex2Db);
+    }
+    {   // …and the fourth, at 8 kHz, where the path no longer engages: the
+        // promise there is the sample-peak one (the Ceiling reads dB).
+        const auto o = lowrate::renderBurst (8000.0, lowrate::kBurst8000, 1024, 0, -20.0f, -20.0f, 3200);
+        check (o.sampleDb <= 1.0e-5f,
+               "tpLowRate: at 8 kHz, below the rail, TP mode holds the burst's sample peaks (the sample-peak ceiling)");
+    }
+
+    // 3. All four bursts across the engaged low rates, three cuts and OS off / 2x / 4x.
+    float worst = -200.0f;
+    int   runs = 0;
+    for (const double sr : { 12000.0, 16000.0, 22050.0, 24000.0, 32000.0 })
+        for (const auto* burst : { &lowrate::kBurst8000, &lowrate::kBurst16000, &lowrate::kBurst22050, &lowrate::kBurst32000 })
+            for (const auto& cut : { std::pair<float, float> { 0.0f, -20.0f }, { -1.0f, -12.0f }, { -6.0f, -9.0f } })
+                for (const int os : { 0, 1, 2 })
+                    for (const long offset : { 40L, (long) (0.017 * sr) })
+                    {
+                        const auto o = lowrate::renderBurst (sr, *burst, 1024 + offset, 1024, cut.first, cut.second,
+                                                             1024 + (long) (0.06 * sr), os, 0.12f * juce::Decibels::decibelsToGain (cut.second + 20.0f));
+                        worst = juce::jmax (worst, o.meterDb, o.annex2Db);
+                        ++runs;
+                    }
+    check (worst <= 0.1f, "tpLowRate: the bursts across 12-32 kHz, three Ceiling cuts and OS off / 2x / 4x hold 0.1 dB on both meters");
+    if (worst > 0.1f)
+        std::printf ("       tpLowRate: worst %+.4f dB over %d renders\n", (double) worst, runs);
+
+    // 4. THE CLAMP, driven as the engine drives it — at 8 kHz, below the
+    //    engine's rail, because the law is the same there and the glide step is
+    //    the widest. The reversal found against this gain law reads over with
+    //    the emission-only stamp of 0.2.15 — the premise that it exercises the
+    //    hole — and holds with the engine's min(entry, emission) stamp; 0.2.15's
+    //    own worst reversals (8 and 48 kHz) and the searched 8 kHz plain cut
+    //    (+0.087 dB, the worst a search found — a search, not a bound, which is
+    //    why the rail sits at 12 kHz) hold too.
+    {
+        const auto live = lowrate::driveClamp (lowrate::kReversal8000, false);
+        const auto held = lowrate::driveClamp (lowrate::kReversal8000, true);
+        check (live.annex2Db > 0.1f,
+               "tpLowRate clamp: (premise) the 8 kHz reversal reads over with an emission-only stamp");
+        check (held.sampleDb <= 1.0e-5f && held.meterDb <= 0.1f && held.annex2Db <= 0.1f,
+               "tpLowRate clamp: the 8 kHz Ceiling reversal holds 0.1 dB with the min(entry, emission) stamp");
+    }
+    struct V { const lowrate::ClampVector* v; bool atCeiling; const char* name; };
+    for (const auto& c : { V { &lowrate::kBaseReversal8000, false, "8 kHz reversal (+0.60 dB on 0.2.15)" },
+                           V { &lowrate::kReversal48000,    false, "48 kHz reversal (+0.30 dB on 0.2.15)" },
+                           V { &lowrate::kCut8000,          true,  "8 kHz plain cut" } })
+    {
+        const auto o = lowrate::driveClamp (*c.v);
+        const juce::String what = juce::String ("tpLowRate clamp: ") + c.name;
+        check (o.sampleDb <= 1.0e-5f, (what + ": (premise) the backstop holds every sample").toRawUTF8());
+        if (c.atCeiling)
+            check (o.reachDb > -0.5f, (what + ": (premise) the output reaches the live ceiling").toRawUTF8());
+        check (o.meterDb <= 0.1f && o.annex2Db <= 0.1f, (what + ": holds 0.1 dB on both defining meters").toRawUTF8());
+        if (o.meterDb > 0.1f || o.annex2Db > 0.1f)
+            std::printf ("       tpLowRate clamp %s: %+.4f / %+.4f dB\n", c.name, (double) o.meterDb, (double) o.annex2Db);
     }
 }
 
@@ -8452,6 +8858,7 @@ int main()
     testOfflineEntryDropsTheEngagementTail();
     testTruePeakModeHoldsTheCeilingUnderAutomation();
     testTruePeakModeBoundsTheStepAtACeilingCut();
+    testTruePeakModeHoldsTheCeilingBelow44k();
     testTruePeakModeCapsTheWindowNotTheLatency();
     testDuckWrapsTruePeakLatch();
     testTruePeakModeIsExactBelowTheCeiling();

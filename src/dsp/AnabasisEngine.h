@@ -584,9 +584,11 @@ private:
     // takes. Latched with the OS configuration (same silent bottom, same
     // refill), because moving `clampDelay` moves the region's line length.
     // `tpClampFits` is the rail for a sample rate too low for the path to fit
-    // inside the allowance at all (unreachable from a conforming host); the
-    // wanted value is computed through it so the comparison cannot request a
-    // rewire the latch would refuse, block after block.
+    // inside the allowance, or below CeilingClamp::kMinTruePeakRate (12 kHz,
+    // KI-025 / ADR-0046: under it no bound keeps a full-range Ceiling cut's
+    // revision step inside the tolerance); the wanted value is computed
+    // through it so the comparison cannot request a rewire the latch would
+    // refuse, block after block.
     bool appliedTpClamp = false;
     bool tpClampFits    = true;
     int  clampDelay     = 0;          // 0, or clamp.truePeakDelay() while applied

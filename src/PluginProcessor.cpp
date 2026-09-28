@@ -26,6 +26,8 @@ AnabasisAudioProcessor::AnabasisAudioProcessor()
     // the fallback " dB".
     ceilingUnit.truePeakRaw.store (apvts.getRawParameterValue (pid::truePeakMode),
                                    std::memory_order_relaxed);
+    // …and the rate it can engage at: dBTP only where the path runs (ADR-0046).
+    ceilingUnit.preparedPair.store (&grHistoryRing, std::memory_order_relaxed);
     macroEngine   = std::make_unique<MacroEngine> (apvts);
     presetManager = std::make_unique<PresetManager> (apvts, internalState);
 

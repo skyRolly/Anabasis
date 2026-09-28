@@ -131,14 +131,20 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     limiter.prepare (sampleRate, delaySamples * maxN);   // wedge sized for 16x
     // ADR-0041: the true-peak path's rings are sized here, and whether it fits
     // inside the allowance at all is decided here — the line it leaves behind
-    // must still hold the minimum 0.5 ms window. Every conforming rate fits
-    // with room to spare (42 of 480 samples at 48 kHz); the rail is for the
-    // host-supplied rate the comment at the top of this function describes.
+    // must still hold the minimum 0.5 ms window. It takes 46 of 480 samples
+    // at 48 kHz and a constant 46 at every rate below 66 kHz (KI-025: the
+    // attack's 16-sample floor), so it would fit at integer rates from
+    // 4801 Hz; it is ENGAGED from CeilingClamp::kMinTruePeakRate (12 kHz), the
+    // lowest common rate at which a full-range Ceiling cut's revision step is
+    // kept under the 0.1 dB tolerance by a derived bound as well as by search
+    // (the glide step 0.9 / (0.02·sr) grows as the rate falls; the table is at
+    // the constant). Below either, the rail runs the sample clip, as the comment
+    // at the top of this function describes for any host-supplied rate that
+    // leaves no room.
     clamp.prepare (sampleRate);
     ceilInFlight.assign ((size_t) clamp.truePeakDelay(), 0.0f);
     engageTail.prepare (sampleRate);
-    tpClampFits = delaySamples - clamp.truePeakDelay()
-                  >= (int) std::ceil (kMinLookaheadMs * 0.001 * sampleRate);
+    tpClampFits = truePeakPathEngages (sampleRate);
     dryMeter.prepare (sampleRate);
     wetMeter.prepare (sampleRate);
     outMeter.prepare (sampleRate);
@@ -641,7 +647,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
                                               p.lookaheadMs);
     // The window cannot outgrow the line it reads, and in true-peak mode the
     // line is the allowance LESS the clamp's share (ADR-0041): a 10 ms setting
-    // engages 10 ms − 0.875 ms at 48 kHz there. The cap follows the APPLIED
+    // engages 10 ms − 0.958 ms at 48 kHz there. The cap follows the APPLIED
     // composition, so it moves only at the silent bottom that moves the line.
     const int   lineSamples   = delaySamples - clampDelay;
     const float windowTarget  = juce::jlimit (1.0f, (float) lineSamples,
@@ -968,8 +974,19 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         const float gIn   = inputGain.getNextValue();
         const float gPush = pushGain.getNextValue();
         ceilArr[(size_t) n] = ceilingLinear.getNextValue();
+        // The LOWER of the ceiling at entry and the predicted ceiling at
+        // emission (the PR #42 review of 0.2.15): identical on a static
+        // ceiling and during a descent (the emission value is the lower
+        // there), and during an ASCENT the frame answers to its entry value —
+        // so a reversal mid-ascent (−20 → 0 → −20 dB) revises stamps that were
+        // never raised to the rising trajectory, instead of pulling them down
+        // by both slopes at once, which let the segment straddling the
+        // emission point read +0.30 dB (Annex 2) over the live ceiling at
+        // 48 kHz at clamp level in 0.2.15 (+0.60 dB at 8 kHz). The cost: an
+        // upward glide reaches the output up to clampDelay samples later in
+        // TP mode — under the ceiling, never over.
         if (appliedTpClamp)
-            ceilEmitArr[(size_t) n] = ceilingAhead.getNextValue();
+            ceilEmitArr[(size_t) n] = juce::jmin (ceilingAhead.getNextValue(), ceilArr[(size_t) n]);
         const int wBase = juce::jlimit (1, delaySamples - clampDelay,
                                         juce::roundToInt (windowSamples.getNextValue()));
         wArr[(size_t) n] = wBase;

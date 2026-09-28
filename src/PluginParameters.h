@@ -3,6 +3,8 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <atomic>
 #include "dsp/EngineParameters.h"
+#include "dsp/GrHistoryBuffer.h"
+#include "dsp/Latency.h"
 
 // ============================================================================
 //  PluginParameters — the 50-parameter surface: DESIGN §4.2's 49 (ADR-0010)
@@ -103,10 +105,24 @@ struct CeilingUnitSource
     // ordering obligation either — this is a display query, not a handshake.
     std::atomic<const std::atomic<float>*> truePeakRaw { nullptr };
 
+    // The prepared sample rate, through the processor's ONE published pair
+    // (the GR history ring's, `preparedSampleRate()` — KI-017), so no second
+    // home for the fact and no new cross-thread signal. True-peak mode does
+    // not engage at every rate (`truePeakPathEngages`: 12 kHz and up, ADR-0046),
+    // and a readout that said dBTP where the path is not running would make
+    // the claim the suffix exists to keep honest. Before the first prepare the
+    // rate is 0 and the answer is taken at the 48 kHz every view falls back
+    // to; unwired, the same.
+    std::atomic<const anabasis::GrHistoryBuffer*> preparedPair { nullptr };
+
     bool truePeakEngaged() const noexcept
     {
         const auto* p = truePeakRaw.load (std::memory_order_relaxed);
-        return p != nullptr && p->load (std::memory_order_relaxed) >= 0.5f;
+        if (p == nullptr || p->load (std::memory_order_relaxed) < 0.5f)
+            return false;
+        const auto* ring = preparedPair.load (std::memory_order_relaxed);
+        const double rate = ring != nullptr ? ring->prepared().rate : 0.0;   // read ONCE
+        return anabasis::truePeakPathEngages (rate > 0.0 ? rate : 48000.0);
     }
 };
 
