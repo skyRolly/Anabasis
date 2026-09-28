@@ -12578,6 +12578,10 @@ static void testTheStatisticsPanelResetsOnlyFromItsResetControl()
             view.mouseDrag (event (view, p + juce::Point<float> (0.0f, 30.0f), left, 1, true));
             view.mouseUp (event (view, p + juce::Point<float> (0.0f, 30.0f), {}, 1, true));
         }
+        // The panel's own tip must not send the user to a body that is inert.
+        // A truth about the text, not its words: those are OQ-018's.
+        check (view.getTooltip().isNotEmpty() && ! view.getTooltip().containsIgnoreCase ("click"),
+               ("statsReset: (" + where + ") the panel's tooltip does not tell the user to click it").toRawUTF8());
         feed (0.5f, 2);                                  // a block top would consume a pending reset
         check (proc.meterDbTpMax() >= tp0 - 0.01f && proc.meterLufsI() > i0 - 0.5f
                  && proc.meterLra() >= lra0 - 0.5f,

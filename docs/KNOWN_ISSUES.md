@@ -250,9 +250,20 @@ open with a fade — see the note below), which forces the duck to idle at unity
 If a duck happened to be in flight at that instant — a factor/model rewire, or
 a wrapper bulk swap requested moments earlier — the processed gain steps from
 its current value (as low as 0.0 at the silent bottom) to 1.0 in one sample,
-and the latch may then clear the lookahead ring at full gain. Bounded to the
-first sample of an offline render, and the alternative (carrying a monitor
-fade into a bounce) is worse; recorded so it is not rediscovered as a defect.
+and the latch may then clear the lookahead ring at full gain. The STEP is
+bounded to the first sample of an offline render, and the alternative
+(carrying a monitor fade into a bounce) is worse; recorded so it is not
+rediscovered as a defect. *(Corrected 2026-09-28, the PR #42 review of 0.2.14:
+this paragraph used to read as if nothing else reached the render.)* What the
+unity gain then plays is whatever the pipeline holds — on this no-re-prepare
+route the engine does not reset: the lookahead ring's realtime content, and,
+when the previous realtime block latched a composition, the Post EQ's ring-out
+from before the latch (the silent bottom would have hidden it). A host that
+re-prepares before a bounce starts from an empty pipeline instead. Until
+0.2.15 a true-peak ENGAGEMENT decay (ADR-0041 decision 5) also survived the
+entry and played the last realtime frame's decay into the head of the render,
+up to +1.46 dB over the ceiling with that ring-out; the entry now drops it,
+since it belongs to the duck (`testOfflineEntryDropsTheEngagementTail`).
 
 The same latch boundary also steps two internal CONSUMERS of the dry leg that
 the duck does not cover: the §2.7 dry loudness measure and the §5.4 adaptive
@@ -1602,6 +1613,36 @@ Evidence [Verified]:
   (measured +0.63 LU); the level sweep and the clip/compressor isolation are probe measurements in
   `worklogs/2026-09-27-phase1-match-statistics-observability.md`
 - Commit: PR #42
+
+### KI-024 — A reset or an unducked latch cuts the true-peak stream to zero at full gain (2026-09-28)
+
+**Severity:** Low (inter-sample readings straddling a host-drawn stream boundary; the render read as
+a file starts from silence)
+**Status:** Confirmed, measured, pre-existing (identical before and after 0.2.15), found by the
+adversarial review of ADR-0045; not changed in the round that found it — the next true-peak item.
+**Affects:** true-peak mode, a host `reset()` mid-stream, and entering offline with a composition
+change (e.g. Force Max changing the factor) without a re-prepare
+
+Two routes clear the pipeline without the §2.8 duck: `reset()`, and the offline-entry direct adopt
+when the entry itself wants a latch (`latchOsConfig` at full gain — KI-004). The output steps from the
+last emitted value to the emptied pipeline's zeros in one sample, and the true-peak readings whose
+windows straddle that step read up to **+0.96 dB (product meter) / +0.98 dB (Annex 2)** over the
+ceiling (44.1 kHz, a +12 dB Post shelf, hot programme; the reviewer's harness, the 2026-09-28
+worklog) — the segments 2–4 samples before the zero run. The same step exists with TP off; true-peak
+mode is where it is measured against a promise.
+
+**Workaround:** none needed for a bounce — a host that re-prepares before rendering (most do) starts
+from an empty pipeline, and on the no-re-prepare route the render's first samples are the emptied
+pipeline's zeros, so the render read as a file carries no reading of the step (by construction; not
+separately measured). The readings are in the stream the host itself ended.
+**Cause:** neither route has a transition to fade — `reset()` is the host's, and the offline-entry
+latch deliberately does not duck the head of a bounce (KI-004). Closing it means a checked decay at
+the cut, as `EngagementTail` does for a TP engagement.
+
+Evidence [Verified — the reviewer's harness]:
+- Source: `src/dsp/AnabasisEngine.cpp` (`reset()`; the `! smoothersPrimed || enteringOffline` branch)
+- Test:   none asserts it (a stream spanning a reset is not a render)
+- Commit: PR #42 (recorded)
 
 ## Standing note for P1 onward
 

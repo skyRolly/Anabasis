@@ -240,7 +240,7 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
    one is unordered against an acquire load of the other, so "publish the rate you happen to read" is
    not enough. `AnabasisAudioProcessor::prepareToPlay` writes both in one thread in one sequence —
    `engine.prepare` rewinds the two spectrum rings (`src/PluginProcessor.cpp:776` →
-   `src/dsp/AnabasisEngine.cpp:68-69` → `src/dsp/ScopeBuffer.h:201-205`), then
+   `src/dsp/AnabasisEngine.cpp:69-70` → `src/dsp/ScopeBuffer.h:201-205`), then
    the ring's `prepare` republishes the pair inside its seqlock window
    (`src/PluginProcessor.cpp:806` → `src/dsp/GrHistoryBuffer.h:217-235`; reached through
    `AnabasisEngine::prepareHistoryTimeline` since 0.2.12 round 16, which welds the producer's
@@ -274,7 +274,7 @@ no allocation per tick, no unbounded retry, no arbitrary delay.
 10. **TWO THINGS THIS BRACKET IS NOT**, stated because the short version is wrong in both:
     * **It announces the RATE, not the ring reset.** `GrHistoryBuffer::prepare` clears only when the
       (rate, block) pair CHANGED (`src/dsp/GrHistoryBuffer.h:171-178`) while `AnabasisEngine::prepare`
-      rewinds both rings UNCONDITIONALLY (`src/dsp/AnabasisEngine.cpp:68-69`), so the ordinary
+      rewinds both rings UNCONDITIONALLY (`src/dsp/AnabasisEngine.cpp:69-70`), so the ordinary
       transport-start re-prepare at an unchanged pair rewinds with the epoch standing still. That case
       cannot move the rate, which is all this bracket is about, and the rings' own `resetGeneration`
       remains the SOLE detector for it. Nothing here subsumes `resetObserved`.
@@ -471,7 +471,7 @@ Collected here so a reviewer does not have to assemble it from the prose above.
   rule this view now sits on the other side of), `:189-193` (`batchIntact`), `:217-235` (`clear`)
 - `src/PluginProcessor.cpp:776, 806` (the order the bracket's proof rests on),
   `src/PluginProcessor.h:564-568`
-- `src/dsp/AnabasisEngine.cpp:68-69`, `src/dsp/ScopeBuffer.h:197-205`
+- `src/dsp/AnabasisEngine.cpp:69-70`, `src/dsp/ScopeBuffer.h:197-205`
 - `src/gui/GrHistoryView.cpp:144` (the same reader contract, already in the tree)
 - `docs/architecture/THREAD_MODEL.md` §"Which context paints"
 - `docs/policies/THREADING_POLICY.md` (Message → Painting row)

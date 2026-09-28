@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Twenty-one such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`, `[0.2.12]`, `[0.2.13]`, `[0.2.14]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Twenty-two such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`, `[0.2.12]`, `[0.2.13]`, `[0.2.14]`, `[0.2.15]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,44 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.15] — 2026-09-28
+
+**A correctness round from the review of PR #42: two paths on which true-peak mode could let the
+output over its ceiling are closed, and GR max now reads everything its graph shows.** Nothing here
+moves the reported latency, a parameter or the saved state; with true-peak mode off, and with a
+ceiling that does not move, every rendered sample is what 0.2.14 rendered.
+
+### Fixed
+- **True-peak mode now holds the ceiling while the Ceiling is moving.** With TP on, lowering the
+  Ceiling — an automation move, a preset, a drag — let the output run above the new value for the
+  length of the 20 ms glide: the TP path's own short delay meant each sample was held to the ceiling
+  as it was just before it left the plugin. The overshoot was largest at the end of a fast cut —
+  about +1.1 dB for 0 → −12 dB and +2.7 dB for −1 → −20 dB — and was measurable on slower DAW ramps
+  too (+0.3 dB over 50 ms). Every sample is now held to the ceiling in force at the moment it leaves
+  the plugin, as with TP off: inside the 0.1 dB tolerance on either defining meter in every tested
+  case — +0.004 dB at most across the main measurement, +0.023 dB in an adversarial search, and
+  +0.071 dB in one recorded corner (a cut one host block after switching TP on, at 1-sample host
+  buffers). A static Ceiling renders exactly as before, and nothing changes with TP off.
+  [ADR-0045](docs/architecture/design-decisions/ADR-0045-true-peak-mode-answers-to-the-ceiling-in-force-at-emission.md)
+  (on the owner's direction; flagged for review). Evidence: this release. [Verified]
+- **A bounce started during a true-peak engagement no longer carries the engagement's fade.**
+  Switching TP on while audio plays fades the last output out over ~6 ms. If the host then went
+  straight into an offline render without preparing the plugin again, that fade — the tail of what
+  was playing — was added onto the head of the bounce, and together with the Post EQ's ring-out it
+  could read up to 1.5 dB over the ceiling there; the plugin's own dBTP hold read it too. The render
+  now starts without it. Evidence: this release. [Verified]
+- **GR max reads the whole history the graph draws.** It used to stop up to ~0.2 s short of the
+  graph's left edge (a little more at the highest sample rates with the smallest buffers), so a
+  reduction still visible at the left of the graph could be missing from the number. Evidence: this
+  release. [Verified]
+
+### Changed
+- **The STATISTICS panel's tooltip is back to "Waveform statistics off the output".** 0.2.14 had
+  added a sentence about BYPASS there; the wording of that announcement is the owner's decision
+  ([`OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) OQ-018), and the behaviour stays documented in the
+  user manual (§3.4). The "lim GR" / "GR max" captions ship as flagged placeholders (OQ-019).
+  Evidence: this release. [Verified]
 
 ## [0.2.14] — 2026-09-27
 

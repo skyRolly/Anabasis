@@ -458,6 +458,37 @@ rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStradd
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
 
+**Addendum (2026-09-28, 0.2.15) — the third PR #42 review round: two true-peak paths, GR max, the copy
+record.** Code: (1) the offline-entry branch of `AnabasisEngine::process` resets `EngagementTail` with
+the duck and restarts the output dBTP tap when it cut a decay; (2) ADR-0045 — true-peak frames judged
+against the ceiling in force at EMISSION (`ceilingAhead` / `ceilEmitArr` / `ceilInFlight` in the
+engine, `CeilingClamp::lowerInFlightCeilings` and its per-segment history in the clamp, the region's
+`ceilingNow` on the same value in TP mode, `AnabasisEngine::kCeilingGlideSeconds` public so a test
+rebuilds the smoother); (3) `GrHistoryView::readingFrom (ring, cols)` over the graph's drawn range in
+two lap-certified chunks, `plotColumns` shared with `paintHistory`; (4) the STATISTICS panel tooltip
+back to its recorded 0.1.1 wording. Rows engaged: **ADR** — ADR-0045 (new), ADR-0041 (dated
+amendment banner for decision 3, implementation note for decision 5), `ADR_INDEX.md` (row and
+amendment registry). **Policy** — `DSP_POLICY.md` invariant 4's guard list (the automation guard with
+its reference stated, the offline-entry guard). **Known issues** — KI-024 added (a reset or an unducked latch cuts the TP stream at full gain; pre-existing, found by the adversarial review), KI-004 corrected (the offline-entry
+route was described as bounded to one sample; the pipeline plays at unity, and the decay no longer
+reaches the render). **User manual** — §3.4 GR max. **Performance** — `PERFORMANCE_BUDGET.md`'s
+readout span and cost. **Procedure** — `procedures/TESTING.md` (a lap is constructed, not raced for).
+**Open questions** — OQ-018 (the tooltip's bypass announcement; interim applied) and OQ-019 (the GR
+readout's captions). **Effects tier** — `tests/realtime_effects.cpp` drives `lowerInFlightCeilings`
+and the tail reset (a seeded allocation in the former is reported at the driver's call). **New/changed
+tests** — `testOfflineEntryDropsTheEngagementTail`, `testTruePeakModeHoldsTheCeilingUnderAutomation`,
+`testTruePeakModeBoundsTheStepAtACeilingCut` (invariant 8's second yielding place, prescribed text in ADR-0045),
+`testTheGrReadoutReadsTheRingItNames` (rewritten, deterministic), `testTheTickMaxIsTheDeepestEntryTheGraphDraws`,
+a tooltip truth check in `testTheStatisticsPanelResetsOnlyFromItsResetControl`. **Ship a version** —
+`CHANGELOG.md` 0.2.15, `CMakeLists.txt`, `HANDOVER.md`, `README.md` (2233 = 649 + 1584),
+`REPOSITORY_MAP.md`. **Add a document** — `docs/reports/2026-09-28-pr42-review-closure.md` and
+`worklogs/2026-09-28-pr42-review-tp-contract.md`; the 2026-09-27 Phase 1 roadmap gains a dated
+forward pointer and is otherwise not edited. Drift reported and corrected with evidence: the engine's
+"behave exactly like the re-prepare path" comment (the pipeline is not reset on that route), the
+"same instantaneous ceiling" comments (true in TP-off only until this round), KI-004's "bounded to the
+first sample". Drift reported, not corrected here: `ADR_INDEX.md`'s policy-amendment registry lists
+five ADRs and none of the later ones that amended a policy (0041, 0043, 0044, 0045).
+
 **Addendum (2026-09-27, 0.2.14) — the Phase 1 records: the roadmap, the gates and the hosts.**
 Documentation only. **Add a document** — `docs/reports/2026-09-27-phase1-roadmap.md`, the durable
 Phase 1 follow-up: per-finding status after this round (UX-009, UX-002, VIS-001, VIS-009, DOC-002,

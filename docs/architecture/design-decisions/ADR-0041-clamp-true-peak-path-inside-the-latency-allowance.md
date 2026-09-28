@@ -37,6 +37,23 @@ completed at acceptance — and explicitly *not* of the voicing constants (attac
 10 ms), which stay ⊕ listening material, nor of the TP-mode cost at ≥ 4× over DESIGN §9's
 limiter + TP-detection row (`PERFORMANCE_BUDGET.md`), which stays recorded.
 
+> **Amended 2026-09-28 by [ADR-0045](ADR-0045-true-peak-mode-answers-to-the-ceiling-in-force-at-emission.md)
+> (decision 3; on the owner's direction, ⊕ for review).** "Each frame carries the ceiling the limiter
+> used for it" made every true-peak frame answer to the ceiling in force when it ENTERED the clamp,
+> `truePeakDelay` samples before it left — so while the Ceiling descended the output read up to
+> +2.7 dB (−1 → −20 dB) over the ceiling the smoother held at that instant, where the TP-off clip,
+> which reads the live value, had none. Each frame now answers to the ceiling in force at its
+> EMISSION (the smoother's deterministic glide, run ahead; frames in flight revised at a retarget),
+> and the limiter plays to the same value in true-peak mode. Decision 3 is otherwise unchanged; the
+> latency composition, the three readings, the gain law and every static-ceiling sample are.
+>
+> **Implementation note 2026-09-28 (decision 5, not an amendment).** "Adopted directly … on entering
+> offline" did not hold for an engagement decay in flight: the offline-entry branch forced the duck
+> to unity and left `EngagementTail` running, so the last realtime frame's decay played into the head
+> of the render (up to +1.46 dB over the ceiling with the Post EQ's ring-out). The branch now resets the
+> decay with the duck, and restarts the output dBTP tap when it cut one
+> (`testOfflineEntryDropsTheEngagementTail`; `KNOWN_ISSUES.md` KI-004).
+
 > **Revised 2026-09-27, before acceptance (review of PR #42).** A review found that ENGAGING true-peak
 > mode while audio plays leaked the requested ceiling: the latch waited for the §2.8 duck's out-leg,
 > and that out-leg is emitted by the composition being replaced, whose clamp is the sample clip —

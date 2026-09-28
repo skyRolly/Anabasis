@@ -174,7 +174,7 @@ Universal gestures:
 | Control | Range | What it does |
 |---|---|---|
 | **Loudness** | 0 … 100 | The big knob: how hard the adaptive chain pushes (§4). At 0 it applies no push — but the Ceiling still holds, so anything already hotter than it is still limited. |
-| **Ceiling** | −20 … 0 dB, default −0.1 | The output limit — nothing leaves the plugin above it. Two toggles sit beside it. **TP** decides what the number *means*: off (the default) the limit is on **sample peaks** and the readout says `dB`; on, the limiter detects true peaks and the final ceiling clamp holds the waveform *between* the samples too, at every Oversampling setting — inter-sample peaks are caught and the readout says `dBTP`. It is the same parameter as the Advanced limiter zone's TP switch (§3.3). **LOCK** keeps the ceiling's *value* fixed while you browse presets — the value only: a factory preset still turns TP (and Dither) off (§7.3). |
+| **Ceiling** | −20 … 0 dB, default −0.1 | The output limit — nothing leaves the plugin above it. Two toggles sit beside it. **TP** decides what the number *means*: off (the default) the limit is on **sample peaks** and the readout says `dB`; on, the limiter detects true peaks and the final ceiling clamp holds the waveform *between* the samples too, at every Oversampling setting — inter-sample peaks are caught and the readout says `dBTP`. A Ceiling move glides over 20 ms, and every sample is held to the value in force at the moment it leaves the plugin, with TP on as with TP off (since 0.2.15; before, TP mode lagged a lowered Ceiling by under a millisecond and could overshoot it by up to ~3 dB during the glide). It is the same parameter as the Advanced limiter zone's TP switch (§3.3). **LOCK** keeps the ceiling's *value* fixed while you browse presets — the value only: a factory preset still turns TP (and Dither) off (§7.3). |
 | **Character** | 0 … 1 | Clean ↔ Color: how much of the push is done with saturation character rather than clean limiting. |
 | **Tone** | −1 … +1 | Dark ↔ bright tilt of the overall result. |
 
@@ -278,7 +278,9 @@ The **STATISTICS** panel — the same eight readings in both Simple and Advanced
   panels' own GR meters use, so the two read against each other directly.
 - **The limiter's reduction as a number** (since 0.2.14) — under **out LUFS** in Simple, and in
   the foot of the LIMITER panel in Advanced: **lim GR** is the limiter's gain reduction now, in
-  dB (the deepest over the last 0.3 s), and **GR max** the deepest over the GR history window.
+  dB (the deepest over the last 0.3 s), and **GR max** the deepest the GR history graph shows —
+  every point of it, the oldest at its left edge included (since 0.2.15; it used to stop up to
+  ~0.2 s short of the graph's left edge).
   It is the same figure the GR history draws — the **limiter's** reduction only; the
   compressor's shows on its own COMP meter, and the clipper's is not measured. It works in
   either graph view. **lim GR** reads "-" when nothing has been processed yet or when your

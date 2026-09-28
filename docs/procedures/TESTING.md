@@ -283,6 +283,18 @@ back to rings nothing was written to must hold its trace bit-identically
 must reach the first visible frame as the floor
 (`testARePrepareWhileHiddenDoesNotReachTheFirstVisibleSpectrumFrame`).
 
+**A lap is constructed, not raced for** (0.2.15, the PR #42 review). The numeric GR readout's lap
+discipline was first tested with a real producer thread pushing while the readout scanned, with a
+premise that it had pushed during the scans. Under valgrind — the `sanitizers` job — threads run one
+at a time and the compute-bound reader kept the lock, so the premise failed intermittently (0–4
+pushes in 60 scans; 3 of 20 standalone runs). `GrHistoryView::readingFrom` is a template on the ring
+type for this reason only, and the suite hands it a ring adaptor that pushes a chosen burst at a
+chosen PEEK — the exact interleaving a concurrent producer creates, at an exact entry, on one
+thread. That turns "stays live while the producer pushes" into a boundary the test can pin from both
+sides: each certified chunk absorbs exactly its slack and not one push more, and a scan that did read
+an overwritten slot (the premise, counted by the adaptor) is never published. Prefer this form for
+any SPSC reader test: a scheduling-dependent premise is a flaky test under every serialising tool.
+
 The 0.2.12 review round added one more thing the suite could not previously see: a defect that is
 not in either trace but in the PAIR. `SpectrumView` draws two traces from two rings the audio thread
 publishes with one release-store each, and the question — do the two traces describe the same span

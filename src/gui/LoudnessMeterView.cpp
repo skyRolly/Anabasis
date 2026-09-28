@@ -5,9 +5,10 @@ using namespace abgui;
 
 juce::String LoudnessMeterView::tooltipText()
 {
-    // No trailing period: the editor's `tidyTip` rule for every other tip.
-    return "Waveform statistics off the output - a bypass you listen to is not "
-           "measured into the session figures";
+    // The 0.1.1 wording (ADR-0020), verbatim; its "Click to reset" sentence
+    // is RESET's tooltip now (amendment 4). Whether this tip also announces
+    // the realtime bypass pause is OQ-018 — C8, the owner's words.
+    return "Waveform statistics off the output";
 }
 
 juce::String LoudnessMeterView::sessionTimeText (float seconds)

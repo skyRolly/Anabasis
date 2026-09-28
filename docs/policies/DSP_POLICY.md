@@ -117,7 +117,12 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    two meters the definition below names, each checked on its own;
    and, for the moment the promise is made, `testTruePeakEngagementHoldsTheCeiling` — true-peak mode
    engaged MID-STREAM on hostile programme, every reading from the toggle on (ADR-0041 decision 5,
-   revised in the PR #42 review).
+   revised in the PR #42 review); for "any automation rate", `testTruePeakModeHoldsTheCeilingUnderAutomation`
+   — instant and ramped cuts, a ±6 dB zig-zag, rises and a static ceiling, every reading and every
+   emitted sample checked against the LIVE smoothed ceiling at the output sample, the value the TP-off
+   clip holds (ADR-0045); and for a render entered during an engagement,
+   `testOfflineEntryDropsTheEngagementTail` (the render read as a file, on both meters and on the
+   engine's own dBTP tap).
    **What "dBTP" means in this promise is defined, not assumed** (ADR-0043, 2026-09-27; audit
    finding DSP-001 sub-item (a)). In true-peak mode the tolerance applies to each of two meters
    reading the output: (i) the product's own dBTP estimator, `TruePeakEstimator` (4× polyphase,
@@ -179,7 +184,12 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    composition after dBTP was asked for. The decay is value-continuous; where the audio just
    before the toggle would ring above the ceiling it starts lower, the one place this invariant
    yields to invariant 4 — no lower than −1.7 dB over a 248-configuration hostile sweep, −3.2 dB
-   for a synthetic full-scale Nyquist-rate history.)*
+   for a synthetic full-scale Nyquist-rate history.)* *(A second place, since ADR-0045, 2026-09-28: in
+   true-peak mode a DOWNWARD Ceiling retarget, with the output at the ceiling, may drop the clamp's
+   gain within one sample by up to about (16 + A/2 + 1) glide steps — 0.0185 on 0.9 DC for a
+   −1 → −20 dB cut at 48 kHz, where TP-off glides 0.0008 per sample — because frames already in
+   flight get the new ceiling with less notice than the attack ramp needs;
+   `testTruePeakModeBoundsTheStepAtACeilingCut` bounds it.)*
    Guarded by: the click-free transition tests (one per switchable path) — the three bulk-swap
    routes by `testAbSwitchRequestsDuck`, `testUndoRequestsDuck` and the preset bracket's duck
    request; the true-peak mode by `testDuckWrapsTruePeakLatch` and, for the engagement decay's
