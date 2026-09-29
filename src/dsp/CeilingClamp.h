@@ -45,9 +45,12 @@
 //  than adding it to the reported latency (ADR-0041, amending ADR-0004 for
 //  TP mode only) — the reported figure never moves.
 //
-//  THE CEILING A FRAME IS JUDGED AGAINST is the one in force when it is
-//  EMITTED, truePeakDelay steps after it enters: the engine hands each frame
-//  the value its ceiling smoother will have then (the smoother is a
+//  THE CEILING A FRAME IS JUDGED AGAINST is the LOWER of the one in force
+//  when it is EMITTED, truePeakDelay steps after it enters, and the one in
+//  force when it entered (ADR-0046 decision 4: the same on a static or a
+//  falling ceiling; on a rising one the frame answers to its entry value).
+//  The engine hands each frame that minimum, the emission value being the
+//  value its ceiling smoother will have then (the smoother is a
 //  deterministic linear ramp between block-rate retargets, so the engine runs
 //  a copy of it truePeakDelay steps ahead). A retarget at a block top can move
 //  that future below what the frames already in flight were judged against;
@@ -301,8 +304,10 @@ public:
 
     int truePeakDelay() const noexcept { return delay; }
 
-    // Push one frame (post-EQ, all channels) with the ceiling that will be in
-    // force when it is EMITTED, `truePeakDelay()` steps from now; `frame` is
+    // Push one frame (post-EQ, all channels) with the ceiling it answers to:
+    // the engine passes the lower of the ceiling in force now and the one in
+    // force when it is EMITTED, `truePeakDelay()` steps from now (ADR-0046
+    // decision 4); `frame` is
     // replaced by the frame that entered `truePeakDelay()` steps ago, reduced
     // so its true peak (as ClampTruePeakDetector reads it, the largest of its
     // three readings) stays at or under ITS OWN stored ceiling (as lowered by

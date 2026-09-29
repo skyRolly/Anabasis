@@ -512,7 +512,9 @@ private:
     // emits each frame clampDelay base samples after it enters, so the limiter
     // and the clamp judge it against the ceiling in force THEN — `ceilingAhead`
     // is ceilingLinear run clampDelay samples ahead (re-derived at every block
-    // top), `ceilEmitArr` its per-base-sample value, `ceilInFlight` the new
+    // top), `ceilEmitArr` the lower of its per-base-sample value and `ceilArr`'s
+    // (ADR-0046 decision 4: on a rising ceiling a frame answers to its entry
+    // value), `ceilInFlight` the new
     // trajectory's value at the emission of each frame already in flight at a
     // block top (CeilingClamp::lowerInFlightCeilings).
     juce::SmoothedValue<float> ceilingAhead { 0.8912509f };

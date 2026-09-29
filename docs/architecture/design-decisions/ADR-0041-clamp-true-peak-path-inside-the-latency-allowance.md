@@ -49,7 +49,11 @@ limiter + TP-detection row (`PERFORMANCE_BUDGET.md`), which stays recorded.
 > readings and the backstop are unchanged. Decision 4's rail — "no conforming rate reaches it" — is
 > replaced by a stated rate contract: the path engages from 12 kHz (`truePeakPathEngages`), and
 > below it the sample clip runs and the Ceiling reads dB. The text below keeps the figures it was
-> accepted with.
+> accepted with. *(Ratified 2026-09-29: ADR-0046 cleared the Architecture Review Gate on the owner's
+> explicit approval, so this amendment, filed ⊕ for review on 2026-09-28, is in effect. Its
+> figures read more precisely in ADR-0046's ratification note: the D of the text below was up to
+> 45 below 62 kHz, so the TP-mode window is shorter from 12 kHz to below 62 kHz and unchanged from
+> 62 kHz.)*
 >
 > **Amended 2026-09-28 by [ADR-0045](ADR-0045-true-peak-mode-answers-to-the-ceiling-in-force-at-emission.md)
 > (decision 3; on the owner's direction, ⊕ for review).** "Each frame carries the ceiling the limiter
@@ -60,6 +64,10 @@ limiter + TP-detection row (`PERFORMANCE_BUDGET.md`), which stays recorded.
 > EMISSION (the smoother's deterministic glide, run ahead; frames in flight revised at a retarget),
 > and the limiter plays to the same value in true-peak mode. Decision 3 is otherwise unchanged; the
 > latency composition, the three readings, the gain law and every static-ceiling sample are.
+> *(Added 2026-09-29: ADR-0045 itself stays ⊕ pending the owner's review. The stamp it set is in
+> turn amended by ADR-0046, ratified 2026-09-29: a true-peak frame answers to the LOWER of the
+> ceiling at its entry and the one predicted at its emission — the same on a static or falling
+> ceiling; on a rising one, the entry value — and the limiter plays to that same value.)*
 >
 > **Implementation note 2026-09-28 (decision 5, not an amendment).** "Adopted directly … on entering
 > offline" did not hold for an engagement decay in flight: the offline-entry branch forced the duck

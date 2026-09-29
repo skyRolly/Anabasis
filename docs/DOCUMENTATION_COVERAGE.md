@@ -6,7 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.16 (2026-09-28) — the fourth PR #42 review round** (addendum below; the
+**Last updated:** for **the ADR-0046 ratification (2026-09-29, still 0.2.16)** — ADR-0046 accepted at
+the Architecture Review Gate and recorded in the four places, and the low-rate true-peak contract
+stated in the user-facing documents (addendum below). Before that, for **0.2.16 (2026-09-28) — the
+fourth PR #42 review round** (addendum below; the
 0.2.15 round added its addendum without moving this line). Before that, for **0.2.14 (2026-09-27) — Phase 1 of the 2026-09-26 audit** (addenda below).
 Before that, for **the Phase 0 closure (2026-09-27, still 0.2.13)** — ADR-0041 and ADR-0042
 accepted by the owner, KI-006 closed as INC-007 (addendum below). Before that, for **the PR #42 review
@@ -458,6 +461,42 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-29, still 0.2.16) — ADR-0046 ratified at the Architecture Review Gate, recorded
+in the four places, and the low-rate true-peak contract stated.** The owner approved ADR-0046 at the
+gate; the instruction of record is quoted in its Status, and the brief's "from Proposed" is recorded
+there as drift — the record had been filed `Accepted` on the owner's direction, ⊕ for review, so
+acceptance is its ratification, as in `e4f9205`. This change moves no code, only comments.
+**The ADR** — a `✅ RATIFIED` banner keeping the five gate items, the ⊕ history and why the
+architecture changed; a Status naming what the approval covers and what it does not (ADR-0045,
+ADR-0041's voicing constants, OQ-020); decision 5's alternative marked not taken; decision 6 marked
+completed; a dated ratification note — (a) the re-verification against `6ee9f29`, with a per-rate
+A / D / window table (the TP-mode window shorter from 12 kHz to below 62 kHz, unchanged from 62 kHz,
+and LONGER at 3901–11999 Hz, where 0.2.15 engaged the path) and the reported-latency identity
+labelled derived, the impulse tests its measurement; (b) below 12 kHz the TP switch still moves the
+limiter's detector — a best effort, no dBTP guarantee, recorded as intended, no DSP change; (c) the
+unit at a host rate ≤ 0, a non-conforming host's limitation; (d) invariant 3's prescribed text.
+**Banners on the records it moves** — ADR-0041 (a dated note on each 2026-09-28 banner), ADR-0015
+item 5 and ADR-0004 (in effect; ADR-0004's D figure), ADR-0045 (a separately dated note naming which
+of its decisions stand and which are in force as amended; its 2026-09-28 banner kept word for word,
+the record itself still ⊕). **ADR_INDEX** — the status cells of ADR-0046 and ADR-0045, ADR-0041's D
+figure, three registry rows. **Policies and ledgers** — `DSP_POLICY.md` invariant 3 (prescribed
+text), invariant 4 (decision 6's text exactly, with a dated note of the split form it replaces; the
+guard label), the invariant → test map rows 4 and 8 (the ADR-0045 / ADR-0046 guards, which the map
+had not listed); `THREAD_MODEL.md` (ratified; the unit's read is the pair's two relaxed loads, not
+one); `KNOWN_ISSUES.md` KI-025; `FUTURE_RISKS.md` RISK-003 (triggered twice more on 2026-09-28).
+**The low-rate contract where a user reads it** — `USER_MANUAL.md` §1, §2.4 step 5 (the unit follows
+the switch and the rate), §3.2 (the dBTP ceiling needs 12 kHz or more; below it the Ceiling holds
+sample peak, not dBTP, whatever the switch says, and the switch still helps the limiter), §3.3
+(below 12 kHz the whole 10 ms goes to the limiter), §3.4 (a red TP reading below 12 kHz is a real
+over), §6, §8; `COMPATIBILITY_MATRIX.md` §Sample rates (its "true-peak mode is not available"
+replaced, with a dated note). No UI string is touched (C8; OQ-020 stays open). **Living copy the
+sweep found stale** — `PARAMETER_REGISTRY.md` note 15; code comments in `CeilingClamp.h`,
+`AnabasisEngine.h` and `AnabasisEngine.cpp` (the emission-only stamp), `Latency.h` (the rail's
+"TP mode is not applied"), `PluginEditor.cpp` (the unit), `dsp_tests.cpp` (D = 42) and
+`state_tests.cpp` (the round-19 quote kept, ADR-0046's wording appended). **Ship a version** —
+`HANDOVER.md` (the Current Version row, the Pending Tasks lead). Historical records — worklogs,
+dated reports, CHANGELOG entries, earlier addenda and dated banners' words — are not edited.
 
 **Addendum (2026-09-28, 0.2.16) — the fourth PR #42 review round: the low-rate true-peak contract,
 KI-024, the statistics RESET.** Code: (1) ADR-0046 — `CeilingClamp`'s eased attack (`easeWeight`,

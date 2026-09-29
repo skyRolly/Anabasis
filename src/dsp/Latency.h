@@ -41,8 +41,8 @@ inline int maxLookaheadSamples (double sampleRate) noexcept
 //     the table at the constant) — which also refuses zero and negative rates;
 //   • the path fits inside the constant allowance with the limiter's minimum
 //     0.5 ms window left over (true from 4801 Hz with the 46-sample path).
-// Below it TP mode is not applied: the clamp holds sample peaks, the readout
-// says dB rather than dBTP, and the latency is unchanged.
+// Below it the clamp's TP path is off — sample peaks, the readout says dB, the
+// latency unchanged; the limiter's TP detection below 4x OS still follows the switch.
 inline bool truePeakPathEngages (double sampleRate) noexcept
 {
     return sampleRate >= CeilingClamp::kMinTruePeakRate

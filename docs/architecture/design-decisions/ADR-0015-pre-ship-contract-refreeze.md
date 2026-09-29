@@ -147,6 +147,9 @@ defaulting off, **the shipped default configuration no longer enforces a dBTP ce
    > so `CeilingUnitSource` also reads the prepared sample rate the processor already publishes
    > (the GR history ring's pair) and answers `" dB"` below 12 kHz. One predicate decides both the
    > engine's rail and the unit. The mechanism below is otherwise unchanged.
+   > *(Ratified 2026-09-29: ADR-0046 cleared the Architecture Review Gate on the owner's explicit
+   > approval, so this amendment is in effect. The wording ⊕ on the unit's copy, kept by the gate
+   > banner above, is untouched by it.)*
 
    **The Ceiling advertises the unit it enforces.** Its value text is `" dBTP"` while
    `truePeakMode` is engaged and `" dB"` otherwise. The mechanism is `CeilingUnitSource`

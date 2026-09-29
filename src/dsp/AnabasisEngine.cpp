@@ -990,8 +990,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     // ======== Stage A - base rate: input gain -> EQ(Pre) -> compressor =====
     // Also fills the per-base-sample control arrays the region indexes, so
     // the SAME instantaneous ceiling the gain computer uses reaches the
-    // clamp — `ceilArr` in TP-off, `ceilEmitArr` (the value at emission) in
-    // TP mode (ADR-0045). The EQ ticks in whichever
+    // clamp — `ceilArr` in TP-off, `ceilEmitArr` (the lower of the values at
+    // entry and emission) in TP mode (ADR-0045, ADR-0046). The EQ ticks in whichever
     // stage processes it - ticking here while Post processes in stage E
     // would hand every Post sample the block's final coefficients, a
     // block-length step that breaks the smoothing contract.
@@ -1102,10 +1102,10 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     for (int i = 0; i < regionSamples; ++i)
     {
         const int   b          = i >> osShift;
-        // The limiter plays each sample to the ceiling in force when the
-        // sample LEAVES the plug-in — at once in TP-off, where the clamp adds
-        // no delay, and clampDelay samples later in TP mode (ADR-0045), where
-        // it is the value the clamp stamps the same base sample with.
+        // The limiter plays each sample to the ceiling the clamp holds it to:
+        // the live value in TP-off, where the clamp adds no delay; in TP mode
+        // the value the clamp stamps the same base sample with (ADR-0045), the
+        // lower of entry and emission (ADR-0046: on a rise, the entry value).
         const float ceilingNow = appliedTpClamp ? ceilEmitArr[(size_t) b] : ceilArr[(size_t) b];
         const int   wOs        = wArr[(size_t) b] << osShift;
 
@@ -1369,10 +1369,10 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
 
         // ADR-0006 item 3: with true-peak mode applied the gain acts on the
         // clamp's own true-peak estimate, the hard clip under it the backstop;
-        // without, the hard clip alone. The true-peak path is handed the
-        // ceiling in force when THIS frame will be emitted (above), so every
-        // emitted sample is judged against the live ceiling at its emission;
-        // with a static ceiling that is the limiter's value exactly.
+        // without, the hard clip alone. The true-peak path is handed the lower
+        // of the ceiling at THIS frame's entry and at its emission (stage A,
+        // ADR-0046), so every emitted sample is judged at or under the live
+        // ceiling at its emission — the same value the limiter played it to.
         if (appliedTpClamp)
             clamp.processFrameTruePeak (clampFrame, nCh, ceilEmitArr[(size_t) n]);
         else

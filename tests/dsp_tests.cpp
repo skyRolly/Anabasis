@@ -3495,7 +3495,7 @@ static void testAForceMaxEntryStartsTheRenderClean()
 // ---------------------------------------------------------------------------
 // TRUE-PEAK MODE UNDER CEILING AUTOMATION (the PR #42 review of 0.2.14;
 // DSP_POLICY invariant 4: "any automation rate"). The true-peak path delays
-// its audio by D (42 samples at 48 kHz), and until 0.2.15 it judged and
+// its audio by D (46 samples at 48 kHz; 42 until 0.2.16), and until 0.2.15 it judged and
 // clipped every frame against the ceiling the frame CARRIED IN — so while the
 // 20 ms glide descended, every emitted frame answered to a ceiling D samples
 // old: up to 20·log10(1 + (D/R)(c0/c1 − 1)) dB over the ceiling the smoother
@@ -4405,8 +4405,8 @@ static void testTruePeakModeHoldsTheCeilingBelow44k()
 // ---------------------------------------------------------------------------
 // ADR-0041's composition, observed where it can be: in true-peak mode the
 // clamp's delay comes OUT of the constant allowance, so (a) the limiter's
-// window is capped at the line that is left — a 10 ms setting engages
-// 480 − 42 samples at 48 kHz, every smaller setting is untouched — and (b)
+// window is capped at the line that is left — a 10 ms setting engages 480 − 46
+// samples at 48 kHz (480 − 42 until 0.2.16), every smaller one is untouched — and (b)
 // the impulse and the reported figure are the ones testReportedLatencyMatches
 // Impulse and testOsLatencyMatrix already pin, which now run in both modes.
 static void testTruePeakModeCapsTheWindowNotTheLatency()

@@ -1689,7 +1689,8 @@ Evidence [Verified — the reviewer's harness]:
 > **✅ CLOSED — fixed at every rate the true-peak path engages (12 kHz and up), the tolerance
 > unchanged; below 12 kHz the path no longer engages.** Closed by
 > [ADR-0046](architecture/design-decisions/ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md)
-> (on the owner's direction, ⊕ for review), which replaces the clamp's boxcar attack ramp with one
+> (on the owner's direction, ⊕ for review; ratified at the Architecture Review Gate on
+> 2026-09-29), which replaces the clamp's boxcar attack ramp with one
 > that eases in (geometric weights, a 16-sample floor), caps the release's rise at 1 % per sample,
 > narrows what a revision reaches, stamps each frame with min(entry, predicted emission ceiling), and
 > engages true-peak mode from 12 kHz through one predicate the Ceiling's unit shares.

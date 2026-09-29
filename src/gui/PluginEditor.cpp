@@ -2191,7 +2191,7 @@ void AnabasisAudioProcessorEditor::refreshFromModel()
         eqCurve->refresh();
     }
 
-    // -- the Ceiling's unit follows truePeakMode (ADR-0015) ------------------
+    // -- the Ceiling's unit follows the engaged TP path (ADR-0015, ADR-0046) -
     refreshCeilingUnit();
 
     // -- graph-well mode follows int_spectrumOn (the corner chips) -----------

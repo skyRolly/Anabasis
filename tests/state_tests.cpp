@@ -7005,11 +7005,11 @@ static void testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs()
     // clamp past the pairs the round-17 version had pinned as its examples.
     //
     // Round 19 also removes the last "below anything a host offers" from these
-    // assertions. That clause was doing load-bearing work for a ceiling this
-    // product does not declare — `AnabasisEngine::prepare` rails the derived
-    // lookahead and not `sr`, and `DSP_POLICY.md` invariant 4 claims the
-    // ceiling holds at "any sample rate" — so the band is stated as an entry
-    // RATE and the pairs are consequences of it.
+    // assertions. That clause was doing load-bearing work for a ceiling this product
+    // does not declare — `AnabasisEngine::prepare` rails the derived lookahead and not
+    // `sr`, and `DSP_POLICY.md` invariant 4 claims the ceiling holds at "any sample rate"
+    // (since ADR-0046: "any host sample rate", the true-peak promise from 12 kHz) — so
+    // the band is stated as an entry RATE and the pairs are consequences of it.
     check (384000.0 / 32.0 <= fullRate && 192000.0 / 16.0 <= fullRate
              && 384000.0 / 16.0 > fullRate,
            "grSeconds: (premise) the whole window still fits at 384 kHz / 32 and 192 kHz / 16, and 384 kHz / 16 is the first pair past the clamp");

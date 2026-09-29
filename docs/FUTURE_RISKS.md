@@ -72,7 +72,13 @@ tests pinned true-peak mode off. ADR-0041 (Accepted 2026-09-27) builds it; `test
 is the hostile-input guard this entry asked for, and it fails on the old code. What the risk
 still covers is recorded in `KNOWN_ISSUES.md` KI-020: the promise is defined on, and exact on, the
 two meters of `DSP_POLICY.md` invariant 4 (ADR-0043); libebur128 and a long-kernel reference still
-read a residual near Nyquist, as reference measurements outside the definition.
+read a residual near Nyquist, as reference measurements outside the definition. **Triggered twice
+more on 2026-09-28, by two of the conditions this entry names:** Ceiling automation (a descending
+Ceiling in TP mode, up to +2.7 dB for a −1 → −20 dB cut at 44.1 kHz — mitigated by ADR-0045, on the
+owner's direction, ⊕ for review) and a sample rate the suite did not cover (below 44.1 kHz, up to
++0.23 dB (KI-025's longer search; +0.157 dB as first recorded) — KI-025, closed by ADR-0046,
+ratified at the Architecture Review Gate on 2026-09-29, which also states the rates the promise
+covers: 12 kHz and up, `DSP_POLICY.md` invariant 4; below 12 kHz the Ceiling is a sample-peak one).
 
 ---
 

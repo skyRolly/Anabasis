@@ -43,6 +43,23 @@ delayed peaks" (PR #42, 2026-09-28).
 >   ADR-0046's gain law, at every rate the path engages (12 kHz and up). Its figures, and the other
 >   figures below, are kept as measured on 0.2.15.
 
+> *Added 2026-09-29: the amendment above is in effect since ADR-0046's ratification at the
+> Architecture Review Gate on 2026-09-29; this record itself stays ⊕, pending the owner's review,
+> and that review is of it as amended.* **Stand as written:** decision 3 (the limiter reads
+> `ceilEmitArr`, the array the clamp stamps — which now carries ADR-0046's minimum), decision 4
+> (nothing else moves), and the first half of decision 5 (invariant 4's automation guard and the
+> reference it states). **In force as amended by the ratified ADR-0046:** decision 1 (a frame
+> answers to the LOWER of its entry ceiling and the one predicted at its emission), decision 2's
+> mechanism (a revision reaches only what a revised reading defines; its promise — never upward —
+> stands), and the second half of decision 5 (invariant 8's figure, ~4.9 glide steps). **On a
+> rising ceiling**, which the Consequences below describe as 0.2.15 ran it: with decision 1's
+> minimum an ascent holds each frame to its ENTRY value, so the limiter's TP-mode threshold is then
+> the value at the frame's entry, `clampDelay` samples before its emission, and the output reaches
+> a raised ceiling up to D samples later — under it, never over. "An upward retarget holds the
+> frames in flight to the old, lower trajectory" now covers the whole ascent, and "the limiter's
+> threshold moves `clampDelay` samples earlier" holds on a descent only. The Context's D
+> (41/42/54/78 samples at 44.1/48/96/192 kHz) is 0.2.15's; since ADR-0046 it is 46/46/54/78.
+
 ## Context
 
 The Ceiling reaches the DSP through one smoother, a 20 ms **linear** glide (`kCeilingGlideSeconds`)
