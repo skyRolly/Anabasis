@@ -6709,6 +6709,281 @@ static void testTheSessionFiguresPauseForABypassAudition()
 }
 
 // ---------------------------------------------------------------------------
+// WHAT THE SESSION LENGTH COUNTS (ADR-0020 amendment 4 item 3; the review item
+// "Session clock includes unmeasured return audio", LoudnessMeter.h:205). It
+// is the number of frames the session was OPEN for since the last reset or
+// prepare — every frame at which no part of a realtime bypass was audible,
+// and every frame of an offline render — counted from the first open frame
+// after a resume or a reset, exactly. Those are the frames the SP hold takes
+// and the frames at which the TP hold takes its readings. It is deliberately
+// NOT "the audio admitted into I or LRA", which is not a duration: I is gated
+// in overlapping 400 ms blocks and LRA samples 3 s windows, and the meter's
+// watermark keeps the first 100-200 ms after a resume (exactly as after a
+// RESET) and the sub-block in progress at a pause out of both. The clock
+// counts those frames, and this test pins it both ways.
+//
+// Driven on the real engine in lockstep with a second engine that never
+// bypasses. MATCH and DELTA are off, so the buffer IS the render tap, and the
+// two outputs are bit-identical exactly on the frames the bypass crossfade
+// sits at 0 — so "open" is read off the audio, not off the engine's own flag.
+// The holds are modelled on the same stream (the SP max over open frames; a
+// TruePeakEstimator's readings at open frames, minus the kReportLag readings
+// a reset skips) and must match bit for bit after every call. I's first
+// admission after a resume and after a RESET, and LRA's after a resume, are
+// found to the frame (1-frame calls at the edge) and must land exactly where
+// the watermark rule puts them — the point at which the clock has counted
+// 100-200 ms more than the 400 ms gating block covers. The ramp length and
+// the pause length are read off the audio as premises.
+namespace sessionClock
+{
+struct Rig
+{
+    double sr;
+    int B, L, N;
+    anabasis::AnabasisEngine e, ref;
+    anabasis::EngineParameters p;
+    anabasis::TruePeakEstimator est;
+    int64_t t = 0, open = 0;
+    int64_t resetAt = -(int64_t) (1 << 30);     // prepare: no readings skipped
+    int64_t pauseStart = -1, lastResume = -1, lastPause = 0;
+    float spModel = 0.0f, tpModel = 0.0f, spHold = 0.0f, tpHold = 0.0f, renderPeak = 0.0f;
+    float level = 1.0f;
+    bool prevOpen = true, holdsMatch = true;
+
+    Rig (double rate, int block, bool offline) : sr (rate), B (block)
+    {
+        L = juce::jmax (1, (int) std::lround (0.100 * sr));      // LoudnessMeter's sub-block
+        N = juce::jmax (1, (int) (0.010 * sr));                  // the bypass ramp's step count
+        e.prepare (sr, B, 2);
+        ref.prepare (sr, B, 2);
+        p.ceilingDbTp = -6.0f;                                   // the input peaks ~0.89: an audition is audible in SP
+        p.limGainDb   = 3.0f;                                    // processed != input on every frame, at either level
+        p.nonRealtime = offline;
+        est.prepare();
+    }
+    float in (int64_t n, int ch) const
+    {
+        const double w = juce::MathConstants<double>::twoPi * (double) n / sr;
+        return level * (ch == 0 ? 0.62f * (float) std::sin (997.0 * w) + 0.27f * (float) std::sin (61.7 * w)
+                                : 0.55f * (float) std::sin (1499.0 * w + 0.3) + 0.3f * (float) std::sin (83.1 * w));
+    }
+    void call (int n)
+    {
+        juce::AudioBuffer<float> a (2, n), b (2, n);
+        for (int i = 0; i < n; ++i)
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                a.setSample (ch, i, in (t + i, ch));
+                b.setSample (ch, i, in (t + i, ch));
+            }
+        auto pRef = p;
+        pRef.bypass = false;
+        e.process (a, p);
+        ref.process (b, pRef);
+        for (int i = 0; i < n; ++i, ++t)
+        {
+            const float o[2] = { a.getSample (0, i), a.getSample (1, i) };
+            const bool same = juce::exactlyEqual (o[0], b.getSample (0, i))
+                           && juce::exactlyEqual (o[1], b.getSample (1, i));
+            const bool isOpen = p.nonRealtime || same;
+            float tp[2] = {};
+            est.processFrame (o, 2, tp);
+            if (isOpen)
+            {
+                ++open;
+                spModel = juce::jmax (spModel, std::abs (o[0]), std::abs (o[1]));
+                if (t - resetAt >= anabasis::TruePeakEstimator::kReportLag)
+                    tpModel = juce::jmax (tpModel, tp[0], tp[1]);
+            }
+            if (! isOpen && prevOpen)
+                pauseStart = t;
+            if (isOpen && ! prevOpen)
+            {
+                lastResume = t;
+                lastPause  = t - pauseStart;
+            }
+            prevOpen = isOpen;
+        }
+        spHold     = juce::jmax (spHold, e.lastSessionPeak());     // folded as the wrapper folds
+        tpHold     = juce::jmax (tpHold, e.lastSessionTpMax());
+        renderPeak = juce::jmax (renderPeak, e.lastRenderPeak());
+        holdsMatch = holdsMatch && juce::exactlyEqual (spHold, spModel) && juce::exactlyEqual (tpHold, tpModel);
+    }
+    void run (double seconds)
+    {
+        const int blocks = (int) std::lround (seconds * sr / (double) B);
+        for (int k = 0; k < blocks; ++k)
+            call (B);
+    }
+    void reset()
+    {
+        e.resetMeterHolds();
+        open = 0;
+        spModel = tpModel = spHold = tpHold = 0.0f;
+        resetAt = t;
+    }
+    int64_t clock() const { return (int64_t) std::llround (e.sessionSeconds() * sr); }
+    float   i() const     { return e.outputLoudness().integratedLufs(); }
+    float   lra() const   { return e.outputLoudness().lraLu(); }
+    // LoudnessMeter::firstCleanSubBlock for an event at frame r: the first
+    // sub-block starting after it (the straddler rule) plus one whole
+    // sub-block (the ring-out guard).
+    int64_t firstClean (int64_t r) const { return r / L + (r % L != 0 ? 1 : 0) + 1; }
+    // The clock at the frame `started` first turns true. Every call up to one
+    // frame short of `expected` is checked to still read false (`early`), and
+    // the rest is walked in 1-frame calls, so the frame is exact either way.
+    int64_t clockWhenStarted (const std::function<bool()>& started, int64_t expected, bool& early)
+    {
+        early = false;
+        while (clock() < expected - 1)
+        {
+            call ((int) juce::jmin ((int64_t) B, expected - 1 - clock()));
+            if (started())
+            {
+                early = true;
+                return clock();
+            }
+        }
+        for (int k = 0; k < 8 * L && ! started(); ++k)
+            call (1);
+        return clock();
+    }
+    // Leave a pause in 1-frame calls, so the first open frame is exact.
+    void releaseBypass()
+    {
+        p.bypass = false;
+        const int64_t before = open;
+        for (int k = 0; k < 4 * N && open == before; ++k)
+            call (1);
+    }
+};
+} // namespace sessionClock
+
+static void testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio()
+{
+    using sessionClock::Rig;
+    for (const auto& cfg : { std::pair<double, int> { 44100.0, 64 }, std::pair<double, int> { 96000.0, 512 } })
+    {
+        Rig r (cfg.first, cfg.second, false);
+        char tag[64];
+        std::snprintf (tag, sizeof (tag), "%.1f kHz / %d", r.sr / 1000.0, r.B);
+        auto say = [&tag] (bool ok, const char* what)
+        {
+            char msg[256];
+            std::snprintf (msg, sizeof (msg), "sessionClock (%s): %s", tag, what);
+            check (ok, msg);
+        };
+
+        // Normal processing: every frame is on the clock.
+        r.run (1.5);
+        say (r.clock() == r.t && r.open == r.t, "normal processing puts every frame on the clock, exactly");
+
+        // A realtime audition: the clock stops at the first ramp frame and
+        // restarts at the first frame the crossfade is back at 0.
+        const int64_t onAt = r.t, clockAtOn = r.clock();
+        r.p.bypass = true;
+        r.run (0.5);
+        say (r.clock() == clockAtOn && r.e.outputLoudness().isSessionPaused(),
+             "the clock stops for the whole audition, its opening ramp included");
+        const int64_t offAt = r.t;
+        r.releaseBypass();
+        const int64_t rampOut = r.lastResume - offAt;
+        say (rampOut >= r.N - 1 && rampOut <= r.N && r.lastPause == (offAt - onAt) + rampOut,
+             "(premise) the audible run is the toggle span plus the ~10 ms release ramp, read off the audio");
+        r.run (1.2);
+        say (r.clock() == r.open && r.open == r.t - r.lastPause,
+             "after a resume the clock is the open frames, exactly: the audition and both ramps are off it");
+        say (r.renderPeak > 0.8f && r.spHold <= 0.5013f && r.holdsMatch,
+             "the SP and TP holds take exactly the clock's frames (the audition is audible and stays out)");
+
+        // A RESET inside an audition, so the histograms are empty and the
+        // first admissions after the resume are observable to the frame.
+        r.p.bypass = true;
+        r.run (0.2);
+        r.reset();
+        r.run (0.2);
+        say (r.clock() == 0 && r.i() <= anabasis::LoudnessMeter::kSilentLufs
+               && r.lra() < 0.0f && juce::exactlyEqual (r.spHold, 0.0f),
+             "a reset inside an audition zeroes the clock and it stays 0 while the audition lasts");
+        r.releaseBypass();
+        const int64_t res = r.lastResume;
+        const int64_t fc  = r.firstClean (res);
+        const int64_t expectI = (fc + 4) * r.L - res, expectLra = (fc + 31) * r.L - res;
+        say (r.clock() == 1 && r.spHold > 0.0f && r.holdsMatch,
+             "the clock and the holds restart on the first open frame after the audition");
+        bool early = false;
+        const int64_t atI = r.clockWhenStarted ([&r] { return r.i() > anabasis::LoudnessMeter::kSilentLufs; },
+                                                expectI, early);
+        say (! early && atI == expectI,
+             "I admits its first block exactly where the resume watermark puts it, never earlier");
+        say (atI - 4 * r.L >= r.L && atI - 4 * r.L <= 2 * r.L - 1 && r.clock() == r.open && r.holdsMatch,
+             "…by which point the clock has counted 100-200 ms that no admitted block covers, and so have the holds");
+        const int64_t atLra = r.clockWhenStarted ([&r] { return r.lra() >= 0.0f; }, expectLra, early);
+        say (! early && atLra == expectLra,
+             "LRA resumes where its own watermark puts it, ~3.2 s of clock after the resume");
+
+        // Repeated auditions with open runs shorter than a guard plus one
+        // gating block: I and LRA admit nothing, the clock and the holds take
+        // every open frame. The programme drops 12 dB with the first press,
+        // inside both gates, so a single admitted block would move I and LRA.
+        const float i0 = r.i(), lra0 = r.lra();
+        say (i0 > anabasis::LoudnessMeter::kSilentLufs && lra0 >= 0.0f,
+             "(premise) I and LRA are live before the repeated auditions");
+        const int64_t clock0 = r.clock(), open0 = r.open;
+        bool pausesAsHeard = true;
+        r.level = 0.25f;
+        for (int k = 0; k < 4; ++k)
+        {
+            const int64_t on = r.t;
+            r.p.bypass = true;
+            r.run (0.25);
+            const int64_t off = r.t;
+            r.releaseBypass();
+            const int64_t ro = r.lastResume - off;
+            pausesAsHeard = pausesAsHeard && ro >= r.N - 1 && ro <= r.N && r.lastPause == (off - on) + ro;
+            r.run (0.35);
+        }
+        const double gained = (double) (r.clock() - clock0) / r.sr;
+        say (pausesAsHeard, "(premise) each repeated audition is the toggle span plus its release ramp");
+        say (r.clock() - clock0 == r.open - open0 && gained > 4.0 * 0.33 && r.holdsMatch,
+             "repeated auditions: the clock advances by exactly the open frames between them");
+        say (juce::exactlyEqual (r.i(), i0) && juce::exactlyEqual (r.lra(), lra0),
+             "…while I and LRA, with no open run long enough for a guard plus a 400 ms block, admit nothing");
+
+        // A RESET in open programme: the same guard, the same clock rule.
+        r.reset();
+        const int64_t resetFrame = r.t;
+        const int64_t expectR = (r.firstClean (resetFrame) + 4) * r.L - resetFrame;
+        const int64_t atR = r.clockWhenStarted ([&r] { return r.i() > anabasis::LoudnessMeter::kSilentLufs; },
+                                                expectR, early);
+        say (! early && atR == expectR && r.clock() == r.open && r.open == r.t - resetFrame && r.holdsMatch,
+             "after a RESET the clock counts from the reset while I takes the same 100-200 ms guard");
+
+        std::printf ("       sessionClock (%s): release ramp %lld frames; first I block %lld frames after a resume "
+                     "(%.1f ms uncovered), %lld after a reset; LRA after %.3f s; 4 short open runs put %.3f s on the clock, "
+                     "none in I\n",
+                     tag, (long long) rampOut, (long long) atI, 1000.0 * (double) (atI - 4 * r.L) / r.sr,
+                     (long long) atR, (double) atLra / r.sr, gained);
+    }
+
+    // OFFLINE the bypass is part of the rendered file: nothing pauses, every
+    // frame is on the clock, and the holds take the bypassed input too.
+    {
+        Rig r (48000.0, 512, true);
+        r.run (1.0);
+        r.p.bypass = true;
+        r.run (0.5);
+        const bool neverPaused = ! r.e.outputLoudness().isSessionPaused();
+        r.p.bypass = false;
+        r.run (1.0);
+        check (neverPaused && r.clock() == r.t && r.open == r.t,
+               "sessionClock (offline): a bypass in a render stays on the clock, every frame of it");
+        check (r.spHold > 0.8f && r.holdsMatch,
+               "sessionClock (offline): …and the holds measure the bypassed input with it");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // The meter-reset watermark's OFF-BY-ONE half, which the wrapper-level test
 // cannot see: gating blocks are assembled from the last four 100 ms
 // sub-blocks, and at the instant of the reset one sub-block is PARTIALLY
@@ -9398,6 +9673,7 @@ int main()
     testMeterResetIgnoresTheStraddlingSubBlock();
     testStatisticsResetStartsTheSessionAtTheReset();
     testTheSessionFiguresPauseForABypassAudition();
+    testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio();
     testSpectrumRingsCarryTheTaps();
     testGrHistoryEntriesFollowThePreparedBlock();
     testTheHistorySurvivesASameConfigurationRePrepare();

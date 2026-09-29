@@ -412,3 +412,27 @@ survive statistics reset" (`AnabasisEngine.h`, `resetMeterHolds`).
   holds). Unfixed: 6 DSP and 2 state failures; skipping the estimator's whole reach, or restarting
   it from zeros, each fails its own checks (the fourth-round worklog).
 
+**Implementation note — what the session length counts (2026-09-29, review item "Session clock
+includes unmeasured return audio", `src/dsp/LoudnessMeter.h:205` `setSessionPaused`).** Not an
+amendment: item 3's length is kept as built and its relation to the figures is stated. It counts
+the frames the session is OPEN for since the last reset or prepare — every frame with no part of
+a realtime bypass audible (`bypassMix` at 0), every frame of an offline render — from the first
+open frame after a resume or a reset, exactly; those are the frames the SP hold takes and at
+which the TP hold takes its readings. It is not the audio admitted into I or LRA, which is no
+duration (gated 400 ms blocks, 3 s windows): the watermark leaves up to 100 ms before a pause and
+100–200 ms after a resume out of both (item 2's cost as the note above restates it), exactly as
+the length already counted from a RESET while I skipped its first 100–200 ms. So the length
+counts a fraction of a second per audition that I does not, and an open run under 0.5 s between
+auditions reaches the length and the holds but no I or LRA block. Measured on the engine
+(44.1 / 48 / 96 kHz, blocks 64 / 512; local Release, LTO off): length = open frames exactly in
+every scenario, holds bit-identical to a model over the same frames, I's first block after each
+of 720 resumes (a reset inside each audition, so the block is observable) exactly where the
+watermark rule puts it (100.0–199.6 ms of length beyond its 400 ms), LRA's ~3.2 s later. Guards: `AnabasisTests`
+`testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio`, `AnabasisStateTests`
+`testThePublishedSessionLengthIsTheOpenFrames`; `USER_MANUAL.md` §3.4 states it. **⊕ For the
+owner's review with amendment 4 itself:** this note settles how item 3's "the seconds of programme
+the session figures cover" is read — as the frames the session is open, which the peak holds cover
+and I / LRA measure with their stated guards — rather than as the audio I admits (which would stall
+the clock in fast A/B comparison, move the SP/TP holds and the clock apart, and change the recorded
+and pinned RESET behaviour). The behaviour is unchanged; the reading is recorded so the review can
+overturn it.

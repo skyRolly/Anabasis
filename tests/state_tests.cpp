@@ -12733,6 +12733,159 @@ static void testTheSessionDurationFollowsTheSessionFigures()
            "sessionTime: whole seconds, never rounded up; m:ss, then h:mm:ss from an hour");
 }
 
+// The PUBLISHED session length — `pubSessionSecs`, which the STATISTICS header
+// shows through `sessionTimeText` — is the engine's open-frame count at the
+// wrapper's own rate, exactly: every frame at which no part of a realtime
+// bypass was audible, from the first open frame after a resume or a RESET,
+// and every frame of an offline render (ADR-0020 amendment 4 item 3). It is
+// NOT the audio the integrated reading has admitted: after a resume, as after
+// a reset, the first gating block starts 100-200 ms in (the meter's
+// watermark), and the published length counts those frames — the review item
+// "Session clock includes unmeasured return audio" (LoudnessMeter.h:205),
+// kept by design and stated in USER_MANUAL.md §3.4. Driven through
+// processBlock in lockstep with a second processor that never bypasses; the
+// audible bypass frames are read off the two outputs (MATCH and DELTA are
+// off, so the buffer is the render tap). The engine-level twin, to the frame,
+// is AnabasisTests' `testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio`.
+static void testThePublishedSessionLengthIsTheOpenFrames()
+{
+    const double sr = 44100.0;
+    const int B = 512, L = 4410, N = 441;                // 100 ms sub-block, 10 ms bypass ramp at 44.1 kHz
+    struct Pair
+    {
+        AnabasisAudioProcessor a, b;
+        juce::MidiBuffer midi;
+        int64_t t = 0, open = 0, pauseStart = -1, lastResume = -1, lastPause = 0;
+        float spModel = 0.0f;
+        bool prevOpen = true;
+    };
+    auto setUp = [&] (Pair& q, bool offline)
+    {
+        for (auto* proc : { &q.a, &q.b })
+        {
+            proc->setNonRealtime (offline);
+            proc->prepareToPlay (sr, B);
+            auto* ceil = proc->apvts.getParameter (pid::ceiling);
+            ceil->setValueNotifyingHost (ceil->getNormalisableRange().convertTo0to1 (-6.0f));
+        }
+    };
+    auto bypass = [] (Pair& q, bool on) { q.a.apvts.getParameter (pid::bypass)->setValueNotifyingHost (on ? 1.0f : 0.0f); };
+    auto blocks = [&] (Pair& q, int count, const std::function<void()>& afterEach)
+    {
+        for (int k = 0; k < count; ++k)
+        {
+            juce::AudioBuffer<float> x (2, B), y (2, B);
+            for (int n = 0; n < B; ++n)
+            {
+                const double w = juce::MathConstants<double>::twoPi * (double) (q.t + n) / sr;
+                const float l = 0.62f * (float) std::sin (997.0 * w) + 0.27f * (float) std::sin (61.7 * w);
+                const float r = 0.55f * (float) std::sin (1499.0 * w + 0.3) + 0.3f * (float) std::sin (83.1 * w);
+                x.setSample (0, n, l); x.setSample (1, n, r);
+                y.setSample (0, n, l); y.setSample (1, n, r);
+            }
+            q.a.processBlock (x, q.midi);
+            q.b.processBlock (y, q.midi);
+            for (int n = 0; n < B; ++n, ++q.t)
+            {
+                const bool same = juce::exactlyEqual (x.getSample (0, n), y.getSample (0, n))
+                               && juce::exactlyEqual (x.getSample (1, n), y.getSample (1, n));
+                const bool isOpen = q.a.isNonRealtime() || same;
+                if (isOpen)
+                {
+                    ++q.open;
+                    q.spModel = juce::jmax (q.spModel, std::abs (x.getSample (0, n)), std::abs (x.getSample (1, n)));
+                }
+                if (! isOpen && q.prevOpen)
+                    q.pauseStart = q.t;
+                if (isOpen && ! q.prevOpen)
+                {
+                    q.lastResume = q.t;
+                    q.lastPause  = q.t - q.pauseStart;
+                }
+                q.prevOpen = isOpen;
+            }
+            if (afterEach)
+                afterEach();
+        }
+    };
+    auto secs = [sr] (int64_t frames) { return (float) ((double) frames / sr); };
+
+    auto q = std::make_unique<Pair>();
+    setUp (*q, false);
+    blocks (*q, 173, {});                                           // ~2.0 s
+    check (juce::exactlyEqual (q->a.meterSessionSeconds(), secs (q->t)) && q->open == q->t,
+           "publishedClock: normal processing publishes every processed frame, exactly");
+
+    // A realtime audition: the published length does not move in any block
+    // of it, the opening ramp's included.
+    const int64_t onAt = q->t;
+    const float atOn = q->a.meterSessionSeconds();
+    bool frozen = true;
+    bypass (*q, true);
+    blocks (*q, 86, [&] { frozen = frozen && juce::exactlyEqual (q->a.meterSessionSeconds(), atOn); });
+    check (frozen, "publishedClock: the published length stands still in every block of a realtime audition");
+    const int64_t offAt = q->t;
+    bypass (*q, false);
+    blocks (*q, 130, {});
+    const int64_t rampOut = q->lastResume - offAt;
+    check (rampOut >= N - 1 && rampOut <= N && q->lastPause == (offAt - onAt) + rampOut,
+           "publishedClock: (premise) the audible run is the toggle span plus the ~10 ms release ramp, read off the audio");
+    check (juce::exactlyEqual (q->a.meterSessionSeconds(), secs (q->open)) && q->open == q->t - q->lastPause,
+           "publishedClock: after the resume it is the open frames, exactly — the audition and its ramps are not on it");
+    check (LoudnessMeterView::sessionTimeText (q->a.meterSessionSeconds())
+             == LoudnessMeterView::sessionTimeText ((float) std::floor ((double) q->open / sr)),
+           "publishedClock: the header shows the whole seconds of the open frames");
+    check (juce::exactlyEqual (q->a.meterPeakMaxDb(), juce::Decibels::gainToDecibels (q->spModel, -144.0f))
+             && q->a.meterPeakMaxDb() < -5.99f,
+           "publishedClock: the published SP hold is the peak of exactly the frames the length counts");
+
+    // A RESET inside an audition, then the resume: the length is 0 at once
+    // and through the audition, then counts every open frame — including the
+    // 100-200 ms before the integrated reading admits its first block.
+    bypass (*q, true);
+    blocks (*q, 20, {});
+    q->a.requestMeterReset();
+    const bool zeroAtOnce = juce::exactlyEqual (q->a.meterSessionSeconds(), 0.0f);
+    bool zeroThrough = true;
+    blocks (*q, 20, [&] { zeroThrough = zeroThrough && juce::exactlyEqual (q->a.meterSessionSeconds(), 0.0f); });
+    check (zeroAtOnce && zeroThrough, "publishedClock: a reset inside an audition publishes 0, and 0 it stays while the audition lasts");
+    const int64_t openAtReset = q->open;
+    bypass (*q, false);
+    bool exactThroughout = true;
+    int64_t lastSilent = -1, firstLive = -1;
+    blocks (*q, 130, [&]
+    {
+        const int64_t sinceReset = q->open - openAtReset;
+        exactThroughout = exactThroughout && juce::exactlyEqual (q->a.meterSessionSeconds(), secs (sinceReset));
+        const bool live = q->a.meterLufsI() > anabasis::LoudnessMeter::kSilentLufs;
+        if (! live) lastSilent = sinceReset;
+        else if (firstLive < 0) firstLive = sinceReset;
+    });
+    const int64_t res = q->lastResume;
+    const int64_t fc = res / L + (res % L != 0 ? 1 : 0) + 1;       // LoudnessMeter::firstCleanSubBlock
+    const int64_t expectI = (fc + 4) * L - res;
+    check (exactThroughout, "publishedClock: after the resume it publishes the open frames since the reset, exactly, every block");
+    check (lastSilent >= 0 && lastSilent < expectI && firstLive >= expectI && firstLive - B < expectI,
+           "publishedClock: I reads nothing until the block holding the resume watermark's first admitted frame");
+    check (secs (lastSilent) > 0.4f,
+           "publishedClock: …so the header had counted more than the 400 ms a gating block covers before I read anything");
+
+    // OFFLINE: the bypass is part of the file, so every frame is published.
+    auto o = std::make_unique<Pair>();
+    setUp (*o, true);
+    blocks (*o, 86, {});
+    bypass (*o, true);
+    blocks (*o, 43, {});
+    bypass (*o, false);
+    blocks (*o, 86, {});
+    check (juce::exactlyEqual (o->a.meterSessionSeconds(), secs (o->t)) && o->a.meterPeakMaxDb() > -1.5f,
+           "publishedClock: an offline render publishes every frame, the bypassed ones included, and measures them");
+
+    std::printf ("       publishedClock: 44.1 kHz/512: release ramp %lld frames; after a reset in an audition the header "
+                 "counted %.3f s with I still empty (first I block at %.3f s of clock)\n",
+                 (long long) rampOut, (double) lastSilent / sr, (double) expectI / sr);
+}
+
 // UX-002: the STATISTICS panel's body is inert and RESET is the one control.
 // Until 0.2.14 any mouse-down anywhere on the panel — a right-click, the start
 // of a drag, a click on the empty glass under the rows — discarded the
@@ -13356,6 +13509,7 @@ int main (int argc, char** argv)
         testMeterResetClearsSessionHolds();
         testABypassAuditionStaysOutOfTheSessionFigures();
         testTheSessionDurationFollowsTheSessionFigures();
+        testThePublishedSessionLengthIsTheOpenFrames();
         testTheStatisticsPanelResetsOnlyFromItsResetControl();
         testResetRightAfterALoudPassageKeepsTheOldPeakOut();
         testGrRingResetEpoch();

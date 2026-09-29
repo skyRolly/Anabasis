@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **KI-028's diagnostic workflow (2026-09-29, still 0.2.16)** — a non-gating
+**Last updated:** for **the session length's semantics (2026-09-29, still 0.2.16)** — the review
+item "Session clock includes unmeasured return audio" closed as preserved and pinned (addendum
+below). Before that, for **KI-028's diagnostic workflow (2026-09-29, still 0.2.16)** — a non-gating
 macOS workflow to capture pluginval's teardown abort, macOS exit 9 reported as a crash, and the
 Linux crashes recorded in KI-028 (addendum below). Before that, for **OQ-020's resolution
 (2026-09-29, still 0.2.16)** — below 12 kHz the TP and
@@ -566,6 +568,25 @@ and a stub validator (not committed): Darwin exits 0 / 1 / 9 / 134 → PASSED / 
 (exit 9) / CRASHED (exit 134), Linux unchanged (9 → FAILED; 134 → three retries, then 139). The
 workflow parses, `actionlint` (with `shellcheck`) reports nothing, and it has not run.
 `CHANGELOG.md` and `HANDOVER.md` are left to the round's records commit.
+
+**Addendum (2026-09-29, still 0.2.16, a later commit of the same round) — the session length counts
+the open frames (review item "Session clock includes unmeasured return audio",
+`src/dsp/LoudnessMeter.h:205`).** Investigated, not a defect: the length counts every frame the
+session is open (no part of a realtime bypass audible; every offline frame) from the first open
+frame, which are the SP / TP holds' frames; I and LRA are gated block measurements whose resume
+watermark leaves up to 100 ms before a pause and 100–200 ms after a resume out, as after a RESET.
+Kept as ADR-0020 amendment 4 item 3 defines it (option A, elapsed monitored programme), ⊕ for the
+owner's review with amendment 4. **ADR** — ADR-0020 gains a dated implementation note (not an
+amendment) stating the relation, with measurements. **User manual** — §3.4 "What the session
+covers" states the guard around an audition as it already did for a RESET. **New tests** —
+`testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio` (DSP, +32 checks: the length equals the
+open frames exactly around auditions, resumes, RESETs and offline, the holds bit-identical to a model
+over the same frames, I's and LRA's first admissions exactly where the watermark puts them) and
+`testThePublishedSessionLengthIsTheOpenFrames` (state, +11: `pubSessionSecs` and the header text are
+the open frames); eight mutants (the clock counting paused frames, the ramp counted as open, the
+watermark removed, the clock skipping the guard, the SP hold taking paused frames, offline pausing,
+RESET not zeroing the clock, whole-second publication) each killed. No code, UI string, parameter,
+state or ADR decision changes; no `CHANGELOG.md` entry (no user-visible behaviour change).
 
 **Addendum (2026-09-28, 0.2.16) — the fourth PR #42 review round: the low-rate true-peak contract,
 KI-024, the statistics RESET.** Code: (1) ADR-0046 — `CeilingClamp`'s eased attack (`easeWeight`,

@@ -311,9 +311,14 @@ a reset is left out of **I**, for the same reason.
 programme the session figures describe. It stops while you listen to **BYPASS** during
 playback: an audition of your input is not part of the master you are measuring, so it is left
 out of I, LRA and the peak holds (since 0.2.14 — before, a bypass comparison could raise the
-peak holds above your Ceiling and pull I toward the input). The rolling readings still follow
-what you hear, bypass included. In an **offline bounce** the bypassed sections are part of the
-file, so they are measured. If your host stops sending audio to the plug-in (some hosts do when
+peak holds above your Ceiling and pull I toward the input). The time and the peak holds pick up
+again with the first moment after the audition, keeping what they held before it; **I** and
+**LRA** leave a little more out. As
+after a reset, up to the first 0.2 s after the audition is not in **I**, and nor is up to 0.1 s
+before it — so less than half a second between two auditions adds to the time but nothing to
+**I** — and **LRA** moves again about 3 s after it. The rolling readings still follow what you
+hear, bypass included. In an **offline bounce** the bypassed sections are part of the file, so
+they are measured. If your host stops sending audio to the plug-in (some hosts do when
 a track is disabled, frozen or bypassed by the host itself), nothing is measured, the time stops,
 and the rolling readings hold their last values.
 
