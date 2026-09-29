@@ -315,6 +315,8 @@ void AnabasisEngine::reset() noexcept
     // ring clear therefore drops the partial before any new audio is folded.
     adaptiveEngine.reset();
     compMeasureDb = 0.0f;
+    clipLevelDb   = 0.0f;
+    clipInSqCall  = clipOutSqCall = 0.0;
     monitorGain.setCurrentAndTargetValue (1.0f);
     deltaMix = deltaTarget ? 1.0f : 0.0f;
     smoothersPrimed = false;          // the next block adopts ALL FOUR values without a glide
@@ -831,15 +833,43 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         if (dryM > -70.0f && wetM > -70.0f)
             compMeasureDb = juce::jlimit (-24.0f, 6.0f,
                                           dryMeter.shortTermLufs() - wetMeter.shortTermLufs());
-        // Predict floor: the deterministic gain lift, GR-corrected by the
-        // previous block's DEEPEST reduction (grMinLinear is a per-call
-        // minimum, not an average — so the floor is slightly more aggressive
-        // than a mean would make it, which is the safe direction for a
-        // monitor-only attenuation). The P3 form of §2.7's "expected GR"; the
-        // P4 adaptive engine refines it. Only ever attenuation.
+        // Predict floor: the deterministic gain lift less §2.7's "expected GR"
+        // (ADR-0006 decision 7) — the reduction the level-taking stages left
+        // behind in the PREVIOUS block, three terms:
+        //  - the limiter's DEEPEST reduction (grMinLinear is a per-call
+        //    minimum, not an average: it OVER-states the limiter's loudness
+        //    loss, so on its own this term errs toward a SHALLOWER floor);
+        //  - the compressor's block-end reduction, weighted by Comp Mix (a
+        //    parallel mix m applies 1 − m + m·g, not g). Read from the stage,
+        //    which only this thread touches — NOT from the published
+        //    `compGrDb`, which `clearPublishedStageGr` writes from the message
+        //    thread, so reading it here would let a meter reset move the
+        //    monitor gain (the reason `grMinLinear` is kept out of that clear);
+        //  - the Clip/Sat stage's measured level change (`clipLevelDb`, energy
+        //    out over in across the stage). Drive is level-compensated, yet the
+        //    stage takes level out: at Oversampling Off mostly the first-order
+        //    ADAA kernel's cos(πf/fs) droop (KNOWN_ISSUES KI-005, audit
+        //    DSP-004), on hot programme the shaved peaks too.
+        // Counting the limiter alone over-stated the lift whenever the other
+        // two worked, and min(measure, predict) KEPT that too-deep floor after
+        // the measure converged, so MATCH settled below the input (audit
+        // DSP-005, KNOWN_ISSUES KI-023). Every term is a figure the previous
+        // block left behind: nothing here integrates, holds or ratchets across
+        // blocks, and the floor only ever attenuates.
         const float grDbNow  = juce::Decibels::gainToDecibels (
                                    grMinLinear.load (std::memory_order_relaxed), -60.0f);
-        const float predictDb = -juce::jmax (0.0f, p.inputGainDb + p.limGainDb + grDbNow);
+        const float compGrNow = comp.currentGainReductionDb();          // <= 0 dB
+        const float compMixNow = juce::jlimit (0.0f, 1.0f, p.compMix);
+        const float compDbNow = compGrNow < -1.0e-6f
+                                  ? juce::Decibels::gainToDecibels (
+                                        1.0f - compMixNow
+                                          + compMixNow * juce::Decibels::decibelsToGain (compGrNow),
+                                        -60.0f)
+                                  : 0.0f;
+        float expectedGrDb = grDbNow + compDbNow + clipLevelDb;
+        if (! std::isfinite (expectedGrDb))
+            expectedGrDb = grDbNow;              // never let a stage fault reach the monitor gain
+        const float predictDb = -juce::jmax (0.0f, p.inputGainDb + p.limGainDb + expectedGrDb);
         const float appliedDb = compOn ? juce::jmin (compMeasureDb, predictDb) : 0.0f;
         monitorGain.setTargetValue (juce::Decibels::decibelsToGain (appliedDb));
     }
@@ -848,6 +878,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     //      overhead, never to unprocessed audio -----------------------------
     grMinThisCall   = 1.0f;
     grMinThisCallCh[0] = grMinThisCallCh[1] = 1.0f;
+    clipInSqCall = clipOutSqCall = 0.0;
     renderTpMaxCall = 0.0f;
     renderPeakCall  = 0.0f;
     sessionTpMaxCall = 0.0f;
@@ -927,6 +958,16 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     }
     grMinLinear.store (grMinThisCall, std::memory_order_relaxed);
     compGrDb.store (comp.currentGainReductionDb(), std::memory_order_relaxed);
+    // The Clip/Sat stage's level change over this call, for the NEXT block's
+    // §2.7 predict floor (audit DSP-005). Exactly 0 dB when the stage passed
+    // every sample through (drive 0, no colour: the same values summed into
+    // both accumulators), and 0 dB for a silent call or a non-finite figure.
+    // Audio-thread member, not an atomic: nothing else reads it.
+    {
+        const double ratio = clipInSqCall > 1.0e-12 ? clipOutSqCall / clipInSqCall : 1.0;
+        const float  db    = (float) (10.0 * std::log10 (juce::jmax (ratio, 1.0e-3)));
+        clipLevelDb = std::isfinite (db) ? juce::jlimit (-24.0f, 6.0f, db) : 0.0f;
+    }
     // Per-channel per-stage copies (0.1.2 item 12) — the same meter row, one
     // store per channel per block.
     for (int ch = 0; ch < 2; ++ch)
@@ -1099,6 +1140,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         region = osActive->processSamplesUp (stagedBlock);
 
     const int regionSamples = num << osShift;
+    double clipInSq = 0.0, clipOutSq = 0.0;   // §2.7 predict floor's Clip/Sat term
     for (int i = 0; i < regionSamples; ++i)
     {
         const int   b          = i >> osShift;
@@ -1122,9 +1164,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             }
         }
 
+        for (int ch = 0; ch < nCh; ++ch)
+            clipInSq += (double) frame[ch] * frame[ch];
         clip.processSample (frame, nCh);       // Clipper/Sat, inside the region
         for (int ch = 0; ch < nCh; ++ch)
+        {
+            clipOutSq += (double) frame[ch] * frame[ch];
             ANABASIS_TRACE (anabasis::StageTrace::clipOut, ch, frame[ch]);
+        }
 
         // Limiter push, at its documented place in the chain: after Clip/Sat,
         // before the lookahead line, so the detector and the delayed signal
@@ -1199,18 +1246,15 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // GR TAP SCOPE, since the name does not say it: this is the LIMITER's
         // reduction, not the chain's. The compressor's own figure
         // (`MasteringComp::currentGainReductionDb()`) reaches only the COMP
-        // lanes, through `compGrDbCh`; the published `pubGrDb`, the GR history
-        // ring — and so the numeric "lim GR" readout, whose caption says so
-        // (audit VIS-003) — and the §2.7 predict floor
-        // (`inputGainDb + limGainDb + grDbNow`) all describe the limiter alone
-        // — the floor therefore OVER-estimates the lift whenever the
-        // compressor (or the clipper) takes level out, and
-        // `min(measure, predict)` KEEPS that too-deep floor once the measure
-        // converges, so MATCH settles below the dry loudness (audit DSP-005;
-        // measured 2026-09-27 at the Loudness 70 % point on pink: +0.6 to
-        // +0.9 LU, +1.7 LU on hot programme, the clipper's loss the larger
-        // term there — `KNOWN_ISSUES.md` KI-023). This comment said the
-        // opposite direction until then.
+        // lanes, through `compGrDbCh`; the published `pubGrDb` and the GR
+        // history ring — and so the numeric "lim GR" readout, whose caption
+        // says so (audit VIS-003) — describe the limiter alone. The §2.7
+        // predict floor reads this tap AND the compressor's and the Clip/Sat
+        // stage's own figures (the block top; audit DSP-005, KNOWN_ISSUES
+        // KI-023): counting the limiter alone over-estimated the lift whenever
+        // the other two took level out, and `min(measure, predict)` KEPT that
+        // too-deep floor after the measure converged. (Until 2026-09-27 this
+        // comment stated that error's direction backwards.)
         // `nCh - 1` is the LAST active channel. `process` already refuses a
         // block with no channels -- `numChannels <= 0` returns false before any
         // chunk runs -- so nCh >= 1 whenever this line executes. That guard
@@ -1247,6 +1291,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     }
     if (osActive != nullptr)
         osActive->processSamplesDown (stagedBlock);
+    clipInSqCall  += clipInSq;
+    clipOutSqCall += clipOutSq;
 
     // ======== Stage E - base rate: EQ(Post) -> clamp -> dither -> bypass ===
     const bool ditherOn = p.ditherMode != 0;

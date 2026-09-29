@@ -651,7 +651,7 @@ worklog's C8 row accounts for RESET's tooltip ("the existing panel tooltip's own
 this clause; `docs/reports/2026-09-27-phase1-roadmap.md` §3 and `HANDOVER.md`'s 0.2.14 Pending
 Tasks row do not list it.
 
-**Intended meaning** (what any wording has to be true to — `src/dsp/AnabasisEngine.cpp:1524`,
+**Intended meaning** (what any wording has to be true to — `src/dsp/AnabasisEngine.cpp:1570`,
 `sessionOpen = bypassMix <= 0 || p.nonRealtime`): while any part of BYPASS is audible in realtime
 processing, the integrated reading (gated and ungated), LRA, the TP and SP holds — and so PLR — and
 the header's session time do not advance; M, S and RMS still follow what plays; an offline render
@@ -782,7 +782,7 @@ and "Catch inter-sample peaks" are the shipped tips' own openings.
 
 **Deliberately not used:**
 - "unavailable", "not engaged", "off" — each is false: with the switch on at Oversampling Off or 2×
-  the limiter still detects on its true-peak estimate below 12 kHz (`src/dsp/AnabasisEngine.cpp:796`,
+  the limiter still detects on its true-peak estimate below 12 kHz (`src/dsp/AnabasisEngine.cpp:798`,
   `limiter.setTruePeakMode`, not gated by the rail; ADR-0046's ratification note (b)), so the switch
   still does something there — it cannot make the Ceiling a dBTP limit;
 - "path", "rail", "clamp" — implementation jargon.

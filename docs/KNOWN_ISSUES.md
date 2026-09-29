@@ -1575,7 +1575,7 @@ Evidence [Verified]:
 - Test:   none — no behaviour changed this round
 - Commit: this round's PR (documentation only)
 
-### KI-023 — MATCH settles the processed signal slightly below the input's loudness (2026-09-27)
+### KI-023 — MATCH settles the processed signal slightly below the input's loudness (2026-09-27) — **PARTLY FIXED 2026-09-29 (DSP-005: the compressor and Clip/Sat terms); open for the percussive term**
 
 **Severity:** Low (a conservative listening-aid bias of a fraction of a LU at typical settings; no
 rendered sample is affected)
@@ -1613,6 +1613,45 @@ Evidence [Verified]:
   (measured +0.63 LU); the level sweep and the clip/compressor isolation are probe measurements in
   `worklogs/2026-09-27-phase1-match-statistics-observability.md`
 - Commit: PR #42
+
+**Addendum, 2026-09-29 — partly fixed (DSP-005, decided Modify); re-scoped, still open.** The
+words above are kept as the state at 0.2.14–0.2.16. Evidence:
+`worklogs/2026-09-29-pr42-round5-contract-ki028-clock.md` §9.
+
+- **Fixed:** decision 7's "expected GR" (ADR-0006) now counts three stages — the limiter's deepest
+  reduction as before, the compressor's block-end reduction weighted by Comp Mix (a parallel mix m
+  applies 1 − m + m·g, not g; read from the stage on the audio thread, not from the published
+  `compGrDb`, which `clearPublishedStageGr` writes from the message thread), and the Clip/Sat stage's
+  measured level change over the previous block (energy out over in). The figure KI-023 names as the
+  larger term is, at Oversampling Off, mostly the first-order ADAA kernel's cos(πf/fs) droop (KI-005),
+  not peak shaving. Measured, residual input − matched, short-term, pink, 48 kHz / 512, OS Off:
+
+  | Case | 0.2.16 | 0.2.17 |
+  |---|---|---|
+  | −17 dBFS, Loudness 70 % (the calibration point; `matchJump`) | +0.63 LU | **+0.27 LU** |
+  | −17 dBFS, L70 (the new test's dry-meter harness) | +0.67 | +0.31 |
+  | −12 dBFS, Loudness 50 / 70 / 90 % | +0.89 / +1.52 / +2.18 | +0.33 / +0.43 / +0.60 |
+  | −12 dBFS, L70 / L90, OS 4× | +0.71 / +1.42 | +0.09 / +0.24 |
+  | compressor-heavy (threshold −24, ratio 4, limGain +6), −20 dBFS | +3.00 | +0.18 |
+  | the same at Comp Mix 50 % | +1.37 | +0.07 |
+
+  Renders and the invariant-7 null are unchanged (MATCH is inert offline; the full true-peak matrix
+  is bit-identical render for render), and the floor still only attenuates.
+- **Still open — the percussive term:** the limiter term is the deepest reduction of the previous
+  block, so on percussive programme it swings (−4.8 dB on a hit block, −1.1 dB on a tail) and `min`
+  and the 200 ms smoother follow the deep values: **+2.8 LU** under on synthetic drums (peak −1 dBFS,
+  L70), **+0.9 LU** on a music-like bed. A stateless per-block floor cannot remove it; both measured
+  removals — measure only once the short-term exists, or a held GR — conflict with ADR-0006
+  decision 7 and play the matched signal several LU OVER the input for seconds at an onset or a
+  macro jump. Removing it is an owner decision on an amendment to decision 7.
+- **Still open — the uncounted EQ:** an EQ cut is not an expected GR (EQ-pre −6 dB high shelf:
+  +1.07 LU; +1.25 before).
+- **By design, stated:** MATCH never raises the processed leg (decision 7: attenuation only), so a
+  setting whose render is quieter than the input keeps the whole difference (−12 dBFS pink, threshold
+  −24, ratio 4, limGain 0: +8.99 LU, unchanged).
+- Guard: `testMatchPredictCountsEveryLevelTakingStage` (3 failures on 0.2.16; the Clip/Sat term
+  removed, the compressor term removed, and the compressor term unweighted by Comp Mix each fail
+  their own check).
 
 ### KI-024 — A reset or an unducked latch cuts the true-peak stream to zero at full gain (2026-09-28) — **route C FIXED 2026-09-28 (fourth round); the rest dispositioned**
 
@@ -2008,6 +2047,35 @@ unchanged; this is the disposition they waited for. Evidence: `worklogs/2026-09-
 - **Not established:** which event was queued (a parameter change or a property change) and Apple's
   internal ordering; whether any real host disposes its listener the same way (none was run); why
   arm64 does not reproduce.
+
+### KI-029 — MATCH can play the processed signal above the input for a moment: after a prepare, and after a macro jump (2026-09-29)
+
+**Severity:** Low (a monitoring-only transient; no rendered sample is affected)
+**Status:** Confirmed, measured; recorded, not changed. Found by the DSP-005 investigation.
+**Affects:** realtime monitoring with MATCH on, all platforms/formats; offline renders are unaffected
+
+MATCH is meant to err low. Two transients play the matched processed signal ABOVE the input:
+
+- **After a prepare, with audio in the first block:** the monitor gain is the one smoother the
+  engine does not prime on the first block after a prepare — it starts at unity and ramps to its
+  target over 200 ms — so the processed signal (louder than the input by the macro's lift) plays
+  unmatched for that ramp: up to **+9.8 LU momentary over the input for ~0.2 s** (synthetic drums from
+  t = 0, peak −6 dBFS, Loudness 70 %). A host that prepares and plays at once meets it on every start.
+  A prototype that primes it leaves +0.3 LU; the first 10 ms of output are the empty lookahead line's
+  zeros, so the step it would introduce is inaudible.
+- **After a macro jump:** the monitor gain's 200 ms ramp against the limiter gain's 20 ms ramp lets
+  the matched signal exceed the input by up to **+1.9 LU momentary for up to 0.41 s** (Loudness 20 →
+  80 % on −17 dBFS pink); +2.1 LU for up to 0.50 s with 0.2.17's predict floor (KI-023), because
+  that floor is shallower once it is right.
+
+**Workaround:** start playback, or move a macro, and judge after half a second.
+**Cause:** the smoother priming in `AnabasisEngine::process` (the monitor gain is left at unity when
+the other smoothers are primed) and the two ramp lengths.
+Evidence [Verified — measured by the DSP-005 probe on the real engine, 48 kHz / 512, OS Off; the
+prototype not applied]:
+- Source: `src/dsp/AnabasisEngine.cpp` (the block top: priming, the monitor gain's target)
+- Test: none yet — a guard belongs with the fix
+- Record: `worklogs/2026-09-29-pr42-round5-contract-ki028-clock.md` §9.5
 
 ## Standing note for P1 onward
 

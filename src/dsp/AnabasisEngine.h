@@ -645,9 +645,12 @@ private:
     // either side's momentary drops under the BS.1770 −70 LUFS absolute gate,
     // chosen over a dBFS gate because a mastering plugin meets quiet
     // classical passages). Predict: stateless floor from the deterministic
-    // gain lift (inputGain + limGain + the limiter's DEEPEST reduction over the
-    // previous call — a per-call minimum, not an average), only ever LOWERING
-    // monitor gain — cranking the macro pre-ducks instantly, no ratchet.
+    // gain lift (inputGain + limGain) less the previous call's expected GR —
+    // the limiter's DEEPEST reduction (a per-call minimum, not an average),
+    // the compressor's block-end reduction weighted by Comp Mix, and the
+    // Clip/Sat stage's measured level change (`clipLevelDb`) — only ever
+    // LOWERING monitor gain: cranking the macro pre-ducks instantly, no
+    // ratchet.
     // Applied = min(measure, predict), smoothed 200 ms, on the PROCESSED leg
     // before the bypass crossfade (ADR-0044), so BYPASS plays the input at
     // unity and the bypass comparison is loudness-matched. Delta =
@@ -709,6 +712,12 @@ public:
 private:
     AdaptiveEngine adaptiveEngine;
     float compMeasureDb = 0.0f;              // frozen on silence
+    // The Clip/Sat stage's level change (dB, energy out/in) over the previous
+    // call — the §2.7 predict floor's third expected-GR term (audit DSP-005,
+    // KNOWN_ISSUES KI-023). Audio thread only: accumulated per chunk in the
+    // region loop, folded per call, read at the next block top.
+    float  clipLevelDb = 0.0f;
+    double clipInSqCall = 0.0, clipOutSqCall = 0.0;
     juce::SmoothedValue<float> monitorGain { 1.0f };
     float deltaMix = 0.0f, deltaStep = 0.0f;
     bool  deltaTarget = false;

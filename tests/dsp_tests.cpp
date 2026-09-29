@@ -5993,7 +5993,8 @@ static void testMatchLeavesBypassAtUnity()
 // at the Loudness 70 % point with the dry at about −14.3 LUFS (the audit's
 // calibration). The bound is 1 LU, not 0: the predict floor's bias
 // (audit DSP-005) is what is left, and it grows on hotter programme — this
-// test pins the monitor ORDER, not the estimator.
+// test pins the monitor ORDER, not the estimator
+// (`testMatchPredictCountsEveryLevelTakingStage` pins that).
 static void testMatchedBypassIsLoudnessMatched()
 {
     const auto on  = matchmon::bypassJump (true,  -17.0f, 10.0, 16.0);
@@ -6006,6 +6007,112 @@ static void testMatchedBypassIsLoudnessMatched()
            "matchJump: with MATCH on, switching to BYPASS moves the short-term loudness by at most 1 LU");
     std::printf ("       matchJump: BYPASS - matched S = %+.2f LU with MATCH, %+.2f LU without (dry S %.2f LUFS)\n",
                  jumpOn, jumpOff, on.bypassS);
+}
+
+// Audit DSP-005 / KNOWN_ISSUES KI-023: the §2.7 predict floor's expected GR
+// counts the compressor (weighted by Comp Mix) and the Clip/Sat stage's level
+// change as well as the limiter's reduction. Counting the limiter alone
+// over-stated the lift whenever either stage took level out, and
+// min(measure, predict) kept that too-deep floor after the measure converged,
+// so MATCH settled below the input. Pink noise, MATCH on from the start, the
+// listened output against the delay-aligned input on the product's meter.
+namespace matchmon
+{
+struct Settle
+{
+    float residualS;        // input − matched short-term, after 10 s of programme
+    float predictOnlyMaxM;  // max matched − input momentary, 0.5 … 2.9 s after the onset
+};
+
+inline Settle settle (float rmsDb, const std::function<void (anabasis::EngineParameters&)>& setParams,
+                      double leadSilenceSeconds = 0.0)
+{
+    const double sr = 48000.0;
+    const int block = 512;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, block, 2);
+    anabasis::EngineParameters p;
+    setParams (p);
+    p.loudnessComp = true;
+    const int silent = (int) (leadSilenceSeconds * sr / block);
+    const int blocks = silent + (int) (10.0 * sr / block);
+    const auto x = pinkStereo ((blocks - silent) * block, rmsDb);
+    const int delay = engine.groupDelaySamples();
+    std::vector<float> line ((size_t) (delay + 1) * 2, 0.0f);
+    int w = 0;
+    anabasis::LoudnessMeter dry, out;
+    dry.prepare (sr);
+    out.prepare (sr);
+    juce::AudioBuffer<float> buf (2, block);
+    Settle s { 0.0f, -100.0f };
+    for (int b = 0; b < blocks; ++b)
+    {
+        for (int n = 0; n < block; ++n)
+            for (int c = 0; c < 2; ++c)
+                buf.setSample (c, n, b < silent ? 0.0f
+                                                : x[((size_t) (b - silent) * block + (size_t) n) * 2 + (size_t) c]);
+        float in[block * 2];
+        for (int n = 0; n < block; ++n)
+            for (int c = 0; c < 2; ++c)
+                in[n * 2 + c] = buf.getSample (c, n);
+        engine.process (buf, p);
+        for (int n = 0; n < block; ++n)
+        {
+            line[(size_t) w * 2]     = in[n * 2];
+            line[(size_t) w * 2 + 1] = in[n * 2 + 1];
+            w = (w + 1) % (delay + 1);
+            const float d[2] = { line[(size_t) w * 2], line[(size_t) w * 2 + 1] };   // `delay` frames ago
+            const float o[2] = { buf.getSample (0, n), buf.getSample (1, n) };
+            dry.processFrame (d, 2);
+            out.processFrame (o, 2);
+        }
+        const double t = (double) (b + 1 - silent) * block / sr;
+        if (t > 0.5 && t < 2.9)
+            s.predictOnlyMaxM = juce::jmax (s.predictOnlyMaxM, out.momentaryLufs() - dry.momentaryLufs());
+    }
+    s.residualS = dry.shortTermLufs() - out.shortTermLufs();
+    return s;
+}
+} // namespace matchmon
+
+static void testMatchPredictCountsEveryLevelTakingStage()
+{
+    // 1. The Loudness 70 % calibration point of matchJump (−17 dBFS pink). The
+    //    compressor does not engage here, so the Clip/Sat term is the whole
+    //    correction (0.2.16: +0.67 LU; counting the clipper, about +0.3).
+    const auto cal = matchmon::settle (-17.0f, [] (anabasis::EngineParameters& p) { matchmon::loudness70 (p); });
+    check (cal.residualS <= 0.45f && cal.residualS >= -0.25f,
+           "matchPredict: at the Loudness 70 % point MATCH settles within 0.45 LU of the input");
+
+    // 2. A compressor doing the work: threshold −24 dB, ratio 4, limiter gain
+    //    +6 dB, −20 dBFS pink — the render is louder than the input, so MATCH
+    //    must bring it down to it, not below (0.2.16: +3.0 LU under).
+    auto heavy = [] (anabasis::EngineParameters& p)
+    {
+        p.compThresholdDb = -24.0f;
+        p.compRatio       = 4.0f;
+        p.limGainDb       = 6.0f;
+    };
+    const auto comp = matchmon::settle (-20.0f, heavy);
+    check (comp.residualS <= 0.5f && comp.residualS >= -0.25f,
+           "matchPredict: with the compressor engaged MATCH settles within 0.5 LU of the input");
+
+    // 3. The floor still pre-ducks by what the stage REALLY takes out: at Comp
+    //    Mix 50 % the compressor removes 1 − m + m·g, not g, so a term counting
+    //    its full reduction leaves the floor about 1.5 dB too shallow here and
+    //    the matched signal louder than the input (+1.5 LU momentary, measured)
+    //    until the measure exists. Onset after 2 s of silence: the predict floor
+    //    alone sets the gain until the short-term measure exists, 3 s after
+    //    prepare.
+    const auto par = matchmon::settle (-20.0f, [heavy] (anabasis::EngineParameters& p)
+                                       { heavy (p); p.compMix = 0.5f; }, 2.0);
+    check (par.predictOnlyMaxM <= 0.75f,
+           "matchPredict: before the measure exists, a parallel-compressed signal is never matched 0.75 LU above the input");
+    check (par.residualS <= 0.5f && par.residualS >= -0.25f,
+           "matchPredict: a parallel-compressed signal settles within 0.5 LU of the input");
+
+    std::printf ("       matchPredict: input - matched S = %+.2f LU (L70), %+.2f LU (comp), %+.2f LU (comp mix 50 %%); "
+                 "predict-only excess %+.2f LU\n", cal.residualS, comp.residualS, par.residualS, par.predictOnlyMaxM);
 }
 
 // ADR-0006 decision 9 for the three monitor toggles, mid-stream: BYPASS with
@@ -9660,6 +9767,7 @@ int main()
     testLoudnessCompensationDoesNotAlterRender();
     testMatchLeavesBypassAtUnity();
     testMatchedBypassIsLoudnessMatched();
+    testMatchPredictCountsEveryLevelTakingStage();
     testMonitorTogglesAreClickFree();
     testDeltaMonitor();
     testAdaptationConvergesAndHolds();

@@ -276,11 +276,11 @@ ceiling, Annex 2 unless marked; the round's worklog §2 carries the method and t
 >   `kAttackMs` 0.25 and `kMinAttackSamples` 16 (`attackFor`), `kEaseSpan` 4.8, `kReleaseRise`
 >   0.01, `kRiseFloor` 1e-4, `kRevisionLead` 1 and `kMinTruePeakRate` 12000 (`src/dsp/CeilingClamp.h`);
 >   the `easeTotal` normalisation; the min(entry, emission) stamp of stage A
->   (`AnabasisEngine::processChunk`, `src/dsp/AnabasisEngine.cpp:1014-1015`), which feeds both the
->   limiter's TP-mode threshold (`src/dsp/AnabasisEngine.cpp:1109`) and the clamp
->   (`src/dsp/AnabasisEngine.cpp:1377`); and ONE predicate, `truePeakPathEngages`
+>   (`AnabasisEngine::processChunk`, `src/dsp/AnabasisEngine.cpp:1055-1056`), which feeds both the
+>   limiter's TP-mode threshold (`src/dsp/AnabasisEngine.cpp:1151`) and the clamp
+>   (`src/dsp/AnabasisEngine.cpp:1423`); and ONE predicate, `truePeakPathEngages`
 >   (`src/dsp/Latency.h`), behind the engine's rail (`AnabasisEngine::prepare`,
->   `src/dsp/AnabasisEngine.cpp:147`; `AnabasisEngine::process`, `src/dsp/AnabasisEngine.cpp:392`)
+>   `src/dsp/AnabasisEngine.cpp:147`; `AnabasisEngine::process`, `src/dsp/AnabasisEngine.cpp:394`)
 >   and the Ceiling's unit (`CeilingUnitSource::truePeakEngaged`, `src/PluginParameters.h`).
 >   `truePeakPathEngages`, `CeilingClamp::truePeakDelayFor` and `predictLatencySamples`, compiled
 >   from the repository's JUCE-free headers over 26 rates from 3.9 to 768 kHz, with the boundaries
@@ -326,11 +326,11 @@ ceiling, Annex 2 unless marked; the round's worklog §2 carries the method and t
 >   the rate alone; nothing pairs them, so the conclusion — no epoch bracket — stands.
 > - **(b) Below 12 kHz the TP switch is not inert.** The rail gates the clamp's true-peak path, not
 >   the limiter's detector: `limiter.setTruePeakMode (p.truePeakMode && osN < 4)`
->   (`AnabasisEngine::process`, `src/dsp/AnabasisEngine.cpp:796`) does not read `tpClampFits`, so
+>   (`AnabasisEngine::process`, `src/dsp/AnabasisEngine.cpp:798`) does not read `tpClampFits`, so
 >   with TP on at Oversampling Off or 2× the limiter detects on its 4× true-peak estimate at every
 >   rate, 8 and 11.025 kHz included. Below 12 kHz that is a best effort with NO dBTP guarantee: the
 >   Ceiling itself is held on sample peaks, by the sample clip, and reads ` dB`. The switch causes no
->   latch, duck or engagement decay there (`wantTpClamp`, `src/dsp/AnabasisEngine.cpp:392`).
+>   latch, duck or engagement decay there (`wantTpClamp`, `src/dsp/AnabasisEngine.cpp:394`).
 >   Recorded as the intended behaviour; no DSP change was made. Where this record says true-peak
 >   mode "is not available" below 12 kHz (the Consequences), it means the dBTP ceiling, not the
 >   switch.

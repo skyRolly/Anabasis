@@ -114,11 +114,16 @@ toggle row, and the metering strip.
 6. **Bypass** in the top bar A/Bs against the untouched signal — with MATCH on, that
    comparison is loudness-matched too: MATCH brings the processed signal down to the
    input's loudness and Bypass plays the input as it is (since 0.2.14 — before that, MATCH
-   turned the bypassed signal down by the same amount, so the jump stayed). MATCH errs
-   slightly low: the matched signal settles a fraction of a LU under the input on typical
-   material, up to about 1.7 LU on very hot material ([`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md)
-   KI-023). MATCH and DELTA are listening aids only — an offline bounce or export never
-   includes them.
+   turned the bypassed signal down by the same amount, so the jump stayed). MATCH errs low
+   once it has settled. On steady material the matched signal settles within about half a
+   LU under the input — about 0.3 LU at the default settings, since 0.2.17 counting what
+   the compressor and the Clip/Sat stage take out as well as the limiter — but on
+   percussive or sparse material it can still sit 1–3 LU under, and MATCH never turns the
+   processed signal up, so a setting that makes it quieter than the input keeps that
+   difference ([`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) KI-023). For about 0.2 s after
+   playback starts, and for up to half a second after a large Loudness move, the matched
+   signal can play louder than the input (KI-029). MATCH and DELTA are listening aids
+   only — an offline bounce or export never includes them.
 
 ### 2.5 The Standalone application
 

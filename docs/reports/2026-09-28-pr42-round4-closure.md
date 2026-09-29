@@ -113,7 +113,7 @@ dependency review **success**. No failed or cancelled check.
 (the universal build) rejected an unqualified `size_t` in `ClampTruePeakDetector.h` (reached through
 `Latency.h` before anything declares it; the Intel job and every local toolchain accepted it).
 **CodeQL** reported **1 new high-severity alert** — "Multiplication result converted to larger type"
-on `tests/dsp_tests.cpp:6695` of that head, `(96000 / B + 1) * B` in the reset test. merge-check,
+on `58107a4:tests/dsp_tests.cpp:6695` (that head), `(96000 / B + 1) * B` in the reset test. merge-check,
 PREfast and dependency review succeeded. Both failures are fixed in `f03d673`.
 
 **`f03d673` (the review's fixes and the two CI fixes):** push run 36492315079 — docs, preflight, source-lint, linux (with pluginval ×3

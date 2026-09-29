@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **KI-028's disposition (2026-09-29, still 0.2.16)** — pre-existing / external:
+**Last updated:** for **DSP-005 (2026-09-29, still 0.2.16 until the round's records commit)** — MATCH's
+predict floor counts the compressor (× Comp Mix) and the Clip/Sat stage (addendum below). Before that,
+for **KI-028's disposition (2026-09-29, still 0.2.16)** — pre-existing / external:
 the macOS abort's throw site captured in Apple's AudioToolboxCore under pluginval's AU host teardown,
 a JUCE-example control that never aborts (addendum below). Before that, for **the session length's
 semantics (2026-09-29, still 0.2.16)** — the review
@@ -609,6 +611,28 @@ exact signature, and that any other one is a new failure). **Correction** to the
 addendum above: it lists eight mutants; ten were run and killed — also the TP hold taking readings
 at paused frames and the loudness ring-out guard removed (the round's worklog §5). No code, UI string,
 parameter, state or ADR changes.
+
+**Addendum (2026-09-29, a later commit of the same round) — DSP-005: MATCH's predict floor counts
+every level-taking stage (decided Modify; KI-023 partly fixed).** `AnabasisEngine.{h,cpp}`: decision
+7's expected GR = the limiter's deepest reduction + the compressor's block-end reduction × Comp Mix
+(read from the stage, not the published atomic) + the Clip/Sat stage's measured level change over
+the previous block; the block-top comment that called the deepest-GR choice "the safe direction" is
+corrected (it is the shallower floor), and the GR-tap comment no longer says the floor is the
+limiter's alone. **New test** — `testMatchPredictCountsEveryLevelTakingStage` (DSP, +4 checks; 3 fail
+on 0.2.16; the Clip/Sat term removed, the compressor term removed and the compressor term unweighted
+each fail their own check). **Docs** — `KNOWN_ISSUES.md` KI-023 (heading and a dated addendum: the
+table before / after, the ADAA-droop mechanism, what stays open — the percussive term and the EQ —
+and the attenuation-only limit) and **KI-029 new** (MATCH can play the processed signal above the
+input for ~0.2 s after a prepare and up to 0.5 s after a macro jump; recorded, not changed); ADR-0044
+a dated note (⊕) under "What is left of the gap"; `ADR_INDEX` (ADR-0044's and ADR-0006's evidence
+cells); `DSP_POLICY.md` invariant 10's guards and its test-map row; `USER_MANUAL.md` §2.4 step 6 (the
+residual as it now is, the percussive case, the attenuation-only limit, KI-029's two moments);
+`TESTING.md` (the test's mandated stimulus; the count Eight → Nine). **Citations** — the engine's
+line moves re-anchored in ADR-0013, ADR-0014, ADR-0046 and OPEN_QUESTIONS (10 anchors, each read to
+point at the same text); the fourth round's closure record's CodeQL anchor, which named a line of
+`58107a4`, is pinned as `58107a4:tests/dsp_tests.cpp:6695` instead of renumbered (a dated record
+quoting a tool's report). No parameter, state, latency, signal-order or threading change; the
+render and the invariant-7 null are unchanged.
 
 **Addendum (2026-09-28, 0.2.16) — the fourth PR #42 review round: the low-rate true-peak contract,
 KI-024, the statistics RESET.** Code: (1) ADR-0046 — `CeilingClamp`'s eased attack (`easeWeight`,

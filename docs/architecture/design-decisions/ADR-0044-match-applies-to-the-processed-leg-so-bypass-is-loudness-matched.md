@@ -105,6 +105,19 @@ render, the meters, the latency, a parameter or the saved state.
   larger term (clip drive 0 → +0.30 LU; removing the compressor changes nothing there), which
   contradicts the audit's recommendation to drop the clipper term. Recorded as `KNOWN_ISSUES.md`
   KI-023 and sequenced as the next MATCH item; not addressed here.
+
+  > **Dated note (2026-09-29, DSP-005 — ⊕ for the owner's review with this ADR).** The bullet above
+  > is the state at 0.2.14–0.2.16. Since 0.2.17 decision 7's "expected GR" counts three stages: the
+  > limiter's deepest reduction, the compressor's block-end reduction weighted by Comp Mix (read
+  > from the stage, not from the published `compGrDb`, which has a message-thread writer), and the
+  > Clip/Sat stage's measured level change over the previous block (at Oversampling Off mostly the
+  > ADAA kernel's HF droop, KI-005). The jump at the calibration above is **+0.27 LU** (+0.63
+  > before), a compressor-heavy setting +0.18 LU (+3.00); the render, the meters, the latency and
+  > this ADR's signal order do not move. The residual on percussive programme (+2.8 / +0.9 LU on
+  > synthetic drums / a music-like bed) is the limiter term's per-block swing under `min`, which
+  > a stateless floor cannot remove; KI-023 stays open for it. Pinned by
+  > `testMatchPredictCountsEveryLevelTakingStage`; evidence in
+  > `worklogs/2026-09-29-pr42-round5-contract-ki028-clock.md` §9.
 - **Drift recorded, not addressed:** ADR-0006's Consequences and DESIGN §7 promise "per-slot
   compensation memory restores at the duck bottom"; no per-slot compensation state exists (the MATCH
   measure and gain are single engine members). The dated banner on ADR-0006 says so.
