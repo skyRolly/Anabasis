@@ -186,7 +186,7 @@ transitions per switchable path; no NaN/Inf/denormals across the feature × over
 sample-rate matrix; loudness-compensation render neutrality; LUFS against the EBU R128 vectors;
 dither placement and default.
 
-**Nine of these have a stimulus mandated by an ADR, not left to the implementer.** *(The count read "Five" until 2026-09-28, two rows after the table had six; "Eight" until 2026-09-29.)* A test name
+**Ten of these have a stimulus mandated by an ADR, not left to the implementer.** *(The count read "Five" until 2026-09-28, two rows after the table had six; "Eight" and then "Nine" on 2026-09-29.)* A test name
 alone does not carry the property; these are the cases where the wrong stimulus passes vacuously:
 
 | Test | Mandated stimulus | Source |
@@ -200,6 +200,7 @@ alone does not carry the property; these are the cases where the wrong stimulus 
 | `testTruePeakModeHoldsTheCeilingBelow44k` | The **saved worst-case bursts** a hill-climbing search found against 0.2.15 (16 / 22.05 / 32 kHz, embedded verbatim) placed where they were found — at the bottom of a fast full-range Ceiling cut or on a static ceiling — with a **premise that each burst's reading reaches the live ceiling** (a burst that lands under it passes vacuously), and the 8 kHz one below the rail against the sample-peak promise; the clamp-level vectors driven with the engine's own stamping and once-per-block revision (a reversal whose emission-only stamping reads over is the premise for the min-stamping check); and the rail at **11999 and 12000 Hz**. Fails 12 checks on 0.2.15 | ADR-0046 |
 | `testStatisticsResetStartsTheSessionAtTheReset` | The programme must END EXACTLY AT THE RESET, with the render tap digital silence from it on (a premise) — a reset after the estimator has drained passes vacuously; plus a CONTINUING programme compared against a second engine with no reset (the over-correction a zero-started estimator makes), a click in the first post-reset samples (the under-correction a whole-reach skip makes), the loudness ring-out on and 64 samples off a sub-block boundary, and DC at 0.99 cut at the minimum gap the guard admits (fills L/2 − 1 / L/2 / L/2 + 1, an odd L among the rates) — the slowest ring-out, which a 50 ms guard let into the ungated mean | ADR-0020 (implementation note, 2026-09-28) |
 | `testMatchPredictCountsEveryLevelTakingStage` | The compressor must **engage** (−20 dBFS pink, threshold −24, ratio 4, limGain +6): at the −17 dBFS calibration point its reduction is exactly 0, so a compressor term passes vacuously there. And one case must run at **Comp Mix 50 % after lead silence**, so the predict floor acts alone for its first seconds — the only phase in which a term unweighted by the mix plays the matched signal above the input | ADR-0006 decision 7, audit DSP-005 |
+| `testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio` | A **never-bypassed twin** run in lockstep, so the frames a bypass made audible are read off the audio rather than off the engine's own flag (a test that trusts the flag pins nothing); a **RESET inside an audition**; and **open runs shorter than 0.5 s** between auditions — the case where the length grows and I cannot | ADR-0020 amendment 4 item 3 |
 
 ### `tests/state_tests.cpp` → `AnabasisStateTests`
 

@@ -173,7 +173,9 @@ docs/
 │                   item: two true-peak paths, KI-025, GR max's contract, the copy decisions, CI)
 │                   and 2026-09-28-pr42-round4-closure.md (the fourth: the true-peak contract at
 │                   every engaged rate — ADR-0046, the 12 kHz rail — KI-024, the RESET stale peak,
-│                   the TP matrix, CI, the roadmap)
+│                   the TP matrix, CI, the roadmap) and 2026-09-29-pr42-round5-closure.md (the
+│                   fifth: ADR-0046 ratified, the low-rate contract, OQ-020, KI-028 dispositioned,
+│                   the session clock, DSP-005, the roadmap)
 ├── procedures/     BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS,
 │                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. PACKAGING arrives
 │                   with the OQ-007 installer set (first commercial release)

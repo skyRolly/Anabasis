@@ -3,6 +3,14 @@
 **Date:** 2026-09-28 · **Version:** 0.2.16 (unreleased) · **Class:** dated record in `docs/reports/` —
 a snapshot, superseded by a later record rather than edited in place (`docs/SOURCE_OF_TRUTH.md`).
 
+> **Followed by [`2026-09-29-pr42-round5-closure.md`](2026-09-29-pr42-round5-closure.md) (0.2.17).**
+> ADR-0046 is ratified; OQ-020 is resolved (option 2); KI-028 is dispositioned pre-existing / external
+> (Apple's AudioToolboxCore under pluginval's AU host teardown); DSP-005 — §5 item 1 below — is
+> implemented, KI-023 partly fixed. Two figures here are corrected there: the PREfast alerts called
+> C6011 are C28182, and "the 7 added are this round's new tests" is five tests and two helpers. The
+> CodeQL anchor in §4 is pinned to `58107a4`, the head it names. The rows below stand as the state at
+> `6ee9f29`.
+
 The closure record for the review findings raised against PR #42 at head `8ab0532` (0.2.15) — two
 new findings, the true-peak items the previous round left open (KI-024, KI-025), and the GR max and
 tooltip items carried from it. Scope, by the owner's instruction: close the true-peak contract, fix

@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Twenty-three such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`, `[0.2.12]`, `[0.2.13]`, `[0.2.14]`, `[0.2.15]`, `[0.2.16]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Twenty-four such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`, `[0.2.12]`, `[0.2.13]`, `[0.2.14]`, `[0.2.15]`, `[0.2.16]`, `[0.2.17]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,32 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.17] — 2026-09-29
+
+**The fifth review round of PR #42: MATCH settles closer to the input's loudness, and below 12 kHz
+the TP and Ceiling tooltips say what the Ceiling holds.** Nothing here moves the reported latency, a
+parameter or the saved state, and every rendered sample is what 0.2.16 rendered — MATCH is a
+monitoring aid and the tooltips are text. Measurement trail:
+[`worklogs/2026-09-29-pr42-round5-contract-ki028-clock.md`](worklogs/2026-09-29-pr42-round5-contract-ki028-clock.md).
+
+### Fixed
+- **MATCH settles closer to the input's loudness (in part).** With MATCH on, the processed signal
+  settled under the input — +0.6 LU at the default Loudness on steady material, up to +3 LU with the
+  compressor working hard — because MATCH counted only the limiter's gain reduction. It now also
+  counts the compressor's (weighted by Comp Mix) and the Clip/Sat stage's level change: +0.3 LU and
+  +0.2 LU in those two cases. On percussive or sparse material it can still settle 1–3 LU under,
+  and it never turns the processed signal up ([`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-023).
+  Offline bounces never include MATCH and are unaffected. Evidence: commit 86bfdf5. [Verified]
+
+### Changed
+- **Below 12 kHz the TP and Ceiling tooltips name the boundary.** At a host sample rate under
+  12 kHz, where the Ceiling holds sample peak rather than dBTP, the **TP** switch's tooltip now
+  reads "Catch inter-sample peaks at sample rates from 12 kHz up - below that the Ceiling holds
+  sample peak, not dBTP" and the Ceiling's "The output limit - nothing leaves the plugin above it.
+  Sample peak at sample rates below 12 kHz, with or without TP"; at 12 kHz and up both are unchanged.
+  No other text changes. The wording is held for the owner's review
+  ([`OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) OQ-020). Evidence: commit c194000. [Verified]
 
 ## [0.2.16] — 2026-09-28
 

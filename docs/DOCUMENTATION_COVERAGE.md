@@ -6,7 +6,8 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **DSP-005 (2026-09-29, still 0.2.16 until the round's records commit)** — MATCH's
+**Last updated:** for **0.2.17 (2026-09-29) — the fifth PR #42 review round's records** (addendum
+below). Before that, for **DSP-005 (2026-09-29, still 0.2.16 until the round's records commit)** — MATCH's
 predict floor counts the compressor (× Comp Mix) and the Clip/Sat stage (addendum below). Before that,
 for **KI-028's disposition (2026-09-29, still 0.2.16)** — pre-existing / external:
 the macOS abort's throw site captured in Apple's AudioToolboxCore under pluginval's AU host teardown,
@@ -633,6 +634,24 @@ point at the same text); the fourth round's closure record's CodeQL anchor, whic
 `58107a4`, is pinned as `58107a4:tests/dsp_tests.cpp:6695` instead of renumbered (a dated record
 quoting a tool's report). No parameter, state, latency, signal-order or threading change; the
 render and the invariant-7 null are unchanged.
+
+**Addendum (2026-09-29, 0.2.17) — the fifth PR #42 review round's records.** New:
+`worklogs/2026-09-29-pr42-round5-contract-ki028-clock.md` (the evidence: the state at the start, Devin
+A / B re-verified, ADR-0046's verification and ratification, the low-rate contract, OQ-020, the
+session clock, KI-028 across four diagnostic runs and the Linux causal test, the 22 778-render
+true-peak matrix and its re-run on the final engine, PREfast, DSP-005's investigation and decision,
+the gates and CI, corrections, what was not verified) and
+`docs/reports/2026-09-29-pr42-round5-closure.md` (the closure: item by item, the contract by rate,
+KI-028's disposition, the session clock, DSP-005, CI, the roadmap, the owner decisions carried).
+**CHANGELOG** `[0.2.17]` (the MATCH predict floor, Fixed in part; the below-12 kHz tooltips, Changed;
+evidence `86bfdf5`, `c194000`); **version** 0.2.17. **HANDOVER** — Current Version, Test Status (2411
+= 773 + 1638, re-counted) and Pending Tasks gain a 0.2.17 lead (the earlier text kept after "Before
+it"). **Forward pointers** — the Phase 1 roadmap (DSP-005 done in part; §2 resumes at VIS-010) and
+the fourth round's closure (what this round settles and the two PREfast figures it corrects; its
+text otherwise untouched). **README** and **REPOSITORY_MAP** list the new closure record.
+**ADR_INDEX** — ADR-0020's evidence cell names the two session-length tests. **TESTING.md** — the
+session clock's mandated stimulus (the count Nine → Ten). No code changes in this commit beyond the
+version number.
 
 **Addendum (2026-09-28, 0.2.16) — the fourth PR #42 review round: the low-rate true-peak contract,
 KI-024, the statistics RESET.** Code: (1) ADR-0046 — `CeilingClamp`'s eased attack (`easeWeight`,

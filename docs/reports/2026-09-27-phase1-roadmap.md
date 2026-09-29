@@ -17,6 +17,14 @@ a snapshot, superseded by a later record rather than edited in place (`docs/SOUR
 > above is done; DSP-005 is next again in §2's order, not started, its technical preconditions met
 > (that record, §5), after the owner's review of the ⊕ records. §3 gains ADR-0046, OQ-020, KI-026 and
 > KI-027.
+>
+> **Then by [`2026-09-29-pr42-round5-closure.md`](2026-09-29-pr42-round5-closure.md) (0.2.17).** The
+> DSP-005 row below is **done in part**: the predict floor counts the compressor (× Comp Mix) and the
+> Clip/Sat stage (+0.63 → +0.27 LU at the calibration point); KI-023 stays open for the percussive
+> term, which needs an ADR-0006 decision 7 amendment. §2's order resumes at VIS-010 + UX-010's cue;
+> that record adds KI-029 (a MATCH transient) ahead of it for the owner's call. §3 gains KI-023's
+> percussive term, KI-029 and KI-028's gate question; ADR-0046 and OQ-020 leave it (ratified;
+> resolved).
 
 The durable follow-up record for Phase 1 of the 2026-09-26 audit
 ([`2026-09-26-anabasis-product-ux-audit.md`](2026-09-26-anabasis-product-ux-audit.md), §Prioritized

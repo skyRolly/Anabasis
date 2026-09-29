@@ -153,7 +153,10 @@ The full technical documentation lives in **[`docs/`](docs/)**:
   true-peak paths closed, a low-rate residual recorded, GR max's contract, the copy decisions), and
   the fourth round's [`2026-09-28-pr42-round4-closure.md`](docs/reports/2026-09-28-pr42-round4-closure.md)
   (the low-rate true-peak contract closed with a stated 12 kHz rail, KI-024 dispositioned, the
-  statistics RESET, the TP matrix and the roadmap)
+  statistics RESET, the TP matrix and the roadmap), and the fifth round's
+  [`2026-09-29-pr42-round5-closure.md`](docs/reports/2026-09-29-pr42-round5-closure.md) (ADR-0046
+  ratified, the low-rate contract, OQ-020, KI-028 dispositioned, the session clock, DSP-005, the
+  TP matrix on the final engine, the roadmap)
 - **History & status:** [`CHANGELOG.md`](CHANGELOG.md) ·
   [`docs/HANDOVER.md`](docs/HANDOVER.md) · [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) ·
   [`docs/FUTURE_RISKS.md`](docs/FUTURE_RISKS.md) · [`docs/POSTMORTEMS.md`](docs/POSTMORTEMS.md)
