@@ -229,6 +229,21 @@ private:
     {
         double resetValue = 0.0;
         juce::RangedAudioParameter* resetParam = nullptr;
+        // The value box carries its knob's tip. JUCE copies a Slider's tooltip
+        // into the box only when it BUILDS the box (`Slider::Pimpl::
+        // lookAndFeelChanged`, pinned tree), so a tip changed afterwards left
+        // the number on the old one — OQ-020's Ceiling tip, which follows the
+        // rate. Every other knob's tip is set once, in `setupRotary`, before
+        // `setTextBoxStyle` rebuilds its box from `getTooltip()`, so for them
+        // this forwards the string the rebuild copies anyway. The box is the
+        // Slider's only Label child.
+        void setTooltip (const juce::String& tip) override
+        {
+            juce::Slider::setTooltip (tip);
+            for (auto* c : getChildren())
+                if (auto* box = dynamic_cast<juce::Label*> (c))
+                    box->setTooltip (tip);
+        }
         void doReset()
         {
             getProperties().set ("vpos", (double) valueToProportionOfLength (getValue()));
@@ -581,6 +596,18 @@ private:
     // recompute. The `= false` below only keeps the member from being
     // indeterminate before that seed runs; it carries no meaning.
     bool shownTpMode = false;
+
+    // OQ-020 (2026-09-29): the TP switches' and the Ceiling knobs' TOOLTIPS
+    // follow the RATE the true-peak path engages at
+    // (`CeilingUnitSource::rateEngagesTruePeak`), never the switch — below
+    // 12 kHz no switch position makes their dBTP claim true. The same rule as
+    // `shownTpMode`: this caches the words ON SCREEN, seeded and applied in the
+    // constructor from that predicate before the timer is armed, then
+    // edge-gated on the tick. The initialiser carries no meaning. Message
+    // thread only.
+    bool shownTpRate = true;
+    void refreshTruePeakTips();
+    void applyTruePeakTips (bool rateEngages);
 
     // Learn UI state (§5.4 grammar): explicit start → minimum pass → explicit
     // end; an empty pass flashes the button in `warn` (wordless readout).

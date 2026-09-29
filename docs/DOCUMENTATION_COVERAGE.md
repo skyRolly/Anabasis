@@ -6,7 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **the ADR-0046 ratification (2026-09-29, still 0.2.16)** — ADR-0046 accepted at
+**Last updated:** for **OQ-020's resolution (2026-09-29, still 0.2.16)** — below 12 kHz the TP and
+Ceiling tooltips name the boundary instead of claiming dBTP (addendum below). Before that, for
+**the ADR-0046 ratification (2026-09-29, still 0.2.16)** — ADR-0046 accepted at
 the Architecture Review Gate and recorded in the four places, and the low-rate true-peak contract
 stated in the user-facing documents (addendum below). Before that, for **0.2.16 (2026-09-28) — the
 fourth PR #42 review round** (addendum below; the
@@ -497,6 +499,40 @@ sweep found stale** — `PARAMETER_REGISTRY.md` note 15; code comments in `Ceili
 `state_tests.cpp` (the round-19 quote kept, ADR-0046's wording appended). **Ship a version** —
 `HANDOVER.md` (the Current Version row, the Pending Tasks lead). Historical records — worklogs,
 dated reports, CHANGELOG entries, earlier addenda and dated banners' words — are not edited.
+
+**Addendum (2026-09-29, still 0.2.16, the next commit of the same round) — OQ-020 resolved: the TP
+and Ceiling tooltips name the 12 kHz boundary.** The owner's 2026-09-29 brief asked for the words
+(quoted in OQ-020's Decision); option 2 is taken for both tooltips that claimed dBTP, and the
+wording is recorded, ⊕, with "sample rate(s)" (new to UI strings) and the Ceiling tooltip's
+inclusion named for the owner's confirmation. **Code** — `CeilingUnitSource::rateEngagesTruePeak`,
+the rate half of `truePeakEngaged`, which now calls it (one decider, the same read);
+`tipBelowTruePeakRate` and `truePeakRateBoundary` (the figure formatted from
+`CeilingClamp::kMinTruePeakRate`), beside their one caller rather than beside `tipFor` — lines
+added above the About block would move the two `PluginEditor.cpp` anchors CHANGELOG 0.2.4's
+build-number finding cites, and a past entry is not rewritten; `applyTruePeakTips` / `refreshTruePeakTips` and `shownTpRate`,
+seeded and applied in the constructor before the timer, edge-gated on the tick after
+`refreshCeilingUnit`; `Knob::setTooltip` forwards a knob's tip to its value box. **The value-box
+choice**: the forward is on every knob rather than on the two Ceiling knobs, because it changes no
+other box — each other knob's tip is set once in `setupRotary`, before `setTextBoxStyle` rebuilds its
+box from `getTooltip()` — and the test's all-knob sweep passes at 48 kHz with the forward removed.
+No other UI string changes (C8); the STATISTICS **TP** row is unchanged (a measurement, not the
+Ceiling's promise); option 3 stays the owner's. **New/changed test** —
+`testTheTruePeakTipsFollowTheRateTheTruePeakPathEngagesAt` (state suite, +22 checks: 1605 → 1627;
+DSP suite unchanged at 737), registered after `testTheTickCallsTheSettingsAndCeilingRefreshes`;
+`procedures/TESTING.md`. Mutations, each against the full state suite, each KILLED: the tick call
+removed (3 checks fail: both 11.025 kHz absence checks and the 8 kHz open); the seed hard-coded to
+engaged (1: the 8 kHz open); the value-box forward dropped (7: agreement, absence and the knob sweep
+at 11.025 kHz in both switch states — the sweep naming only the two Ceiling knobs — and the 8 kHz
+open); and two more — the switch-aware predicate (8) and one view only (5). The DSP policy's
+invariant → test map is not touched: this is UI copy, not a DSP invariant, as the unit's own test is
+not listed there; `TEST_REPORT.md` holds measured figures and this adds none. **Open question**
+— `OPEN_QUESTIONS.md` OQ-020 resolved (the question as raised kept as written). **Records it
+points from** — `KNOWN_ISSUES.md` KI-025 remains item (2) (its words kept, a dated note appended);
+ADR-0046's Status, decision 5 and the Consequences bullet (dated pointers, not amendments);
+`COMPATIBILITY_MATRIX.md` §Sample rates (the below-12-kHz row: a clause and the evidence column);
+`USER_MANUAL.md` §3.2 (the Ceiling row); `THREAD_MODEL.md` (the tick as a message-thread reader of
+the same published rate; no new atomic, writer or ordering). `CHANGELOG.md` and `HANDOVER.md` are
+left to the round's records commit.
 
 **Addendum (2026-09-28, 0.2.16) — the fourth PR #42 review round: the low-rate true-peak contract,
 KI-024, the statistics RESET.** Code: (1) ADR-0046 — `CeilingClamp`'s eased attack (`easeWeight`,

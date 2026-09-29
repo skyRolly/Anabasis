@@ -1035,6 +1035,14 @@ AnabasisAudioProcessorEditor::AnabasisAudioProcessorEditor (AnabasisAudioProcess
     // "safe by ordering" argument this file declines elsewhere, and the fix
     // costs one line's placement.
     shownTpMode = proc.ceilingUnit.truePeakEngaged();
+    // OQ-020's tips, under the same rule and for the same reason: seeded from
+    // the predicate that chooses them, before the timer is armed. APPLIED as
+    // well as cached, unlike the unit above — `setupToggle` / `setupRotary`
+    // installed the from-12-kHz words, and an editor opened at a lower rate
+    // must not show them until its first tick. At 12 kHz and up this writes
+    // back the same strings.
+    shownTpRate = proc.ceilingUnit.rateEngagesTruePeak();
+    applyTruePeakTips (shownTpRate);
 
     startTimerHz (24);
     seedAnimatedFromValues();          // after every attachment — see there
@@ -1918,6 +1926,70 @@ void AnabasisAudioProcessorEditor::refreshCeilingUnit()
     simpleCeilingK.updateText();
 }
 
+// OQ-020 (resolved 2026-09-29, under the owner's brief of that date). Two rows
+// of `tipFor`'s table promise dBTP — the TP switch's and the Ceiling's — and
+// below the rate true-peak mode engages from (`CeilingClamp::kMinTruePeakRate`)
+// that promise is false: the Ceiling holds sample peak there whatever the
+// switch says (ADR-0046 decision 5). These replace those two there, and only
+// there; from the boundary up the table's words stand unchanged. Chosen by the
+// RATE, never the switch (`CeilingUnitSource::rateEngagesTruePeak`). The words
+// and where each comes from are recorded at OPEN_QUESTIONS.md OQ-020, ⊕ for the
+// fine review with the rest of the set. The boundary is formatted from the
+// constant, so the copy cannot name a rate the rail does not use. Kept beside
+// the one function that picks them rather than beside the table: lines added
+// up there would move evidence anchors a past CHANGELOG entry cites.
+static juce::String truePeakRateBoundary()
+{
+    auto khz = juce::String (anabasis::CeilingClamp::kMinTruePeakRate / 1000.0, 3);   // "12.000"
+    while (khz.containsChar ('.') && khz.endsWithChar ('0'))
+        khz = khz.dropLastCharacters (1);
+    if (khz.endsWithChar ('.'))
+        khz = khz.dropLastCharacters (1);
+    return khz + " kHz";
+}
+
+static juce::String tipBelowTruePeakRate (const char* id)
+{
+    if (std::strcmp (id, pid::truePeakMode) == 0)
+        return "Catch inter-sample peaks at sample rates from " + truePeakRateBoundary()
+             + " up - below that the Ceiling holds sample peak, not dBTP";
+    if (std::strcmp (id, pid::ceiling) == 0)
+        return "The output limit - nothing leaves the plugin above it. Sample peak at sample rates below "
+             + truePeakRateBoundary() + ", with or without TP";
+    jassertfalse;   // only these two rows make a rate-dependent claim
+    return tipFor (id);
+}
+
+// OQ-020: both views' TP switches and Ceiling knobs, one tip each; the Ceiling
+// knobs' value boxes follow through `Knob::setTooltip`. The tip is also each
+// control's accessible help (JUCE's button and slider accessibility handlers
+// return `getTooltip()`), so a screen reader gets the same words with the
+// Tooltips setting off.
+void AnabasisAudioProcessorEditor::applyTruePeakTips (bool rateEngages)
+{
+    const auto tpTip   = tidyTip (rateEngages ? tipFor (pid::truePeakMode)
+                                              : tipBelowTruePeakRate (pid::truePeakMode));
+    const auto ceilTip = tidyTip (rateEngages ? tipFor (pid::ceiling)
+                                              : tipBelowTruePeakRate (pid::ceiling));
+    tpToggle.setTooltip (tpTip);
+    tpSimpleToggle.setTooltip (tpTip);
+    ceilingK.setTooltip (ceilTip);
+    simpleCeilingK.setTooltip (ceilTip);
+}
+
+// Edge-gated like `refreshCeilingUnit`, on the rate half of its predicate. The
+// rate is read apart from that gate's read, so a re-prepare landing between the
+// two can leave one tick where the unit and the tips disagree; the next tick
+// converges.
+void AnabasisAudioProcessorEditor::refreshTruePeakTips()
+{
+    const bool engages = proc.ceilingUnit.rateEngagesTruePeak();
+    if (engages == shownTpRate)
+        return;
+    shownTpRate = engages;
+    applyTruePeakTips (engages);
+}
+
 void AnabasisAudioProcessorEditor::refreshInternalSettingsBoxes()
 {
     const auto& ist = proc.internalState.state();
@@ -2193,6 +2265,8 @@ void AnabasisAudioProcessorEditor::refreshFromModel()
 
     // -- the Ceiling's unit follows the engaged TP path (ADR-0015, ADR-0046) -
     refreshCeilingUnit();
+    // -- …and the TP / Ceiling tooltips the rate it engages at (OQ-020) ------
+    refreshTruePeakTips();
 
     // -- graph-well mode follows int_spectrumOn (the corner chips) -----------
     {

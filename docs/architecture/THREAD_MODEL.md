@@ -16,7 +16,7 @@ transport) are listed under **Planned edges** so their absence is visible rather
 |---|---|---|
 | **Audio** | yes | `AnabasisEngine` state (rings, wedge, envelope, smoothers, crossfade), built-once-per-block `EngineParameters` snapshot |
 | **Message/GUI** | yes | Editor, `MacroEngine`, `InternalState` tree, A/B slots + preset/undo bulk swaps, PDC recompute (with the two host-callback exceptions below) |
-| **GPU render context** | yes, macOS/Windows only | Component painting when attached — created and driven by JUCE, holds no Anabasis state (`src/gui/PluginEditor.h:650`, attach gated per platform per DESIGN §6.1) |
+| **GPU render context** | yes, macOS/Windows only | Component painting when attached — created and driven by JUCE, holds no Anabasis state (`src/gui/PluginEditor.h:677`, attach gated per platform per DESIGN §6.1) |
 | Workers | **none** | Adding one is an Architecture Review Gate item + Hard Stop (ADR-0011) |
 
 ## Cross-thread edges implemented at P1
@@ -83,7 +83,7 @@ single flush-to-zero mechanism; no module carries its own.
 
 ## Which context paints
 
-The OpenGL context attaches on macOS/Windows only, never Linux/X11 (`src/gui/PluginEditor.h:650`
+The OpenGL context attaches on macOS/Windows only, never Linux/X11 (`src/gui/PluginEditor.h:677`
 and the platform gate around its attach). When attached, JUCE paints components on the GL render
 thread; when not, on the message thread. The rule that keeps both safe is the one the policy
 already mandates: GUI-side reads of published state are stateless `const` peeks (at P1 the only
@@ -132,7 +132,13 @@ bracket — to decide whether the true-peak path engages at the prepared rate (1
 unit may say dBTP. *(Until 2026-09-29 this row said "a single relaxed load of one scalar"; the
 conclusion is unchanged, because nothing pairs the rate with the block.)* No new atomic, writer or ordering: the writer is the ring's `clear`, as above, and
 a read that races a re-prepare returns the old rate or the new one, either of which names a real
-prepared state.
+prepared state. **And one more reader of the same rate, since OQ-020 (2026-09-29), on the message
+thread only:** the editor's constructor and its 24 Hz tick (`refreshTruePeakTips`, beside
+`refreshCeilingUnit`) call `CeilingUnitSource::rateEngagesTruePeak` — the same `prepared()` read
+without the switch, which `truePeakEngaged` now calls — to choose the TP switch's and the Ceiling's
+tooltips. No new atomic, writer or ordering, and no new thread. The tick reads the rate twice, once
+for the unit's gate and once for the tips', so a re-prepare landing between the two can leave one
+tick where the unit and the tips disagree; the next tick converges.
 
 **The ring's own payload became atomic in the same round, and for a different reason** (ADR-0011,
 amended 2026-09-02). The guards above — the epoch, and `readFloor` — are built to notice that a

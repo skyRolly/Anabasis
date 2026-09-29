@@ -1727,7 +1727,9 @@ Evidence [Verified — the reviewer's harness]:
 > requirement sequences with an exact inner maximiser for the rest, and clamp and engine searches;
 > (2) at 3901–11999 Hz, 8 and 11.025 kHz included, true-peak mode is not available (the sample clip;
 > the Ceiling reads dB) — a behaviour change from 0.2.15, where the path ran there with this
-> entry's residual (`COMPATIBILITY_MATRIX.md` §Sample rates; OQ-020 for any wording beyond the unit);
+> entry's residual (`COMPATIBILITY_MATRIX.md` §Sample rates; OQ-020 for any wording beyond the unit
+> (resolved 2026-09-29: the TP and Ceiling tooltips name the 12 kHz boundary instead of claiming
+> dBTP; wording ⊕));
 > (3) a finite input around +180 dBFS is outside what the clamp's float gain can resolve (KI-027,
 > older than this entry).
 >

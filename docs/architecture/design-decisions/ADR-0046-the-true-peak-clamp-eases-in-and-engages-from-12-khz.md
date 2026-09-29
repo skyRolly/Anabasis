@@ -55,7 +55,9 @@ completed at acceptance — and explicitly *not* of
 amends and which stays ⊕ pending the owner's review, that review being of ADR-0045 as amended here;
 nor of ADR-0041's voicing constants (attack 0.25 ms, release 10 ms), which stay ⊕ listening material
 — the 16-sample floor, the ease span and the rise cap are this record's guarantee, not voicing; nor
-of any editor copy beyond the unit (OQ-020, open).
+of any editor copy beyond the unit (OQ-020, open). *(Pointer 2026-09-29, after the ratification:
+OQ-020 is resolved — option 2, below 12 kHz the TP and Ceiling tooltips name the boundary instead of
+claiming dBTP; its words stay ⊕ for the owner's fine review and are not part of this approval.)*
 
 No parameter, saved-state, signal-order or reported-latency change; TP-off output is bit-identical.
 Review finding "Low-rate ceiling cuts exceed dBTP limit" (PR #42, `CeilingClamp.h`, 2026-09-28);
@@ -214,6 +216,10 @@ ceiling, Annex 2 unless marked; the round's worklog §2 carries the method and t
    its promise is a second contract to explain, at rates no listed host uses; the owner may take it.
    *(Settled at acceptance, 2026-09-29: the approval covers the 12 kHz rail; the best-effort
    alternative stays on record, not taken — taking it later is a record of its own.)*
+   *(Pointer 2026-09-29, not an amendment: the editor's TP and Ceiling tooltips follow the rate
+   half of this predicate, `CeilingUnitSource::rateEngagesTruePeak`, which `truePeakEngaged` now
+   calls — so the unit and the tips share one decider — and below 12 kHz name the boundary instead
+   of claiming dBTP; `OPEN_QUESTIONS.md` OQ-020.)*
 6. **Policy amendment (prescribed text, `ADR_POLICY.md` rule 5).** `DSP_POLICY.md` invariant 4:
    "any sample rate" becomes *any host sample rate — true-peak mode's inter-sample promise holds
    wherever the path engages, 12 kHz and up (`truePeakPathEngages`, ADR-0046); below 12 kHz the
@@ -380,6 +386,9 @@ ceiling, Annex 2 unless marked; the round's worklog §2 carries the method and t
   unit is new copy, `OPEN_QUESTIONS.md` OQ-020. *(Ratification note (b), 2026-09-29: what is not
   available below 12 kHz is the dBTP ceiling; the switch still moves the limiter's detector onto its
   true-peak estimate at Oversampling Off and 2×, a best effort with no dBTP guarantee.)*
+  *(Pointer 2026-09-29: OQ-020 is resolved — below 12 kHz the TP switch's and the Ceiling's
+  tooltips name the 12 kHz boundary instead of claiming dBTP, the unit unchanged; the words ⊕,
+  `testTheTruePeakTipsFollowTheRateTheTruePeakPathEngagesAt`.)*
 - **Cost.** Per sample, an A-term weighted sum while anything is below 1 (was an A-term sum); the
   revision's rebuild ~40A + 290 operations once per block at most (~930 at 48 kHz). Whole-engine
   CPU is not measurably changed: with TP on, the integrated tree over 0.2.15 is 0.92–1.07 (medians of 7 runs at 44.1 / 48 / 96 kHz × blocks 64 / 512 × OS off / 4× / 16×), inside the 0.89–1.14 spread of the TP-off cells, whose code did not change. Memory: two more rings of 2A + 32 floats.

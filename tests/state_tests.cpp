@@ -11991,6 +11991,189 @@ static void testTheTickCallsTheSettingsAndCeilingRefreshes()
            "tickCeiling: the tick refreshes the Ceiling's unit when TP engages");
 }
 
+// OQ-020 (resolved 2026-09-29): the TP switch's and the Ceiling's tooltips
+// follow the RATE the true-peak path engages at, never the switch. From
+// 12 kHz up they are the R2 set's words, unchanged; below, neither repeats
+// that set's dBTP clause and both name the boundary, formatted from
+// `CeilingClamp::kMinTruePeakRate`. What is asserted about the new words are
+// truths, not the words (OQ-018's precedent); the from-12-kHz words ARE held
+// to the shipped strings, because this change must not move them (C8). Read
+// through `getTooltip()`: that is the accessible help JUCE's button and slider
+// handlers report, and headless there is no handler to ask.
+static void collectButtonsByText (juce::Component& root, const juce::String& text,
+                                  juce::Array<juce::Button*>& out)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* b = dynamic_cast<juce::Button*> (c); b != nullptr && b->getButtonText() == text)
+            out.add (b);
+        collectButtonsByText (*c, text, out);
+    }
+}
+
+static void collectSlidersByTitle (juce::Component& root, const juce::String& title,
+                                   juce::Array<juce::Slider*>& out)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* s = dynamic_cast<juce::Slider*> (c); s != nullptr && s->getTitle() == title)
+            out.add (s);
+        collectSlidersByTitle (*c, title, out);
+    }
+}
+
+// Every slider whose value box does not carry the slider's own tip. The
+// forward that keeps the Ceiling's number in step is `Knob::setTooltip`, which
+// every knob inherits, so the sweep is over all of them: it holds before the
+// forward existed too (JUCE copies the tip when it builds a box), which is what
+// says the forward changes nothing for a knob whose tip never moves.
+static void collectValueBoxTipMismatches (juce::Component& root, juce::StringArray& out)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* s = dynamic_cast<juce::Slider*> (c))
+            if (auto* box = findChildLabel (*s); box != nullptr && box->getTooltip() != s->getTooltip())
+                out.add (s->getTitle());
+        collectValueBoxTipMismatches (*c, out);
+    }
+}
+
+static void testTheTruePeakTipsFollowTheRateTheTruePeakPathEngagesAt()
+{
+    AnabasisAudioProcessor proc;
+    auto* tp   = proc.apvts.getParameter (pid::truePeakMode);
+    auto* ceil = proc.apvts.getParameter (pid::ceiling);
+    check (tp != nullptr && ceil != nullptr, "tpTips: (premise) the two parameters exist");
+    if (tp == nullptr || ceil == nullptr)
+        return;
+    proc.prepareToPlay (48000.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tpTips");
+    if (ed == nullptr)
+        return;
+
+    struct Views { juce::Array<juce::Button*> tps; juce::Array<juce::Slider*> ceils; };
+    auto viewsOf = [ceil] (juce::Component& root)
+    {
+        Views v;
+        collectButtonsByText (root, "TP", v.tps);
+        collectSlidersByTitle (root, ceil->getName (24), v.ceils);
+        return v;
+    };
+    const auto views = viewsOf (*ed);
+    check (views.tps.size() == 2 && views.ceils.size() == 2,
+           "tpTips: (premise) both views' TP switches and Ceiling knobs were found");
+    if (views.tps.size() != 2 || views.ceils.size() != 2)
+        return;
+
+    // One tip per control kind, carried by both views and by each Ceiling
+    // knob's value box; empty strings when they disagree anywhere.
+    struct Tips { juce::String tp, ceiling; };
+    auto tipsOf = [] (const Views& v)
+    {
+        Tips t { v.tps[0]->getTooltip(), v.ceils[0]->getTooltip() };
+        for (auto* b : v.tps)
+            if (b->getTooltip() != t.tp)
+                t.tp = {};
+        for (auto* s : v.ceils)
+        {
+            auto* box = findChildLabel (*s);
+            if (s->getTooltip() != t.ceiling || box == nullptr || box->getTooltip() != t.ceiling)
+                t.ceiling = {};
+        }
+        return t;
+    };
+    auto boxesFollowTheirKnobs = [] (juce::Component& root, const char* what)
+    {
+        juce::StringArray stale;
+        collectValueBoxTipMismatches (root, stale);
+        if (! stale.isEmpty())
+            std::printf ("  value box off its knob's tip: %s\n", stale.joinIntoString (", ").toRawUTF8());
+        check (stale.isEmpty(), what);
+    };
+
+    // The from-12-kHz words, as shipped. The clause of each that carries the
+    // dBTP claim is cut from the LIVE tip, so the absence checks below follow
+    // whatever these words become.
+    const auto above = tipsOf (views);
+    check (above.tp == "Catch inter-sample peaks - the Ceiling then holds in dBTP instead of sample peak"
+             && above.ceiling == "The output limit - nothing leaves the plugin above it. "
+                                 "Sample peak by default; engage TP to hold it in dBTP",
+           "tpTips: at 48 kHz both views carry the shipped TP and Ceiling tips, value boxes included");
+    boxesFollowTheirKnobs (*ed, "tpTips: at 48 kHz every knob's value box carries its knob's tip");
+    const auto tpClaim   = above.tp.fromFirstOccurrenceOf (" - ", false, false);
+    const auto ceilClaim = above.ceiling.fromLastOccurrenceOf ("; ", false, false);
+    check (tpClaim.contains ("dBTP") && ceilClaim.contains ("dBTP"),
+           "tpTips: (premise) each from-12-kHz tip has a clause that claims dBTP");
+    // "12 kHz" from the rail's own constant, never typed here.
+    const auto boundary = juce::String (juce::roundToInt (anabasis::CeilingClamp::kMinTruePeakRate / 1000.0))
+                        + " kHz";
+
+    auto isBelow = [&] (const Tips& t)
+    {
+        return t.tp.isNotEmpty() && t.ceiling.isNotEmpty()
+            && ! t.tp.contains (tpClaim) && ! t.ceiling.contains (ceilClaim)
+            && t.tp.contains (boundary) && t.ceiling.contains (boundary);
+    };
+
+    Tips firstBelow;
+    for (const bool on : { true, false })   // the switch's own state must make no difference
+    {
+        tp->setValueNotifyingHost (on ? 1.0f : 0.0f);
+        const juce::String state = on ? " (TP on)" : " (TP off)";
+        ed->refreshFromModel();
+        {
+            const auto t = tipsOf (views);
+            check (t.tp == above.tp && t.ceiling == above.ceiling,
+                   ("tpTips: from the boundary up the switch moves no tip" + state).toRawUTF8());
+        }
+
+        proc.prepareToPlay (11025.0, 256);
+        {
+            const auto t = tipsOf (views);
+            check (t.tp == above.tp && t.ceiling == above.ceiling,
+                   ("tpTips: (premise) the re-prepare alone moves no tip" + state).toRawUTF8());
+        }
+        ed->refreshFromModel();
+        const auto below = tipsOf (views);
+        check (below.tp.isNotEmpty() && below.ceiling.isNotEmpty(),
+               ("tpTips: at 11.025 kHz both views agree, value boxes included" + state).toRawUTF8());
+        check (isBelow (below),
+               ("tpTips: at 11.025 kHz neither tip claims dBTP and both name the rate "
+                "true-peak mode needs" + state).toRawUTF8());
+        boxesFollowTheirKnobs (*ed, ("tpTips: at 11.025 kHz every knob's value box carries its "
+                                     "knob's tip" + state).toRawUTF8());
+        if (on)
+            firstBelow = below;
+        else
+            check (below.tp == firstBelow.tp && below.ceiling == firstBelow.ceiling,
+                   "tpTips: below the boundary the tips are the same with TP on and off");
+
+        proc.prepareToPlay (12000.0, 256);
+        ed->refreshFromModel();
+        {
+            const auto t = tipsOf (views);
+            check (t.tp == above.tp && t.ceiling == above.ceiling,
+                   ("tpTips: at 12 kHz both tips are the from-12-kHz words again" + state).toRawUTF8());
+        }
+    }
+
+    // An editor OPENED below the boundary is right before its first tick.
+    base.reset();
+    proc.prepareToPlay (8000.0, 256);
+    auto* ed2 = openTickEditor (proc, base, "tpTipsOpen");
+    if (ed2 == nullptr)
+        return;
+    const auto views2 = viewsOf (*ed2);
+    check (views2.tps.size() == 2 && views2.ceils.size() == 2,
+           "tpTipsOpen: (premise) both views' TP switches and Ceiling knobs were found");
+    if (views2.tps.size() != 2 || views2.ceils.size() != 2)
+        return;
+    const auto opened = tipsOf (views2);
+    check (isBelow (opened) && opened.tp == firstBelow.tp && opened.ceiling == firstBelow.ceiling,
+           "tpTipsOpen: an editor opened at 8 kHz shows the below-boundary tips before any tick");
+}
+
 // T7: the preset name every tick, the " *" mark on the throttled poll. The
 // exact cadence (every 8th tick) is deliberately not pinned — only that a
 // handful of ticks surface it.
@@ -13179,6 +13362,7 @@ int main (int argc, char** argv)
         testTheSettingsPanelFollowsAProjectLoad();
         testTheTickAppliesAPendingModeSwitchAndTheComboHoverFlag();
         testTheTickCallsTheSettingsAndCeilingRefreshes();
+        testTheTruePeakTipsFollowTheRateTheTruePeakPathEngagesAt();
         testTheTickShowsThePresetNameAndItsDirtyMark();
         testTheTickDimsTheEditorOnBypass();
         testTheTickPrintsTheOutLufsReadout();

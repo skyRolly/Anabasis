@@ -115,14 +115,25 @@ struct CeilingUnitSource
     // to; unwired, the same.
     std::atomic<const anabasis::GrHistoryBuffer*> preparedPair { nullptr };
 
+    // THE RATE HALF ALONE (OQ-020, 2026-09-29): whether the path engages at the
+    // prepared rate, whatever the switch says. The editor's TP and Ceiling
+    // tooltips follow this rather than `truePeakEngaged`, because below 12 kHz
+    // no position of the switch makes their dBTP claim true. The unit's own
+    // answer comes through here too, so the two cannot use different rates'
+    // rules: one decider. Same read, same fallback as before the split.
+    bool rateEngagesTruePeak() const noexcept
+    {
+        const auto* ring = preparedPair.load (std::memory_order_relaxed);
+        const double rate = ring != nullptr ? ring->prepared().rate : 0.0;   // read ONCE
+        return anabasis::truePeakPathEngages (rate > 0.0 ? rate : 48000.0);
+    }
+
     bool truePeakEngaged() const noexcept
     {
         const auto* p = truePeakRaw.load (std::memory_order_relaxed);
         if (p == nullptr || p->load (std::memory_order_relaxed) < 0.5f)
             return false;
-        const auto* ring = preparedPair.load (std::memory_order_relaxed);
-        const double rate = ring != nullptr ? ring->prepared().rate : 0.0;   // read ONCE
-        return anabasis::truePeakPathEngages (rate > 0.0 ? rate : 48000.0);
+        return rateEngagesTruePeak();
     }
 };
 

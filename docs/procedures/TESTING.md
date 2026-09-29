@@ -230,6 +230,19 @@ is the message loop's own delivery (`testTheTooltipSwitchGatesEveryTip`). The ti
 housekeeping is inert with nothing open and stays under ADR-0025, as does a hovered = true combo
 flag, which needs a pointer.
 
+**The tooltips that follow the rate** (OQ-020, 2026-09-29).
+`testTheTruePeakTipsFollowTheRateTheTruePeakPathEngagesAt` drives the tick across re-prepares at
+11.025 and 12 kHz with the editor open, both switch states, and opens a second editor at 8 kHz to
+pin the constructor's seed. It reads `getTooltip()`, which is what JUCE's button and slider
+accessibility handlers return as help — headless there is no peer and so no handler to ask. About
+the below-boundary words it asserts truths, not the words: both views and the Ceiling value boxes
+agree, the from-12-kHz dBTP clause is absent, the boundary is the one `CeilingClamp::kMinTruePeakRate`
+gives, and the switch makes no difference. The from-12-kHz words are held to the shipped strings,
+because the change must not move them. Its sweep of every knob's value box also passes at 48 kHz
+with `Knob::setTooltip`'s forward removed — the evidence that the forward changes nothing for a knob
+whose tip never moves. Removing the tick call, hard-coding the seed and dropping the forward each
+fail it (`DOCUMENTATION_COVERAGE.md`, the 2026-09-29 OQ-020 addendum).
+
 A view's own ARITHMETIC is reached a different way, and 0.1.6 is the case that shows why both are
 needed. `GrHistoryView` publishes the parts of its draw that carry a correctness argument as pure
 statics — `windowEntries`, `buckets`, `bucketX`, `drawsZeroRegion`, since 0.1.6 `grY`, and since

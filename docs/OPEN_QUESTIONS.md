@@ -706,7 +706,7 @@ clipper are not included" and "Deepest limiter gain reduction over the GR histor
 `src/gui/GrHistoryView.h:306`) and "-" with no reading.
 
 **Covered by existing conventions.** "-" is the product's no-reading form
-(`src/gui/LoudnessMeterView.cpp:186`, `src/gui/PluginEditor.cpp:2107`); one decimal is the
+(`src/gui/LoudnessMeterView.cpp:186`, `src/gui/PluginEditor.cpp:2179`); one decimal is the
 STATISTICS rows' and out LUFS's; "GR" is the graph pill's word (`src/gui/LookAndFeel.h:344`); the
 lowercase caption style is "out LUFS" (`PluginEditor.cpp:646`, `DESIGN.md` §6.2 wireframe); the
 tooltips are in the `tidyTip` voice and restate `USER_MANUAL.md` §3.4.
@@ -727,10 +727,86 @@ because the readout has to name its stage (VIS-003).
 
 ---
 
-## OQ-020 — Should the editor say that True Peak mode is not engaged below 12 kHz, and in what words? · `Open`
+## OQ-020 — Should the editor say that True Peak mode is not engaged below 12 kHz, and in what words? · `Resolved 2026-09-29 (option 2 — the TP and Ceiling tooltips name the 12 kHz boundary; wording recorded, ⊕ for the owner's fine review of the words)`
+
+**Decision (2026-09-29, under the owner's brief of that date, "Anabasis — Finalize ADR-0046,
+Resolve Remaining Review/Contract Issues, and Begin DSP-005": "The owner has authorized proceeding
+through ADR decisions." For this question: "Choose precise wording that tells the user the truth
+without introducing implementation jargon." "The UI should not imply that a `dB` ceiling at low
+sample rates is equivalent to the product's dBTP guarantee." "If repository policy requires explicit
+maintainer approval for final wording, preserve the approved repository terminology and record the
+wording decision explicitly." "Do not invent marketing language." And for the low-rate contract:
+"Do not describe sample clipping as true-peak protection." "Do not claim dBTP protection below the
+supported true-peak boundary.").** Option 2, applied to the two tooltips that made the claim: the
+TP switch's and the Ceiling's, in both views — for the Ceiling, the knob and its value box. The brief
+is the explicit request C8 asks for (`AI_AGENT_POLICY.md` C8: "unless the task explicitly requests
+that text"). Repository policy does make UI copy the maintainer's (C8), so, as the brief directs,
+the approved terminology is kept — every term but one is already in shipped UI copy — and the
+wording decision is recorded here. Option 2 as raised asked for the owner's words; these were
+composed under the brief's rule rather than supplied, so they ship ⊕ for the owner's fine review of
+the words, with the rest of the R2 item-11 tooltip set.
+
+- **From 12 kHz up** (`truePeakPathEngages` true) both tooltips are unchanged, word for word.
+  TP: "Catch inter-sample peaks - the Ceiling then holds in dBTP instead of sample peak".
+  Ceiling: "The output limit - nothing leaves the plugin above it. Sample peak by default; engage TP
+  to hold it in dBTP".
+- **Below 12 kHz**, where the Ceiling already reads `dB`:
+  TP: "Catch inter-sample peaks at sample rates from 12 kHz up - below that the Ceiling holds sample
+  peak, not dBTP".
+  Ceiling: "The output limit - nothing leaves the plugin above it. Sample peak at sample rates below
+  12 kHz, with or without TP".
+
+The choice follows the prepared rate only, never the switch (`CeilingUnitSource::rateEngagesTruePeak`,
+the rate half of ADR-0046 decision 5's predicate, which the unit's `truePeakEngaged` now calls, so
+the unit and the tips share one decider). Below 12 kHz no position of the switch makes the dBTP
+claim true. "12 kHz" in both strings is formatted from `CeilingClamp::kMinTruePeakRate`
+(`truePeakRateBoundary`, `src/gui/PluginEditor.cpp`), so the words cannot name a boundary the rail
+does not use.
+
+**Where the words come from.** Every term but one is already in UI copy: "Ceiling", "TP", "dBTP",
+"sample peak" and "inter-sample peaks" (the two tooltips above, `tipFor` in `src/gui/PluginEditor.cpp`),
+"kHz" (a value unit, `hzText` in `src/PluginParameters.cpp`), and the ", not X" construction (the
+Clip Drive tip, "adds density, not volume"). "The output limit - nothing leaves the plugin above it"
+and "Catch inter-sample peaks" are the shipped tips' own openings.
+
+**Two items for the owner's confirmation**, named rather than assumed:
+1. **"sample rate(s)" is the one term new to UI strings** — no UI string contained "rate" before. It
+   is taken from the product's own statement of this contract (`USER_MANUAL.md` §3.2; CHANGELOG
+   0.2.16, "True-peak mode needs a sample rate of 12 kHz or more"), because "12 kHz" beside
+   "inter-sample peaks" would otherwise read as an audio frequency.
+2. **The Ceiling tooltip is changed too**, beyond option 2 as raised (a clause on the TP switch). Its
+   own tip claims dBTP ("engage TP to hold it in dBTP"), and below 12 kHz that is the claim the
+   brief rules out ("Do not claim dBTP protection below the supported true-peak boundary.").
+
+**Deliberately not used:**
+- "unavailable", "not engaged", "off" — each is false: with the switch on at Oversampling Off or 2×
+  the limiter still detects on its true-peak estimate below 12 kHz (`src/dsp/AnabasisEngine.cpp:796`,
+  `limiter.setTruePeakMode`, not gated by the rail; ADR-0046's ratification note (b)), so the switch
+  still does something there — it cannot make the Ceiling a dBTP limit;
+- "path", "rail", "clamp" — implementation jargon.
+
+**What does not change.**
+- The Ceiling's unit (ADR-0046 decision 5) stays the always-visible signal. Tooltips show only with
+  Settings → Tooltips on, which is off by default. The tooltip is also the switch's and the knob's
+  accessible help (JUCE's button and slider accessibility handlers return `getTooltip()`), so a
+  screen reader gets the same words either way.
+- The STATISTICS **TP** row keeps `dBTP` at every rate: it is a measurement (the product's true-peak
+  meter), not the Ceiling's promise, and below 12 kHz its warning colour marks real inter-sample
+  overs.
+- Option 3 (a visible state on the switch) is not taken; it stays the owner's decision, under the
+  brand checklist.
+
+**The test pins truths, not the new words** (OQ-018's precedent):
+`testTheTruePeakTipsFollowTheRateTheTruePeakPathEngagesAt` checks that at 48 kHz both views carry
+the shipped from-12-kHz tips (held word for word, because this decision must not move them); that
+after a re-prepare at 11.025 kHz and a tick both views and the Ceiling value boxes agree, neither tip
+repeats the from-12-kHz dBTP clause and both name the boundary derived from `kMinTruePeakRate`; that
+the switch's state makes no difference; that at 12 kHz the shipped words return; and that an editor
+opened at 8 kHz is right before its first tick.
 
 **Owner decision required (C8).** Raised 2026-09-28 in the fourth review round of PR #42
 ([ADR-0046](architecture/design-decisions/ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md)).
+*(The question as raised, kept as written:)*
 
 **Question.** From 0.2.16 the true-peak path engages only at host rates of 12 kHz and above
 (`truePeakPathEngages`, `src/dsp/Latency.h`); below that the Ceiling limits sample peaks whatever
