@@ -6,7 +6,22 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **product / UX / UI / interaction audit (2026-09-26, `e769f33`)** — a dated audit record, documentation only: [`docs/reports/2026-09-26-anabasis-product-ux-audit.md`](reports/2026-09-26-anabasis-product-ux-audit.md) with its per-category finding records and fourteen captures, and the runtime observation register [`worklogs/2026-09-26-product-ux-audit.md`](../worklogs/2026-09-26-product-ux-audit.md) (addendum below). Before that, for **0.2.12 (2026-09-08, round 19)** — the GR history ring's capacity is derived
+**Last updated:** for **the PR #43 split review (2026-09-29, still 0.2.13)** — Phase 0's evidence
+re-run on PR #43's own head and the suite count re-counted (addendum below). Before that, for **the
+Phase 0 closure (2026-09-27, still 0.2.13)** — ADR-0041 and ADR-0042
+accepted by the owner, KI-006 closed as INC-007 (addendum below). Before that, for **the PR #42 review
+round (2026-09-27, still 0.2.13)** — the true-peak engagement fix (ADR-0041 decision 5 revised, then
+Proposed), the JUCE-free split of the clamp's
+detector that restores the `realtime` gate, and the owner's decision material in
+[`docs/reports/2026-09-27-phase0-owner-decisions.md`](reports/2026-09-27-phase0-owner-decisions.md);
+evidence in [`worklogs/2026-09-27-pr42-review-closure.md`](../worklogs/2026-09-27-pr42-review-closure.md)
+(addendum below). Before that, for **0.2.13 (2026-09-27) — the Phase 0 product-correctness round** of the
+2026-09-26 audit: true-peak mode holds its dBTP ceiling (ADR-0041, Proposed) and a frozen trim latch
+survives a host re-prepare in the audio (ADR-0042, Proposed); STATE-002, UX-003 and DSP-004 disclosed
+pending owner decisions; the finding-by-finding outcome in
+[`docs/reports/2026-09-27-phase0-follow-up.md`](reports/2026-09-27-phase0-follow-up.md) and the
+evidence in [`worklogs/2026-09-27-phase0-product-correctness.md`](../worklogs/2026-09-27-phase0-product-correctness.md)
+(addendum below). Before that, for the **product / UX / UI / interaction audit (2026-09-26, `e769f33`)** — a dated audit record, documentation only: [`docs/reports/2026-09-26-anabasis-product-ux-audit.md`](reports/2026-09-26-anabasis-product-ux-audit.md) with its per-category finding records and fourteen captures, and the runtime observation register [`worklogs/2026-09-26-product-ux-audit.md`](../worklogs/2026-09-26-product-ux-audit.md) (addendum below). Before that, for **0.2.12 (2026-09-08, round 19)** — the GR history ring's capacity is derived
 from an ENTRY RATE rather than from one prepared pair, because a pair carries a sample-rate ceiling
 this product does not declare (`kSize` `1 << 17` → `1 << 18`; entry in the round-17 addendum, where
 the constant is argued), and the documentation-only anchor hygiene that followed it: ADR-0014's
@@ -443,6 +458,156 @@ made visible, which no flooring rule can answer). **Code comment corrected**: `S
 rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStraddle`; `TESTING.md`).
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
+
+**Addendum (2026-09-29, PR #43 split review, still 0.2.13) — Phase 0's evidence made self-contained,
+the suite count re-counted.** PR #42 was split into stacked PRs; this tree ships as PR #43. **Drift
+reported, then corrected:**
+
+- **README.md and HANDOVER's Test Status said 1973 (544 + 1429).** The suites at this head run
+  **1977 (548 + 1429)**, locally and in CI run 36554523764. `00fa1a9` (ADR-0043) added four DSP checks;
+  its addendum below says "+2 … +1" and misses `testTruePeakModeHoldsTheCeiling`'s premise split.
+  README and HANDOVER now read 1977; the addendum below is not edited.
+- **The closure record's §6 and §5, ADR-0041's acceptance re-verification and ADR-0042's ordering
+  re-check pointed into `worklogs/2026-09-27-phase1-match-statistics-observability.md`.** That worklog
+  belongs to the stacked PR #42, and its re-checks ran on the review head (the pluginval re-check on
+  PR #42's `11c9482`); ADR-0042's pointer led to a record with no mutation content at all.
+
+**New evidence:** `worklogs/2026-09-29-pr43-phase0-verification.md`, run on `2a5f8a8`:
+
+- the suites and gates;
+- the clamp delay D values;
+- the transition sweep, reconstructed as 10 800 renders — 0 over after the toggle, while the negative
+  control `3e9b343` has 9393 over;
+- TP-off identity with `main` (264 / 264 hash-identical);
+- a 3168-render steady-state TP-on matrix (0 over on either defining meter);
+- the ADR-0042 ordering and ADR-0043 Annex 2 mutations;
+- pluginval: two external crash positions, both retried and passed;
+- PREfast: 0 results in `src/`;
+- the disposition of the review findings raised against PR #43.
+
+**Rows engaged:**
+
+- **Documentation hygiene** — README, HANDOVER, and this ledger.
+- **Decisions** — dated pointers appended to ADR-0041's evidence list and ADR-0042's acceptance
+  sentence (append-only, ADR_POLICY).
+- **Dated reports** — the closure record gains a dated pointer at its end and is otherwise unedited
+  (SOURCE_OF_TRUTH: superseded, not corrected in place).
+- **Not re-run** — the Ardour export: Ardour is absent and the session was never committed, so the
+  worklog states the code-identity argument instead.
+
+**Addendum (2026-09-27, Phase 0 closure, still 0.2.13) — the closure record.** New dated report
+`docs/reports/2026-09-27-phase0-closure.md`: the three decisions, the PR #42 review closed item by
+item (the engagement leak `FIXED — verified`, with each check re-run on the accepted tree), the Phase 0
+status matrix with engineering and decision completion kept apart, STATE-002 and UX-003 re-checked
+under the new ADR state (both stay deferred owner decisions), and the GitHub check state distinguished
+from local results. Rows engaged: **Add a document** — `REPOSITORY_MAP.md` (the `reports/` entry),
+`README.md` §Documentation (which had never listed the decision-material report either — drift,
+corrected), this file; `SOURCE_OF_TRUTH.md` checked and unchanged (its `docs/reports/` paragraph
+defines the class without enumerating it). The follow-up and decision reports are superseded where
+they differ, not edited. **Drift corrected:** the engine comment on the engagement block still said
+"+4.5 dB" of overs; ADR-0041 records +4.66 dB (product meter) / +5.46 dB (Annex 2).
+
+**Addendum (2026-09-27, Phase 0 closure, still 0.2.13) — the delivery-meter definition: Option 1,
+ADR-0043.** The owner's instruction was to decide from the existing evidence and keep the implemented
+definition if it best matched the accepted contract; it did, so no code or sample moved. Rows engaged:
+**DSP algorithm / policy** — ADR-0043 (new, Accepted; enacts `DSP_POLICY.md` invariant 4's definition
+as prescribed text), ADR-0041's banner links it, ADR_INDEX (its row and an amendment-registry row
+against ADR-0041 decision 7), `DSP_POLICY.md` invariant 4 (the tolerance sentence, the guard sentence
+and the "recorded, not assumed" yardstick sentence replaced by the definition). **Metering** —
+`TEST_REPORT.md` (which meters define the promise), `USER_MANUAL.md` §6 (the two meters named as the
+definition; the reference residuals and KI-020's workaround stated), KNOWN_ISSUES KI-020 (status: a
+documented limitation, no longer a pending decision; still open for the reference residuals and
+VIS-002), `FUTURE_RISKS.md` RISK-003. **New/changed test** — `testTruePeakModeHoldsTheCeiling` and
+`testTruePeakEngagementHoldsTheCeiling` count the two defining meters separately (a failure now names
+its meter; +2 checks), `testClampTruePeakDetector` gains the missing lower bound against the Annex 2
+filter (+1 check) — the three new checks each fail when the detector's Annex 2 reading is removed,
+while the product-meter checks keep passing, which is the discrimination the split exists for;
+`procedures/TESTING.md`'s mandated-stimulus rows. The row's `DSP_ALGORITHMS.md` is still planned
+(`REPOSITORY_MAP.md`). **Drift:** none found.
+
+**Addendum (2026-09-27, Phase 0 closure, still 0.2.13) — ADR-0041 and ADR-0042 accepted, recorded
+in the four places.** The owner accepted both records on 2026-09-27 ("Accept Phase 0 Decisions, Close
+PR #42"). No code moved except one comment; the round is the status change and every document that
+carried the pending state. Rows engaged (the lifecycle map has no row for an ADR STATUS change —
+reported as a gap in the closure record; the precedent set of `2f5541e`, ed4f9ba and 134e7fd was
+followed): **the ADRs** — ADR-0041 and ADR-0042 each gain a `✅ RATIFIED` banner that keeps the gate
+reasoning in past tense, an `Accepted — 2026-09-27` status naming what the approval covers and what it
+does not, and re-tensed revision banners; nothing in Decision rewritten. ADR-0041 decision 7 gains a
+dated pointer to the definition decision, and decision 8 a third prescribed bullet — invariant 8's
+decay sentence had been in `DSP_POLICY.md` since the PR #42 review without being prescribed, found
+by the closure sweep and completed so the approval covers the policy text as it stands. **Banners on
+the records they move** — ADR-0004 (the proposed amendment is now in effect), ADR-0006, ADR-0014,
+ADR-0015. **ADR_INDEX** — both status cells, the ADR-0006 evidence cell, three rows of the amendment
+registry (the "takes effect only if accepted" clause removed). **Policies and ledgers** — `DSP_POLICY.md`
+invariants 2 and 8 and the invariant→test map, `MODE_AND_ADAPTATION_POLICY.md`, `LATENCY_MODEL.md`,
+`FUTURE_RISKS.md` RISK-003. **Known issues** — KI-006 closed and moved to `POSTMORTEMS.md` INC-007 (its
+own text committed to the move; the durable lessons of its eight weeks moved with it), KI-007 item 1
+and its footer re-pointed, KI-020's ADR marker. **Ship a version** — `CHANGELOG.md` 0.2.13 amended in
+place (unreleased; `2f5541e`'s precedent), `HANDOVER.md` (the Current Version row, and a Pending Tasks
+lead that 0.2.13 never had). **Drift corrected:** KI-018 still read ADR-0039 as `Proposed`, three weeks
+after its acceptance — the risk this sweep exists for; corrected with a dated note. Historical records —
+the two 2026-09-27 worklogs, the follow-up and decision reports, the audit, earlier addenda — are
+not edited.
+
+**Addendum (2026-09-27, PR #42 review, still 0.2.13) — the engagement leak, the `realtime` gate and
+the owner's decision material.** Code: `EngagementTail` (`CeilingClamp.h`) and the engagement block
+in `AnabasisEngine`; `ClampTruePeakDetector` and the meter's phase design moved from `TruePeak.h` into
+the new JUCE-free `ClampTruePeakDetector.h` (bitwise identical); a `numCh ≤ 0` early return in the
+detector and the clamp (PREfast C6011). Rows engaged: **DSP algorithm / signal flow** — ADR-0041
+(revision banner; decisions 2, 5, 8; Consequences; a new "What the owner is asked to decide" section;
+Related code; Evidence — still Proposed), `DSP_POLICY.md` invariants 4 and 8 and the invariant→test
+map, `LATENCY_MODEL.md` (the engagement sentence; nothing in the composition moved), `USER_MANUAL.md`
+(what switching TP on sounds like). **Realtime** — `REALTIME_SAFETY_AUDIT.md` (the `EngagementTail`
+allocation row, its measured bound, the widened compile-time tier), `tests/realtime_effects.cpp`'s
+banner, `CODE_STYLE.md` (the JUCE-free leaf-header exception to the leak-detector rule).
+**Adaptive engine (Freeze)** — ADR-0042's Evidence gains the ordering mutation and a pointer to the
+lifecycle table; no behaviour changed. **Metering / delivery definition** — KNOWN_ISSUES KI-020 (the
+detector's new header; the libebur128-reading option measured; the decision record), `TEST_REPORT.md`
+(the transition section: sweep, host, test, mutations; the steady-state re-render). **New/changed
+test** — `procedures/TESTING.md` (the mandated stimulus for `testTruePeakEngagementHoldsTheCeiling`).
+**Ship a version** — `CHANGELOG.md` 0.2.13 amended in place (unreleased: the TP switch-on behaviour and
+the transition figure), `HANDOVER.md`, `README.md` (suite total 1969 → 1973). **Add a document** —
+`docs/reports/2026-09-27-phase0-owner-decisions.md` and `worklogs/2026-09-27-pr42-review-closure.md`:
+`REPOSITORY_MAP.md` (the `reports/` entry and the `src/dsp/` listing), this file. The first round's
+follow-up record is not edited (a dated report is superseded, not corrected in place); the new record
+states where it supersedes it. **Drift corrected:** none found. Coverage status: the engagement transition is **Verified** (a sweep,
+a test that fails on the PR head, two mutations, a real-host export); the meter definition stays an
+owner decision (**recorded, not claimed**).
+
+**Addendum (2026-09-27, 0.2.13) — the Phase 0 correctness round: two Proposed decisions and the
+documents that must tell the same story as the code.** Code: the ceiling clamp's true-peak path
+(`CeilingClamp.h`, `ClampTruePeakDetector` in `TruePeak.h`, the TP-mode latency composition and the
+TP latch in `AnabasisEngine`) and the Freeze carry across a re-prepare (`AdaptiveEngine.h`, the block-top
+call). Rows engaged: **DSP algorithm / module maths** and **Signal-flow / stage order** — ADR-0041
+(new, Proposed), `DSP_POLICY.md` invariants 2, 4, 8 and the invariant→test map, ADR-0006's and
+ADR-0015's dated banners, ADR_INDEX (the ADR-0006 evidence cell, which read the TP guarantee as
+implemented, corrected with a dated note), `CHANGELOG.md`; the row's `DSP_ALGORITHMS.md`,
+`SIGNAL_FLOW.md` and `DSP_GRAPH_REFERENCE.md` are still planned (`REPOSITORY_MAP.md`), so nothing
+there to sync. **Latency behaviour** — `LATENCY_MODEL.md` (the TP-mode composition, the clamp's
+tap), ADR-0004's dated proposed-amendment banner (nothing in its body rewritten).
+**Adaptive engine (Freeze)** — ADR-0042 (new, Proposed), `MODE_AND_ADAPTATION_POLICY.md` (the
+two-set rationale, Freeze across a re-prepare), ADR-0014's banner, `USER_MANUAL.md` §4 (Freeze's
+promise now names the re-prepare, and the one A/B case that still disagrees with the save). **Metering** — `TEST_REPORT.md`
+(the four-meter TP table, the DSP-004 droop table), `USER_MANUAL.md` (the TP row, the TP mechanism in
+§3.2 / §3.3 / §6), and the meter view's comment that the TP row "measures a quantity the clamp does not
+bound", no longer true in TP mode and corrected. **New/changed test** — `procedures/TESTING.md` (the
+five mandated stimuli gain the TP-mode row) and this file; `REALTIME_SAFETY_AUDIT.md` and
+`PERFORMANCE_BUDGET.md` (allocation rows, the re-measured table). **New unresolved limitation** —
+KNOWN_ISSUES KI-020 (the yardstick; the TP row warning at the ceiling), KI-021 (STATE-002), KI-022
+(UX-003), KI-005 widened (DSP-004, and its "Character" corrected to "Loudness"), KI-006 (fix pending
+the owner), KI-007 item 10; `FUTURE_RISKS.md` RISK-003 marked triggered and mitigated. **Ship a
+version** — `CHANGELOG.md` 0.2.13, `HANDOVER.md`, `README.md` (its suite total, stale at 1787, now
+1969). **Add a document** — `docs/reports/2026-09-27-phase0-follow-up.md`: `REPOSITORY_MAP.md` (the
+`reports/` entry), `README.md` §Documentation, this file; `SOURCE_OF_TRUTH.md` checked and unchanged
+(its `docs/reports/` paragraph defines the class without enumerating it). The audit report itself is
+not edited — a dated report is superseded, not corrected in place — so the record of what this round
+decided lives in the follow-up, beside it. **Drift corrected** (each reported first in the worklog):
+`TruePeak.h`'s header claimed ≤ 0.1 dB estimator accuracy in general (true at fs/4 only);
+`CeilingClamp.h`'s P1 comment promised a TP half that had never been built; ADR-0015 decision 7's "the
+DSP was right about its own guarantee the whole time" (true of the policy text, not the code) — a
+correction-of-record banner, not an edit. Coverage status: the clamp and the true-peak detector are
+**Verified** (behaviour pinned by six new tests and four TP loops in existing ones; figures in
+`TEST_REPORT.md`); the Freeze carry is **Verified at engine and processor level, Unverified in a DAW**.
 
 **Addendum (2026-09-26) — the product / UX / UI / interaction audit, recorded as a report and not as a
 change to anything it audits.** A full audit of `e769f33` (== `main`, 0.2.12) with the UI and the

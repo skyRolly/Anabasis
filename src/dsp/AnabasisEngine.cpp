@@ -126,6 +126,15 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     duckInInc  = 1.0f / (float) juce::jmax (1, (int) (0.028 * sampleRate));   // ~28 ms in
 
     limiter.prepare (sampleRate, delaySamples * maxN);   // wedge sized for 16x
+    // ADR-0041: the true-peak path's rings are sized here, and whether it fits
+    // inside the allowance at all is decided here — the line it leaves behind
+    // must still hold the minimum 0.5 ms window. Every conforming rate fits
+    // with room to spare (42 of 480 samples at 48 kHz); the rail is for the
+    // host-supplied rate the comment at the top of this function describes.
+    clamp.prepare (sampleRate);
+    engageTail.prepare (sampleRate);
+    tpClampFits = delaySamples - clamp.truePeakDelay()
+                  >= (int) std::ceil (kMinLookaheadMs * 0.001 * sampleRate);
     dryMeter.prepare (sampleRate);
     wetMeter.prepare (sampleRate);
     outMeter.prepare (sampleRate);
@@ -140,7 +149,7 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
 
     latchedFactorIdx = -1;
     latchedPhaseIdx  = 0;
-    latchOsConfig (-1, 0);
+    latchOsConfig (-1, 0, false);
     reset();
 
     // THE ACCUMULATOR'S OWN WELL-FORMEDNESS, which is not a timeline question
@@ -174,18 +183,27 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     // top of `process`.
 }
 
-void AnabasisEngine::latchOsConfig (int factorIdx, int phaseIdx) noexcept
+void AnabasisEngine::latchOsConfig (int factorIdx, int phaseIdx, bool truePeakClamp) noexcept
 {
     // A latch is a RESET-boundary event (ADR-0004: factor/phase changes are
     // latched and applied at a reset or crossfaded boundary - the 2.8 duck
     // wraps this when it lands; until then the switch itself may step, the
     // KI-001 family). Everything here is selection and plain-float
     // recomputation: no allocation on the audio thread.
+    //
+    // The true-peak mode rides the same latch (ADR-0041): it decides how much
+    // of the constant allowance the region's line keeps and how much the
+    // clamp's true-peak path takes, so changing it moves `delayOs` exactly as
+    // a factor change does, and needs the same empty-ring restart. The SUM is
+    // `delaySamples` either way — the dry-ring read below and the reported
+    // figure do not see the mode at all.
     latchedFactorIdx = factorIdx;
     latchedPhaseIdx  = phaseIdx;
+    appliedTpClamp   = truePeakClamp && tpClampFits;
+    clampDelay       = appliedTpClamp ? clamp.truePeakDelay() : 0;
     osShift    = factorIdx < 0 ? 0 : factorIdx + 1;
     osN        = 1 << osShift;
-    delayOs    = delaySamples * osN;
+    delayOs    = (delaySamples - clampDelay) * osN;
     ringSizeOs = delayOs + maxBlock * osN + 1;
     osActive   = factorIdx < 0 ? nullptr : oversamplers[factorIdx][phaseIdx].get();
     osLatBase  = factorIdx < 0 ? 0
@@ -206,6 +224,7 @@ void AnabasisEngine::latchOsConfig (int factorIdx, int phaseIdx) noexcept
     limiter.reset();
     clip.setRate (sr * osN);
     clip.reset();
+    clamp.reset();
 }
 
 void AnabasisEngine::reset() noexcept
@@ -218,6 +237,8 @@ void AnabasisEngine::reset() noexcept
     eq.reset();
     comp.reset();
     clip.reset();
+    clamp.reset();
+    engageTail.reset();
     if (osActive != nullptr)
         osActive->reset();
     for (auto& e : ditherErr) e = 0.0f;
@@ -354,6 +375,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     const int  wantPh   = (int) p.osPhase;
     const int  wantEq   = p.eqPosition;
     const int  wantModel = juce::jlimit (0, 3, p.colourModel);
+    const bool wantTpClamp = p.truePeakMode && tpClampFits;
     bool duckAsked = duckRequested.exchange (false, std::memory_order_relaxed);
 
     // Learn commands + learned-target restore, consumed at the block top. ONE
@@ -420,8 +442,13 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         if (cmd != kLearnCommit)
             adaptiveEngine.startLearn();
     }
-    const bool rewireWanted = wantIdx != latchedFactorIdx
-                           || (wantIdx >= 0 && wantPh != latchedPhaseIdx)
+    // The line-length half of the configuration: a factor, a phase (when a
+    // factor is on) or the clamp's true-peak share (ADR-0041). Any of them
+    // empties the lookahead ring, so all three share the latch and the refill.
+    const bool latchWanted = wantIdx != latchedFactorIdx
+                          || (wantIdx >= 0 && wantPh != latchedPhaseIdx)
+                          || wantTpClamp != appliedTpClamp;
+    const bool rewireWanted = latchWanted
                            || wantEq != appliedEqPos
                            || wantModel != appliedModel;
 
@@ -441,10 +468,36 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     const bool enteringOffline = p.nonRealtime && ! lastNonRealtime;
     lastNonRealtime = p.nonRealtime;
 
+    // ADR-0042: the first block after a reset decides whether the adaptive
+    // vector reset() stashed comes back — it does exactly when Freeze is ON
+    // in THIS block's snapshot. Before any pending ADR-0014 restore is
+    // injected below, so a staged restore still has the last word.
+    adaptiveEngine.resumeAfterReset (p.freeze);
+
+    // ENGAGING true-peak mode while audio plays (ADR-0041, amended in the PR #42
+    // review). The latch cannot wait for the duck's out-leg: that leg is
+    // emitted by the composition being replaced, whose clamp is the sample
+    // clip, and it put up to +4.7 dB (product meter) / +5.5 dB (Annex 2) of
+    // true-peak overs out after the user had asked for dBTP. So the TP composition latches at THIS block — the silent
+    // bottom is entered now, not reached — and the processed path's place is
+    // taken by a decay of the last emitted frame, checked against the ceiling
+    // before its first sample (EngagementTail). Disengaging (TP on → off) keeps
+    // the out-leg: its audio comes from the TP path, which holds both
+    // ceilings. The first block after prepare/reset and the entry to offline
+    // latch directly below and have nothing to continue.
+    if (wantTpClamp && ! appliedTpClamp && smoothersPrimed && ! enteringOffline
+        && duckState != DuckState::bottom)
+    {
+        engageTail.start (juce::jmin (ceilingLinear.getCurrentValue(),
+                                      juce::Decibels::decibelsToGain (p.ceilingDbTp)));
+        duckState = DuckState::bottom;
+        duckGain  = 0.0f;
+    }
+
     if (! smoothersPrimed || enteringOffline)
     {
-        if (wantIdx != latchedFactorIdx || (wantIdx >= 0 && wantPh != latchedPhaseIdx))
-            latchOsConfig (wantIdx, wantPh);
+        if (latchWanted)
+            latchOsConfig (wantIdx, wantPh, wantTpClamp);
         if (wantEq != appliedEqPos)
         {
             // Paired with the position change on THIS branch too, exactly as
@@ -486,14 +539,16 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     else if (duckState == DuckState::bottom)
     {
         // Silent, and a block boundary: execute everything pending.
-        if (wantIdx != latchedFactorIdx || (wantIdx >= 0 && wantPh != latchedPhaseIdx))
+        if (latchWanted)
         {
-            latchOsConfig (wantIdx, wantPh);
-            // The latch emptied the lookahead ring and reset the oversampler:
-            // the processed path now emits EXACT silence until both refill.
-            // Hold the bottom that long (the counter runs down per processed
-            // base sample) so the in-leg starts from real audio at zero gain
-            // instead of splicing it in partway up the ramp.
+            latchOsConfig (wantIdx, wantPh, wantTpClamp);
+            // The latch emptied the lookahead ring and reset the oversampler
+            // (and the clamp's true-peak ring, whose share of the allowance
+            // is inside `delaySamples`): the processed path now emits EXACT
+            // silence until all of them refill. Hold the bottom that long (the
+            // counter runs down per processed base sample) so the in-leg
+            // starts from real audio at zero gain instead of splicing it in
+            // partway up the ramp.
             bottomHoldSamples = delaySamples + osLatBase;
         }
         if (wantEq != appliedEqPos)
@@ -560,7 +615,12 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     const float ceilingTarget = juce::Decibels::decibelsToGain (p.ceilingDbTp);
     const float lookMs        = juce::jlimit ((float) kMinLookaheadMs, (float) kMaxLookaheadMs,
                                               p.lookaheadMs);
-    const float windowTarget  = juce::jlimit (1.0f, (float) delaySamples,
+    // The window cannot outgrow the line it reads, and in true-peak mode the
+    // line is the allowance LESS the clamp's share (ADR-0041): a 10 ms setting
+    // engages 10 ms − 0.875 ms at 48 kHz there. The cap follows the APPLIED
+    // composition, so it moves only at the silent bottom that moves the line.
+    const int   lineSamples   = delaySamples - clampDelay;
+    const float windowTarget  = juce::jlimit (1.0f, (float) lineSamples,
                                               (float) std::ceil (lookMs * 0.001 * sr));
     if (! smoothersPrimed)
     {
@@ -853,7 +913,7 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         const float gIn   = inputGain.getNextValue();
         const float gPush = pushGain.getNextValue();
         ceilArr[(size_t) n] = ceilingLinear.getNextValue();
-        const int wBase = juce::jlimit (1, delaySamples,
+        const int wBase = juce::jlimit (1, delaySamples - clampDelay,
                                         juce::roundToInt (windowSamples.getNextValue()));
         wArr[(size_t) n] = wBase;
         engagedWindow.store (wBase, std::memory_order_relaxed);
@@ -1140,6 +1200,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         float monFrameWet[kMaxChannels] = {};
         float renderFrame[kMaxChannels] = {};
 
+        // Post EQ → clamp for the whole FRAME first, then everything after the
+        // clamp per channel: the true-peak path (ADR-0041) computes one linked
+        // gain from every channel, so it needs the frame before any channel can
+        // leave it. Each step before and after touches only its own channel's
+        // state (dither's shared RNG still advances in channel order below), so
+        // the sample path computes exactly what the single per-channel loop
+        // this replaced did — bit-identical, and measured so.
+        float clampFrame[kMaxChannels] = {};
         for (int ch = 0; ch < nCh; ++ch)
         {
             float processed = staging.getSample (ch, n);
@@ -1185,13 +1253,38 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
                     stageGeneratedNonFinite = true;
                 }
             }
-            processed = clamp.processSample (processed, ceilingNow);
+            clampFrame[ch] = processed;
+        }
+
+        // ADR-0006 item 3: with true-peak mode applied the gain acts on the
+        // clamp's own true-peak estimate, the hard clip under it the backstop;
+        // without, the hard clip alone. The ceiling travels WITH each frame
+        // through the true-peak path's delay, so every sample is still judged
+        // against the instantaneous ceiling the limiter used for it.
+        if (appliedTpClamp)
+            clamp.processFrameTruePeak (clampFrame, nCh, ceilingNow);
+        else
+            for (int ch = 0; ch < nCh; ++ch)
+                clampFrame[ch] = clamp.processSample (clampFrame[ch], ceilingNow);
+
+        float emitted[kMaxChannels] = {};
+        for (int ch = 0; ch < nCh; ++ch)
+        {
+            float processed = clampFrame[ch];
 
             // §2.8 duck — PROCESSED path only, downstream of the clamp (a
             // gain ≤ 1 cannot re-exceed the ceiling), upstream of dither so
             // the export grid stays intact. Exact-1 branch keeps the null.
             if (! juce::exactlyEqual (duckGain, 1.0f))
                 processed *= duckGain;
+
+            // A TP engagement's decay (above): it stands in for the out-leg
+            // while the processed path is silent, so it sits where the duck
+            // does — before dither, inside everything the bypass and delta
+            // legs treat as "processed".
+            if (engageTail.active())
+                processed += engageTail.value (ch);
+            emitted[ch] = processed;
 
             // Dither (4.5): AFTER the clamp (invariant 1/12), processed path
             // only - bypass must stay a bit-exact null. TPDF at +-1 LSB of
@@ -1294,6 +1387,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             ANABASIS_TRACE (anabasis::StageTrace::finalOut, ch, out);
             buffer.setSample (ch, start + n, out);
         }
+        engageTail.advance();
+        engageTail.pushEmitted (emitted, nCh);
         dryMeter.processFrame (monFrameDry, nCh);
         wetMeter.processFrame (monFrameWet, nCh);
         adaptiveEngine.pushFrame (monFrameDry, nCh);

@@ -36,7 +36,8 @@ namespace
         double sr;
         int block;
         anabasis::OversampleFactor os;
-        bool working;                 // false = factory defaults (null path)
+        int mode;                     // 0 = factory defaults (null path), 1 = working,
+                                      // 2 = working + true-peak mode (ADR-0041's clamp path)
     };
 
     const char* osName (anabasis::OversampleFactor f)
@@ -176,9 +177,9 @@ int main()
     for (double sr : { 44100.0, 48000.0, 96000.0 })
         for (int block : { 64, 512 })
             for (auto os : factors)
-                for (bool working : { false, true })
+                for (int mode : { 0, 1, 2 })
                 {
-                    Cell c { sr, block, os, working };
+                    Cell c { sr, block, os, mode };
 
                     std::vector<double> nsPerSample;
                     // Deliberately OUTSIDE the run loop: the reported worst
@@ -208,13 +209,14 @@ int main()
                         engine.prepare (c.sr, c.block, 2);
                         anabasis::EngineParameters p;
                         p.oversample = c.os;
-                        if (c.working)
+                        if (c.mode >= 1)
                         {
                             p.limGainDb = 9.0f;   p.compThresholdDb = -10.0f;
                             p.compRatio = 1.75f;  p.clipDriveDb = 2.6f;
                             p.colourDepth = 0.35f; p.eqTiltDb = 1.0f;
                             p.eqHighShelfGainDb = 1.5f; p.scHpfFreqHz = 60.0f;
                         }
+                        p.truePeakMode = c.mode == 2;
                         juce::AudioBuffer<float> buf (2, c.block);
                         const int blocks = juce::jmax (1, (int) (1.0 * c.sr / c.block));
                         uint32_t rng = 0x12345u;
@@ -249,7 +251,7 @@ int main()
                     const double pct = median * c.sr / 1.0e7;
                     std::printf ("| %.0f | %d | %s | %s | %.1f | %.1f | %.2f%% |\n",
                                  c.sr, c.block, osName (c.os),
-                                 c.working ? "working" : "defaults",
+                                 c.mode == 2 ? "working+TP" : (c.mode == 1 ? "working" : "defaults"),
                                  median, worstUs, pct);
                     std::fflush (stdout);
                 }
@@ -351,6 +353,19 @@ int main()
             float gains[2] = { 1.0f, 1.0f };
             lim.processSample (f, 2, 96, 0.891f, gains);
             f[0] *= gains[0]; f[1] *= gains[1];
+        });
+    }
+    {
+        // ADR-0041: the clamp's true-peak path — the three-reading detector,
+        // the requirement/attack rings and the delay line. Charged, like the
+        // limiter's own detector, against the §9 limiter + TP-detection row
+        // (ADR-0006: "a second true-peak estimator instance exists"). Only in
+        // true-peak mode; with it off the clamp is the sample compare.
+        anabasis::CeilingClamp clamp;
+        clamp.prepare (48000.0);
+        stageRow ("Ceiling clamp, true-peak path (ADR-0041)", [&] (float* f, int)
+        {
+            clamp.processFrameTruePeak (f, 2, 0.891f);
         });
     }
     {

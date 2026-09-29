@@ -357,3 +357,57 @@ Evidence [Verified]:
 
 Every fixed bug ships a regression test that fails on the old code
 (`TESTING_POLICY.md` rule 1) — that test is what an entry here cites in its **Prevention** field.
+
+## INC-007 — KI-006 closed: a host re-prepare dropped a frozen slot's trims from the audio while FREEZE stayed lit
+
+**Symptom:** With Freeze ON and a latched adaptive trim vector, any `prepareToPlay` — a host
+sample-rate or block-size change, and in some hosts a transport start or the entry to an offline
+bounce — left the audio running on NO adaptive trims and the Advanced overlay reading zeros, while
+FREEZE stayed lit and (from round 41 on) the session save still wrote the latched vector. Found by
+the adversarial pass over review round 24 (2026-08-03) and recorded as KI-006; its save half was
+closed in rounds 38–42; the audit of 2026-09-26 re-raised the audio half as STATE-004 ("the visible
+FREEZE state and the actual processing state" disagree). Never observed in a DAW — the trigger is a
+host re-prepare, which the headless suites stage directly.
+**Root cause:** `AnabasisEngine::prepare` → `AdaptiveEngine::prepare` → `reset()` zeroed the applied
+trim vector and republished the zeros, and with Freeze ON `finishBlock` never re-slews — so the
+zeros were then HELD. Keeping the vector across `reset()` changes what Freeze promises across a
+discontinuity (`MODE_AND_ADAPTATION_POLICY.md` invariant 3), an Architecture Review Gate item, which
+is why the entry stayed open for eight weeks as a recorded owner decision rather than a repair.
+**Fix:** ADR-0042 (Accepted 2026-09-27, option C). `reset()` stashes the applied vector; the first
+block after it re-adopts it when that block's snapshot has Freeze ON — the first moment the Freeze
+state is known, so a Freeze engaged while stopped counts. Only the applied/published set comes back:
+the retained set and its generation do not move, so round 42's slot isolation holds, and a staged
+ADR-0014 restore still has the last word (the carry runs before the injection at the block top).
+**Prevention:** `testAFrozenLatchSurvivesARePrepare` (bit-identical to the restored-and-frozen
+reference at 48/96 kHz, made non-vacuous by a zero-trim control), `testPreparedStateAndSlotOwnership`
+case 4, and `testAFrozenLatchDoesNotFollowTheSlotSwitch` (re-prepare case); each fails with the
+carry removed or written with a retained-generation bump, and moving the carry after the staged
+restore fails the "a staged restore still has the last word" checks. The gate itself was the other
+half of the prevention: the fix waited for the owner instead of landing as a "bug fix".
+
+What is durable from the entry's eight weeks, kept here because a fixed issue's record lives here:
+- **The published atomics are cleared too.** The entry asserted until 2026-08-03 that `reset()`
+  left the published trims alone, reasoning from `finishBlock`'s `if (! freeze && audible)` guard
+  and missing `reset()`'s own `publishTrims` call; corrected against the code, which is the
+  authority. Any carry had to cover the published copy, not only the internal struct.
+- **Round 40's save-half fix was itself a data race.** It copied the latch into the wrapper's
+  `juce::ValueTree` mirror from `prepareToPlay`, a host callback not delivered on the message
+  thread, while the editor's dirty poll read the same member — ThreadSanitizer reported it, and
+  round 41 retained the vector in the engine instead (`testTheFrozenLatchNeedsNoThreadCrossing`).
+  The lesson is general: state that must survive a re-initialisation is RETAINED where it already
+  lives, not copied across a thread boundary to somewhere more durable.
+- **The retained set is a cache of the last latch, scoped to the slot it was filled under** (round
+  42): the wrapper adopts the engine's answer only when the retained generation has advanced past
+  the one it recorded at the last ownership change.
+
+Still open and not part of this record: with Freeze OFF a re-prepare still restarts adaptation from
+rest (ADR-0042 option A), and an A/B switch into a freeze-ON slot with no vector keeps the outgoing
+slot's latch (`KNOWN_ISSUES.md` KI-007 item 10). Real-DAW evidence of which hosts re-prepare on
+transport start or before a bounce is the audit's TEST-002.
+
+Evidence [Verified]:
+- Source: `src/dsp/AdaptiveEngine.h` (`reset`'s stash, `resumeAfterReset`, `publishApplied`),
+  `src/dsp/AnabasisEngine.cpp` (the block-top call, before the ADR-0014 injection)
+- Test:   `testAFrozenLatchSurvivesARePrepare`, `testPreparedStateAndSlotOwnership` case 4,
+  `testAFrozenLatchDoesNotFollowTheSlotSwitch`
+- Commit: `eeb92a1` (PR #42); accepted 2026-09-27

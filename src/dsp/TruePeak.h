@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include "ClampTruePeakDetector.h"   // the shared 4× phase design (JUCE-free)
 #include <cmath>
 
 // ============================================================================
@@ -28,9 +29,20 @@
 //  in (n−6, n−5); consecutive calls therefore cover every sample and every
 //  quarter-sample point exactly once. Known property of ANY max-reading 4×
 //  estimator, recorded rather than hidden: a true peak landing between two
-//  4× points under-reads by up to ~0.15 dB at fs/4 content. The grid-aligned
-//  canonical ISP vectors must read within 0.1 dB (the invariant-3 test); the
-//  off-grid worst case is measured and bounded in the same test.
+//  4× points under-reads by up to ~0.15 dB at fs/4 content — and by more above
+//  it, up to ~0.69 dB for a sinusoid near Nyquist from the grid alone. The
+//  grid-aligned canonical ISP vectors must read within 0.1 dB (the invariant-3
+//  test); the off-grid worst case is measured and bounded in the same test.
+//  (Corrected 2026-09-27, audit DSP-001 sub-item (d): this said "~0.15 dB at
+//  fs/4" and stopped, which is true at 12 kHz and understates everything above.)
+//
+//  WHAT THE 12-TAP BLACKMAN KERNEL ADDS, measured on the engine's own output
+//  (worklog 2026-09-27, KNOWN_ISSUES KI-020): on HF-rich programme this
+//  estimator reads up to ~1.4 dB BELOW the BS.1770 Annex 2 example filter, and
+//  on dense broadband material up to ~0.24 dB ABOVE an accurate interpolator.
+//  It stays the meter's and the limiter's estimator; the ceiling clamp holds
+//  its ceiling on ClampTruePeakDetector (ClampTruePeakDetector.h), which
+//  includes this one's phases.
 // ============================================================================
 
 namespace anabasis
@@ -47,27 +59,20 @@ public:
 
     void prepare()
     {
-        for (int p = 1; p < kPhases; ++p)
-        {
-            // Fractional delays 5.75 / 5.5 / 5.25: the points between
-            // x[n−6] and x[n−5].
-            const float d = 6.0f - (float) p / (float) kPhases;
-            float sum = 0.0f;
-            for (int k = 0; k < kTaps; ++k)
-            {
-                const float u = ((float) k - d + 6.0f) / (float) kTaps;   // window position
-                const float wnd = (u <= 0.0f || u >= 1.0f) ? 0.0f
-                    : 0.42f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * u)
-                            + 0.08f * std::cos (2.0f * juce::MathConstants<float>::twoPi * u);
-                coeff[p][k] = wnd * sinc ((float) k - d);
-                sum += coeff[p][k];
-            }
-            // Exact unity DC response — a plain windowed sinc is a hair off,
-            // and that hair would be straight passband error.
-            for (int k = 0; k < kTaps; ++k)
-                coeff[p][k] /= sum;
-        }
+        designPhases (coeff);
         reset();
+    }
+
+    // The coefficient design, callable on its own. It lives in the JUCE-free
+    // ClampTruePeakDetector.h (`truepeak::designMeterPhases`) because the
+    // ceiling clamp's detector evaluates these SAME phases, so that the meter
+    // reading is one of the readings it holds under the ceiling — and the clamp
+    // must stay a JUCE-free leaf (see that header). Index k multiplies x[n−k];
+    // phase 0 is unused (the sample itself is the seed).
+    static void designPhases (float (&c)[kPhases][kTaps]) noexcept
+    {
+        static_assert (kPhases == truepeak::kMeterPhases && kTaps == truepeak::kMeterTaps);
+        truepeak::designMeterPhases (c);
     }
 
     void reset() noexcept
@@ -102,13 +107,6 @@ public:
     }
 
 private:
-    static float sinc (float t) noexcept
-    {
-        if (std::abs (t) < 1.0e-6f) return 1.0f;
-        const float pt = juce::MathConstants<float>::pi * t;
-        return std::sin (pt) / pt;
-    }
-
     float coeff[kPhases][kTaps] = {};
     float hist[kMaxChannels][kTaps] = {};
     int   writeIdx = 0;

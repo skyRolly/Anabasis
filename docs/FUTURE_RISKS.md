@@ -64,6 +64,15 @@ green test suite while failing a real master.
 (`TESTING_POLICY.md` rule 5); a final safety clamp sits after the limiter regardless of what the
 limiter did; the tolerance (≤ 0.1 dBTP) is stated numerically so a near-miss is a failure.
 **Owner:** TODO.
+**TRIGGERED — 2026-09-26 (audit finding DSP-001), mitigated 2026-09-27 (ADR-0041, accepted by the owner the same day).** The
+trigger happened exactly as written: inter-sample peaks after saturation and after every
+oversampling factor's down-filter, up to +4.8 dB over a dBTP ceiling on the product's own meter,
+because the clamp's true-peak half (ADR-0006 items 2–3) had never been built and the only ceiling
+tests pinned true-peak mode off. ADR-0041 (Accepted 2026-09-27) builds it; `testTruePeakModeHoldsTheCeiling`
+is the hostile-input guard this entry asked for, and it fails on the old code. What the risk
+still covers is recorded in `KNOWN_ISSUES.md` KI-020: the promise is defined on, and exact on, the
+two meters of `DSP_POLICY.md` invariant 4 (ADR-0043); libebur128 and a long-kernel reference still
+read a residual near Nyquist, as reference measurements outside the definition.
 
 ---
 

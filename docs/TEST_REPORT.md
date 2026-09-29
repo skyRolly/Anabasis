@@ -37,6 +37,95 @@ at a 48 kHz base rate) and adds a half-sample group delay `Latency.h` does not m
 inherent to first-order ADAA and are stated in the `ClipSat.h` header; the half-sample delay is
 also why the impulse-position latency test stays sample-exact only with `clipDriveDb == 0`.
 
+**Measured again on the whole engine, 2026-09-27 (audit finding DSP-004).** A −30 dBFS sine (the
+clipper linear) through the real `AnabasisEngine`, response with Clip Drive 0.07 dB — what the
+Loudness macro sets at 30.5 % — relative to drive exactly 0 at the same oversampling:
+
+| Rate | OS | 5 kHz | 10 kHz | 15 kHz | 20 kHz |
+|---|---|---|---|---|---|
+| 48 kHz | Off | −0.47 dB | **−2.01 dB** | −5.11 dB | **−11.74 dB** |
+| 48 kHz | 2× | −0.12 dB | −0.47 dB | −1.09 dB | −2.01 dB |
+| 48 kHz | 4× | −0.03 dB | −0.12 dB | −0.26 dB | **−0.47 dB** |
+| 44.1 kHz | Off | −0.56 dB | −2.42 dB | −6.35 dB | −16.74 dB |
+| 44.1 kHz | 4× | −0.03 dB | −0.14 dB | −0.31 dB | −0.56 dB |
+
+Identical at a 3 dB drive: the loss is the kernel's, not the curve's. The bold figures are
+asserted by `testClipDriveDroopIsTheDisclosedOne` (±0.05/±0.1 dB, and "< 0.6 dB" at 4×); the rest
+are the same probe's readings, method in `worklogs/2026-09-27-phase0-product-correctness.md`.
+Disclosed in `KNOWN_ISSUES.md` KI-005 and USER_MANUAL §3.5; not changed.
+
+## Output true peak in true-peak mode (invariant 4, ADR-0041) — 2026-09-27
+
+**Method.** A scratchpad probe drives the REAL `AnabasisEngine` (compiled from `main` @ ed06ad0 for
+"before" and from this round's tree for "after") with six deterministic stereo programmes —
+music-like (kick, noise snap, pink bed), transient-heavy (one-sample clicks, 0.1 ms noise bursts,
+3 kHz rim shots), LF-heavy (kick + 45/90 Hz sub), HF-heavy (high-passed hats, tones to 0.8·Nyquist,
+a 2997 Hz hard square), sustained (six-note chord + pink noise) and the fs/4 45° inter-sample vector —
+at the macro's Loudness 0/25/50/75/100 % curves, eight of the nine oversampling cells (Off, 2×/4×
+min + linear, 8× min, 16× min + linear — 8× linear ran as an addendum, below), four limiter voicings (Transparent / Punchy / Loud, Transients 50 or
+100 %) and ceilings −0.1 / −1.0 dBTP: 1920 configurations, plus 240 Force Max bounces, 72 with a
++6/+12 dB Post shelf, 108 at 44.1/96/192 kHz, 24 block sizes, 96 lookahead settings (to 10 ms) and 36
+at Character 0.5 — **2496 in true-peak mode**, 8 s each. The output is read by four meters: the
+product's own dBTP estimator (`TruePeakEstimator`), the BS.1770 Annex 2 example filter
+(ITU-R BS.1770-5, order 48, 4 phases), libebur128 1.2.6 and a 32×/128-tap Kaiser reference (the last
+on a 56-configuration hot subset, 4 s each). "Over" = more than 0.1 dB above the ceiling.
+
+| Meter | before: over / 2496 | before: worst | after: over / 2496 | after: worst |
+|---|---|---|---|---|
+| product dBTP meter | 1674 | +4.80 dB | **0** | **+0.005 dB** |
+| BS.1770 Annex 2 example | 1759 | +6.12 dB | **0** | **+0.004 dB** |
+| libebur128 | 1710 | +5.41 dB | 98 | +0.18 dB |
+| 32×/128-tap reference (56 hot configs) | 53 / 56 | +7.80 dB | 39 / 56 | +0.98 dB |
+
+**8× linear addendum** (the ninth cell, 240 configurations on the same axes): before 161 / 173 over
+(product / Annex 2), worst +3.67 / +4.58 dB; after **0 / 0**, worst **+0.001 / +0.001 dB**;
+libebur128 32 over, worst +0.18 dB. Every cell measured: 0 of 2736 over on either held meter.
+
+True-peak mode OFF: **222 of 222** configurations are bit-identical to `main` (output hash). Level:
+median RMS change −0.06 dB over the main 1920; the large drops (to −6.6 dB) are the +12 dB
+Post-shelf cases that rendered ~+4.7 dB true-peak overs before. The residual on the last two meters
+is content in the top few percent below Nyquist (`KNOWN_ISSUES.md` KI-020). **The promise is
+defined on the first two** — the product meter and the Annex 2 filter (`DSP_POLICY.md` invariant 4,
+ADR-0043, 2026-09-27); libebur128 and the long-kernel reference are reference/compatibility
+measurements, recorded here and not asserted.
+
+**Asserted by** `testTruePeakModeHoldsTheCeiling` (123 runs on the product meter and an independent
+Annex 2 meter — the two defining meters, each checked on its own since 2026-09-27 — ≤ 0.1 dB; measured worst +0.001 dB — and on `main` 102 of 123 runs over, worst
++6.04 dB), `testCeilingClampTruePeakPath` (the canonical +3 dB vector held within 0.1 dB at the stage).
+Environment: the machine and compiler of the performance section below.
+
+### Engaging true-peak mode while audio plays (ADR-0041 decision 5, revised) — 2026-09-27, PR #42 review
+
+**Method.** The same scratchpad approach on the transition: the real engine renders 0.25 s with
+true-peak mode OFF, then turns it ON at a block top (hot limiter, a +12 dB Post shelf, hostile
+programme, the toggle landing at several programme phases), and every product-meter and Annex 2
+reading of a segment at or after the toggle is compared with the ceiling. 248 configurations: 44.1 /
+48 / 96 / 192 kHz, nine oversampling cells, blocks 32 / 64 / 480 / 512 / 4096, five programme kinds.
+
+| | over by > 0.1 dB | worst (product / Annex 2) |
+|---|---|---|
+| before (the PR head `3e9b343`) | **186 / 248** — first violating reading 0–106 samples after the toggle | +4.66 / +5.46 dB |
+| after (this revision) | **0 / 248** | +0.001 / +0.003 dB |
+
+Before, the latch waited for the §2.8 duck's out-leg, which the replaced composition (a sample clip)
+emits; a latency-compensated host places those samples just BEFORE the toggle on its timeline. After,
+the composition latches at the toggle block and a checked decay of the last emitted frame replaces
+the out-leg: its start was scaled in 141 of the 248 runs, never below 0.8245 (−1.7 dB). **In a real
+host** (Ardour 8.4, offline export, TP turned on mid-export through Ardour's plug-in parameter API):
+the PR head read **+1.82 dB (product) / +2.12 dB (Annex 2)** over the ceiling after the toggle; this
+revision **−0.05 / +0.00 dB**; the TP-off exports of the two builds are sample-identical.
+
+The steady-state figures above were re-rendered on this revision: all 2718 + 240 + 56 renders are
+hash-identical to the PR head (the fix acts only at an engagement).
+
+**Asserted by** `testTruePeakEngagementHoldsTheCeiling` — 13 hostile runs (six OS cells, blocks 512 /
+64 / 480 and a 97-sample first block, 44.1 / 96 kHz, three programme kinds, four programme phases)
+held within 0.1 dB on both meters from the toggle on, a premise that each toggle carried > +1 dB of
+TP-off overs, and a 100 Hz tone that must cross the toggle without a step. Against the PR head it
+**fails** (13 of 13 runs over, +2.43 to +4.68 dB). Mutations: an instant mute in place of the decay
+fails the continuity check and `testDuckWrapsTruePeakLatch`; the decay without its check fails the
+ceiling check (+0.27 to +0.60 dB).
+
 ## True-peak estimator accuracy (invariant 3, ADR-0003) — 2026-08-01, P2
 
 Estimator: 4-phase × 12-tap windowed-sinc, integer-normalised DC, designed at `prepare()`.
@@ -130,9 +219,10 @@ The file-based EBU R128 vector sweep, the dBTP meter against the BS.1770 vector 
 listening results (P6). *(CPU/performance stood in this list until 2026-08-03 while the section
 below already measured it — the line was not updated when the bench landed.)*
 
-## Performance (2026-08-02, `AnabasisBench` — full matrix in `docs/architecture/PERFORMANCE_BUDGET.md`)
+## Performance (re-measured 2026-09-27, `AnabasisBench` — full matrix in `docs/architecture/PERFORMANCE_BUDGET.md`)
 
-Budget case **48 kHz · 512 · 4× OS · working state: 3.0 % of one core** (Intel Xeon @ 2.10 GHz,
+Budget case **48 kHz · 512 · 4× OS · working state: 3.0 % of one core — 3.6 % with true-peak mode
+on (ADR-0041)** (Intel Xeon @ 2.10 GHz,
 gcc 13.3.0, Release at the BENCH target's flag set — not the plugin's; `PERFORMANCE_BUDGET.md`'s
 build-configuration note owns that distinction and is not restated here — median ns/sample of the
 timed `process()` region, 5×1 s runs) against the

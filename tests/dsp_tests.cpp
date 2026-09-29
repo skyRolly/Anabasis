@@ -182,12 +182,17 @@ static void testNullWithDefaults()
 static void testReportedLatencyMatchesImpulse()
 {
     const double sr = 48000.0;
+    // BOTH true-peak modes (ADR-0041): with it on the clamp's true-peak path
+    // takes its delay out of the allowance, so the impulse must still land at
+    // exactly the allowance — the composition moved, the total did not.
+    for (const bool tp : { false, true })
     for (const float lookMs : { 0.5f, 2.0f, 5.0f, 10.0f })
     {
         anabasis::AnabasisEngine engine;
         engine.prepare (sr, 512, 2);
         anabasis::EngineParameters p;
-        p.lookaheadMs = lookMs;
+        p.lookaheadMs  = lookMs;
+        p.truePeakMode = tp;
 
         juce::AudioBuffer<float> buf (2, 512);
         int   peakAt  = -1;
@@ -2161,6 +2166,10 @@ static void testLimiterDetectorIsUnfiltered()
 static void testOsLatencyMatrix()
 {
     const double sr = 48000.0;
+    // Both true-peak modes: ADR-0041 moves the clamp's share of the allowance
+    // out of the region line in TP mode, per factor — an arithmetic slip there
+    // (scaling it by osN twice, or not at all) lands the impulse elsewhere.
+    for (const bool tp : { false, true })
     for (int f = 0; f <= 4; ++f)                 // 0 = Off, 1..4 = 2x..16x
         for (int ph = 0; ph < 2; ++ph)
         {
@@ -2169,7 +2178,7 @@ static void testOsLatencyMatrix()
             anabasis::EngineParameters p;
             p.oversample = (anabasis::OversampleFactor) f;
             p.osPhase    = (anabasis::OsPhaseMode) ph;
-            p.truePeakMode = false;              // impulse-position measurement
+            p.truePeakMode = tp;                 // a 0.5 impulse is under the ceiling either way
 
             const int expected = anabasis::predictLatencySamples (p, sr);
             juce::AudioBuffer<float> buf (2, 512);
@@ -2203,6 +2212,7 @@ static void testOsLatencyMatrix()
                    "osMatrix: the Latency.h table equals the pinned JUCE's own reported latency");
         }
 
+    for (const bool tp : { false, true })
     {   // Force-Max offline: reported and measured both use the FORCED 16x
         anabasis::AnabasisEngine engine;
         engine.prepare (sr, 512, 2);
@@ -2211,7 +2221,7 @@ static void testOsLatencyMatrix()
         p.osPhase         = anabasis::OsPhaseMode::linear;
         p.forceMaxOffline = true;
         p.nonRealtime     = true;
-        p.truePeakMode    = false;
+        p.truePeakMode    = tp;
         const int expected = anabasis::predictLatencySamples (p, sr);
         check (expected == anabasis::maxLookaheadSamples (sr)
                            + anabasis::osLatencySamples (anabasis::OversampleFactor::x16,
@@ -2239,6 +2249,10 @@ static void testOsLatencyMatrix()
 static void testBypassNullUnderOs()
 {
     const double sr = 48000.0;
+    // Both true-peak modes: the dry read is aligned to the TOTAL delay, which
+    // ADR-0041 keeps constant while it moves the processed path's composition.
+    for (const bool tp : { false, true })
+    {
     anabasis::AnabasisEngine engine;
     engine.prepare (sr, 512, 2);
     anabasis::EngineParameters p;
@@ -2246,6 +2260,7 @@ static void testBypassNullUnderOs()
     p.oversample = anabasis::OversampleFactor::x4;
     p.osPhase    = anabasis::OsPhaseMode::linear;
     p.limGainDb  = 18.0f;                        // wet path would be loud
+    p.truePeakMode = tp;
     const int delay = anabasis::predictLatencySamples (p, sr);
 
     std::vector<float> inL, outL;
@@ -2269,6 +2284,7 @@ static void testBypassNullUnderOs()
     for (size_t n = (size_t) (2 * delay); n < outL.size(); ++n)
         if (! juce::exactlyEqual (outL[n], inL[n - (size_t) delay])) { exact = false; break; }
     check (exact, "osBypass: bypass is a bit-exact null at 4x linear (dry path never oversampled)");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2350,6 +2366,868 @@ static void testCeilingUnderOs()
         check (maxOut <= ceilingLin * 1.0001f, "osCeiling: the clamp holds with the region oversampled");
         check (maxOut > 0.5f * ceilingLin,     "osCeiling: the limiter is engaged");
     }
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0041's detector (TruePeak.h, ClampTruePeakDetector), pinned where it can
+// be read directly: (a) the BS.1770 Annex 2 table is the Recommendation's —
+// its own symmetry (phase 3 is phase 0 reversed, phase 2 is phase 1 reversed)
+// and each phase's DC gain, exact because every coefficient is a multiple of
+// 2⁻¹³ (a transcription slip in any one entry moves a sum); (b) the reporting
+// lag the clamp's timing is built on — an impulse reads exactly 1.0 sixteen
+// steps later; (c) the canonical +3 dB vector reads at its true peak; and (d)
+// the reading is never below the product meter's reading of the same segment,
+// which is the property that keeps the dBTP display under the ceiling; and (e)
+// never below the BS.1770 Annex 2 filter's reading of it either — the second
+// of the two meters "dBTP" is DEFINED on (DSP_POLICY invariant 4, ADR-0043),
+// read here by a loop of its own over the published table rather than through
+// the detector's folded evaluation of it.
+static void testClampTruePeakDetector()
+{
+    using D = anabasis::ClampTruePeakDetector;
+    const auto& t = D::kItuAnnex2;
+    bool symmetric = true;
+    for (int k = 0; k < 12; ++k)
+        symmetric = symmetric && juce::exactlyEqual (t[3][k], t[0][11 - k])
+                              && juce::exactlyEqual (t[2][k], t[1][11 - k]);
+    check (symmetric, "clampDetector: the Annex 2 phases mirror each other as the Recommendation's do");
+    auto dc = [&] (int p) { float sum = 0.0f; for (float c : t[p]) sum += c; return sum; };
+    check (juce::exactlyEqual (dc (0), 1.0015869140625f) && juce::exactlyEqual (dc (1), 0.9730224609375f),
+           "clampDetector: the Annex 2 phase DC gains are the published table's, to the bit");
+    check (juce::exactlyEqual (t[0][6], 0.9721679687500f) && juce::exactlyEqual (t[1][5], 0.4650878906250f),
+           "clampDetector: the Annex 2 centre taps are the published ones");
+
+    D det;
+    det.prepare();
+    int onAt = -1;
+    float atLag = 0.0f;
+    for (int n = 0; n < 40; ++n)
+    {
+        const float x[2] = { n == 0 ? 1.0f : 0.0f, 0.0f };
+        float tp[2] = {};
+        det.processFrame (x, 2, tp);
+        if (tp[0] > 0.999f && onAt < 0) onAt = n;
+        if (n == D::kLag) atLag = tp[0];
+    }
+    check (onAt == D::kLag && std::abs (atLag - 1.0f) < 1.0e-4f,
+           "clampDetector: an impulse reads its own peak, 1.0, after the 16-step reporting lag");
+
+    det.reset();
+    float isp = 0.0f;
+    for (int n = 0; n < 4000; ++n)
+    {
+        const float v = 0.95f * std::sin (juce::MathConstants<float>::pi * (0.5f * (float) n + 0.25f));
+        const float x[2] = { v, v };
+        float tp[2] = {};
+        det.processFrame (x, 2, tp);
+        if (n > 100) isp = juce::jmax (isp, tp[0]);
+    }
+    check (std::abs (20.0f * std::log10 (isp / 0.95f)) <= 0.1f,
+           "clampDetector: the fs/4 45-degree vector reads its true peak within 0.1 dB");
+
+    det.reset();
+    anabasis::TruePeakEstimator meter;
+    meter.prepare();
+    std::vector<float> meterReads, annex2Reads;
+    float hist[12] = {};
+    uint32_t rng = 0xC0FFEEu;
+    bool neverBelow = true, neverBelowAnnex2 = true;
+    for (int n = 0; n < 20000; ++n)
+    {
+        rng = rng * 1664525u + 1013904223u;
+        const float v = ((float) (rng >> 8) / 8388608.0f - 1.0f) * 0.9f;   // broadband: the hard case
+        const float x[2] = { v, -v };
+        float a[2] = {}, b[2] = {};
+        det.processFrame (x, 2, a);
+        meter.processFrame (x, 2, b);
+        meterReads.push_back (b[0]);
+        for (int k = 11; k > 0; --k)
+            hist[k] = hist[k - 1];
+        hist[0] = v;
+        float annex2 = 0.0f;
+        for (const auto& phase : t)
+        {
+            float acc = 0.0f;
+            for (int k = 0; k < 12; ++k)
+                acc += phase[k] * hist[k];
+            annex2 = juce::jmax (annex2, std::abs (acc));
+        }
+        annex2Reads.push_back (annex2);
+        // both meters describe segment n − 6, the detector n − 16: compare like
+        // with like. The detector evaluates the phases FOLDED (pair sums over
+        // mirrored taps), so they agree to rounding, not to the bit: 1e-6
+        // relative is 0.00001 dB.
+        if (n >= 10 && a[0] < meterReads[(size_t) (n - 10)] * (1.0f - 1.0e-6f))
+            neverBelow = false;
+        if (n >= 10 && a[0] < annex2Reads[(size_t) (n - 10)] * (1.0f - 1.0e-6f))
+            neverBelowAnnex2 = false;
+    }
+    check (neverBelow, "clampDetector: never reads a segment lower than the product meter reads it");
+    check (neverBelowAnnex2,
+           "clampDetector: never reads a segment lower than the BS.1770 Annex 2 filter reads it");
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0006 items 2–3 at the STAGE, before the engine is involved: the clamp's
+// own true-peak tap is the one TESTING_POLICY's accuracy row says must be
+// covered beside the limiter's ("both taps"), and this is where its contract
+// can be read directly — the delay it reports, bit-exact pass-through while
+// nothing is over, the ceiling held against the canonical +3 dB inter-sample
+// vector that the sample clip let through, the hard backstop, one linked gain
+// for both channels, and a release that lands back on exactly 1.0.
+static void testCeilingClampTruePeakPath()
+{
+    const double sr = 48000.0;
+    anabasis::CeilingClamp clamp;
+    clamp.prepare (sr);
+    const int d = clamp.truePeakDelay();
+    check (d == anabasis::CeilingClamp::truePeakDelayFor (sr),
+           "clampTp: the prepared delay equals the pure function the engine sizes from");
+    check (d == 42, "clampTp: 42 samples at 48 kHz — a 12-sample attack + the estimator's 30");
+
+    const float ceiling = std::pow (10.0f, -1.0f / 20.0f);            // -1 dBTP
+    const float tol     = ceiling * std::pow (10.0f, 0.1f / 20.0f);  // invariant 4
+    auto isp = [] (int n, float amp)   // fs/4 at 45°: samples sit at 0.707 of the peak
+    { return amp * std::sin (juce::MathConstants<float>::pi * (0.5f * (float) n + 0.25f)); };
+
+    {   // (a) below the ceiling: a pure delay, bit for bit
+        clamp.reset();
+        bool exact = true;
+        std::vector<float> in;
+        for (int n = 0; n < 4000; ++n)
+        {
+            const float x = isp (n, 0.80f);                 // true peak 0.80 < 0.891
+            in.push_back (x);
+            float fr[2] = { x, -x };
+            clamp.processFrameTruePeak (fr, 2, ceiling);
+            const float want = n >= d ? in[(size_t) (n - d)] : 0.0f;
+            if (! juce::exactlyEqual (fr[0], want) || ! juce::exactlyEqual (fr[1], -want))
+                exact = false;
+        }
+        check (exact, "clampTp: under the ceiling the path is an exact delay of truePeakDelay()");
+    }
+    {   // (b) the vector the P1 clip passed: samples 0.672, true peak 0.95 > 0.891
+        clamp.reset();
+        anabasis::TruePeakEstimator meter;
+        meter.prepare();
+        float tpMax = 0.0f, spMax = 0.0f, inSp = 0.0f;
+        for (int n = 0; n < 8000; ++n)
+        {
+            const float x = isp (n, 0.95f);
+            inSp = juce::jmax (inSp, std::abs (x));
+            float fr[2] = { x, x };
+            clamp.processFrameTruePeak (fr, 2, ceiling);
+            float tp[2] = {};
+            meter.processFrame (fr, 2, tp);
+            tpMax = juce::jmax (tpMax, tp[0], tp[1]);
+            spMax = juce::jmax (spMax, std::abs (fr[0]));
+        }
+        check (inSp < ceiling, "clampTp: (premise) every input SAMPLE is under the ceiling");
+        check (tpMax <= tol, "clampTp: the inter-sample vector's true peak is held within 0.1 dB");
+        check (tpMax > ceiling * 0.97f, "clampTp: …by a reduction to the ceiling, not below it");
+        check (spMax < ceiling, "clampTp: the sample peak follows it down");
+    }
+    {   // (c) the backstop: a one-sample spike far over the ceiling
+        clamp.reset();
+        float outMax = 0.0f;
+        for (int n = 0; n < 200; ++n)
+        {
+            float fr[2] = { n == 50 ? 4.0f : 0.0f, 0.0f };
+            clamp.processFrameTruePeak (fr, 2, ceiling);
+            outMax = juce::jmax (outMax, std::abs (fr[0]));
+        }
+        check (outMax <= ceiling, "clampTp: no sample ever leaves above the ceiling");
+    }
+    {   // (d) one LINKED gain, and (e) a release that lands on exactly 1.0
+        clamp.reset();
+        float minRatio = 1.0f, maxRatio = 0.0f;
+        bool exactAgain = false;
+        std::vector<float> inR;
+        for (int n = 0; n < 48000; ++n)
+        {
+            const float l = n < 4800 ? isp (n, 1.2f) : isp (n, 0.3f);
+            const float r = 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi * 500.0f * (float) n / 48000.0f);
+            inR.push_back (r);
+            float fr[2] = { l, r };
+            clamp.processFrameTruePeak (fr, 2, ceiling);
+            if (n >= d && n < 4800 && std::abs (inR[(size_t) (n - d)]) > 0.05f)
+            {
+                const float ratio = fr[1] / inR[(size_t) (n - d)];
+                minRatio = juce::jmin (minRatio, ratio);
+                maxRatio = juce::jmax (maxRatio, ratio);
+            }
+            if (n == 47999)
+                exactAgain = juce::exactlyEqual (clamp.currentGain(), 1.0f)
+                          && juce::exactlyEqual (fr[1], inR[(size_t) (n - d)]);
+        }
+        check (maxRatio < 0.8f,
+               "clampTp: the quiet channel is reduced with the loud one (one linked gain)");
+        check (minRatio > 0.0f, "clampTp: (premise) the ratio probe saw the reduced section");
+        check (exactAgain, "clampTp: the release returns to exactly 1.0 — the path is exact again");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DSP-001 (audit 2026-09-26): DSP_POLICY invariant 4's TRUE-PEAK half on the
+// real engine path — with `truePeakMode` on, the rendered output's true peak
+// stays within 0.1 dB of the ceiling (TESTING_POLICY's "output never exceeds
+// the ceiling in true-peak mode, ≤ 0.1 dBTP" gate). Until ADR-0041 the clamp
+// was the P1 sample clip in BOTH modes and nothing asserted this: the two
+// ceiling tests above pin TP OFF and read sample peaks, which is why the suite
+// stayed green while TP-mode renders measured up to +4.8 dB over on main
+// (ed06ad0) with the same estimator this test reads.
+//
+// THE TWO METERS THAT DEFINE dBTP (DSP_POLICY invariant 4, ADR-0043), the
+// policy's own 0.1 dB on each (not a new tolerance), each counted on its own
+// so a failure names its meter: the product's BS.1770-4 estimator on the
+// output — what the dBTP display reads — and the order-48 example filter of
+// BS.1770 Annex 2, the Recommendation's own meter. They disagree with each
+// other by up to ~1.4 dB on HF-rich programme, which is why the clamp holds
+// the ceiling on both (and on an accurate interpolator — ClampTruePeakDetector).
+// libebur128 and a long-kernel reference are REFERENCE and compatibility
+// measurements, not the definition: they still read content in the last few
+// percent below Nyquist higher (KNOWN_ISSUES KI-020, TEST_REPORT, measured in
+// the 2026-09-27 worklog) and are recorded there, not asserted here.
+//
+// COVERAGE, and why each axis is here:
+//  • every OS cell (Off, 2×/4×/8×/16× × minimum/linear) and the Force Max
+//    bounce: the decimation filter regrows peaks after the region limiter at
+//    every factor, and the limiter's own TP detection is off at ≥ 4×;
+//  • five programme shapes: transient-heavy (one-sample clicks, 0.1 ms noise
+//    bursts, rim shots), HF-heavy (tones to 0.8·Nyquist over a hard square),
+//    LF-heavy (kick + sub — the shape that already passed on main, kept as
+//    the control), sustained (chord + noise, dense near-ceiling limiting) and
+//    the canonical fs/4 45° inter-sample vector;
+//  • two operating points of the macro (DESIGN §5.5 curves, Character 0):
+//    Loudness 50 % at the −0.1 dBTP default ceiling with the default style,
+//    and Loudness 100 % at −1 dBTP with Punchy + Transients 100 % — the attack
+//    slew that lets fronts through to the clamp by design;
+//  • the Post EQ +12 dB shelf into the clamp (ADR-0002's hostile case), and
+//    two more sample rates, because the path's delay is derived from the rate.
+namespace tpceiling
+{
+struct Programme
+{
+    int kind = 0;
+    double sr = 48000.0;
+    long long n = 0, nextBurst = 0;
+    uint32_t rng = 0x2545F491u;
+    float env = 0.0f, click = 0.0f, pinkL = 0.0f, pinkR = 0.0f;
+    float hpL = 0.0f, hpR = 0.0f, hpxL = 0.0f, hpxR = 0.0f;
+
+    float uni() noexcept
+    {
+        rng = rng * 1664525u + 1013904223u;
+        return (float) (rng >> 8) / 8388608.0f - 1.0f;
+    }
+
+    void frame (float& L, float& R) noexcept
+    {
+        const double t = (double) n / sr, twoPi = juce::MathConstants<double>::twoPi;
+        pinkL = 0.97f * pinkL + 0.03f * uni();            // a dull noise bed
+        pinkR = 0.97f * pinkR + 0.03f * uni();
+        switch (kind)
+        {
+            case 0:   // transient-heavy
+            {
+                if (n >= nextBurst)
+                {
+                    env = 1.0f; click = 1.0f;
+                    nextBurst = n + (long long) (sr * (0.09 + 0.1 * (uni() + 1.0f)));
+                }
+                const float e = env;
+                env *= (float) std::exp (-1.0 / (0.025 * sr));
+                const float rim = (float) std::sin (twoPi * 3000.0 * t) * e * e * 0.6f;
+                L = 0.9f * (uni() * e + rim) + 0.95f * click + pinkL;
+                R = 0.9f * (uni() * e - rim) + 0.95f * click + pinkR;
+                click = 0.0f;
+                break;
+            }
+            case 1:   // HF-heavy
+            {
+                const float wl = uni(), wr = uni();
+                hpL = 0.8f * (hpL + wl - hpxL); hpxL = wl;
+                hpR = 0.8f * (hpR + wr - hpxR); hpxR = wr;
+                const float hat = (float) std::exp (-std::fmod (t * 8.0, 1.0) * 40.0);
+                const double nyq = sr * 0.5;
+                const float tones = 0.25f * (float) std::sin (twoPi * std::min (11000.0, nyq * 0.46) * t)
+                                  + 0.20f * (float) std::sin (twoPi * std::min (15500.0, nyq * 0.65) * t + 1.0)
+                                  + 0.15f * (float) std::sin (twoPi * std::min (19000.0, nyq * 0.80) * t + 2.0);
+                const float sq = std::sin (twoPi * 2997.0 * t) >= 0.0 ? 0.3f : -0.3f;
+                L = hpL * hat * 0.8f + tones + sq;
+                R = hpR * hat * 0.8f + tones * 0.9f - sq;
+                break;
+            }
+            case 2:   // LF-heavy
+            {
+                const double beat = std::fmod (t * 2.0, 1.0);
+                const float kick = (float) (std::sin (twoPi * 50.0 * beat * 0.5 * (1.0 + 3.0 * std::exp (-beat * 25.0)))
+                                            * std::exp (-beat * 6.0));
+                const float sub = 0.55f * (float) std::sin (twoPi * 45.0 * t)
+                                + 0.25f * (float) std::sin (twoPi * 90.0 * t + 0.3);
+                L = 0.5f * kick + sub + pinkL * 0.5f;
+                R = 0.5f * kick + sub + pinkR * 0.5f;
+                break;
+            }
+            case 3:   // sustained
+            {
+                const float am = 0.8f + 0.2f * (float) std::sin (twoPi * 0.5 * t);
+                const double f[6] = { 110.0, 164.8, 220.0, 277.2, 329.6, 440.0 };
+                float chord = 0.0f;
+                for (int k = 0; k < 6; ++k)
+                    chord += (float) std::sin (twoPi * f[k] * t + k) / 6.0f;
+                L = (pinkL * 12.0f + chord * 0.6f) * am;
+                R = (pinkR * 12.0f + chord * 0.6f) * am;
+                break;
+            }
+            default:  // the canonical +3 dB inter-sample vector, gated, over a bed
+            {
+                const float gate = std::fmod (t * 1.5, 1.0) < 0.5 ? 1.0f : 0.25f;
+                const float s = (float) std::sin (twoPi * (sr / 4.0) * t + 0.25 * juce::MathConstants<double>::pi);
+                L = 0.7f * gate * s + pinkL * 2.0f;
+                R = 0.7f * gate * s + pinkR * 2.0f;
+                break;
+            }
+        }
+        ++n;
+    }
+};
+
+struct Point
+{
+    float limGainDb, compThresholdDb, compRatio, clipDriveDb, clipShape, dynTiltDb;
+    int   style;
+    float transientPreserve, ceilingDb;
+};
+
+// The BS.1770 Annex 2 example meter, run the way the Recommendation describes
+// it — its own history, its own loop — on the published table. Independent of
+// the clamp's detector in everything but the twelve numbers per phase, which
+// testClampTruePeakDetector pins against the Recommendation separately.
+struct Annex2Meter
+{
+    float h[2][12] = {};
+    float push (int ch, float x) noexcept
+    {
+        auto& hh = h[ch];
+        for (int k = 11; k > 0; --k)
+            hh[k] = hh[k - 1];
+        hh[0] = x;
+        float m = 0.0f;
+        for (const auto& phase : anabasis::ClampTruePeakDetector::kItuAnnex2)
+        {
+            float a = 0.0f;
+            for (int k = 0; k < 12; ++k)
+                a += phase[k] * hh[k];
+            m = juce::jmax (m, std::abs (a));
+        }
+        return m;
+    }
+};
+
+struct Over { float meterDb, annex2Db; };
+
+// Worst output true peak over the ceiling, in dB, for one configuration — as
+// the product's dBTP meter reads it, and as the Annex 2 example meter does.
+inline Over overDb (double sr, int kind, const Point& pt, int factor, int phase,
+                    bool forceMax, float postShelfDb, float seconds)
+{
+    anabasis::AnabasisEngine engine;
+    const int block = 512;
+    engine.prepare (sr, block, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode      = true;
+    p.oversample        = (anabasis::OversampleFactor) factor;
+    p.osPhase           = (anabasis::OsPhaseMode) phase;
+    p.forceMaxOffline   = forceMax;
+    p.nonRealtime       = forceMax;
+    p.limGainDb         = pt.limGainDb;
+    p.compThresholdDb   = pt.compThresholdDb;
+    p.compRatio         = pt.compRatio;
+    p.clipDriveDb       = pt.clipDriveDb;
+    p.clipShape         = pt.clipShape;
+    p.dynTiltDb         = pt.dynTiltDb;
+    p.limStyle          = pt.style;
+    p.transientPreserve = pt.transientPreserve;
+    p.ceilingDbTp       = pt.ceilingDb;
+    if (! juce::exactlyEqual (postShelfDb, 0.0f))
+    {
+        p.eqPosition        = 1;
+        p.eqHighShelfGainDb = postShelfDb;
+    }
+
+    Programme prog;
+    prog.kind = kind;
+    prog.sr   = sr;
+    anabasis::TruePeakEstimator meter;
+    meter.prepare();
+    Annex2Meter annex2;
+    juce::AudioBuffer<float> buf (2, block);
+    float tpMax = 0.0f, annex2Max = 0.0f;
+    const int total = (int) (seconds * sr);
+    for (int done = 0; done < total; done += block)
+    {
+        for (int i = 0; i < block; ++i)
+        {
+            float l = 0.0f, r = 0.0f;
+            prog.frame (l, r);
+            buf.setSample (0, i, l);
+            buf.setSample (1, i, r);
+        }
+        engine.process (buf, p);
+        for (int i = 0; i < block; ++i)
+        {
+            const float fr[2] = { buf.getSample (0, i), buf.getSample (1, i) };
+            float tp[2] = {};
+            meter.processFrame (fr, 2, tp);
+            tpMax = juce::jmax (tpMax, tp[0], tp[1]);
+            annex2Max = juce::jmax (annex2Max, annex2.push (0, fr[0]), annex2.push (1, fr[1]));
+        }
+    }
+    auto dB = [&] (float v) { return 20.0f * std::log10 (juce::jmax (v, 1.0e-9f)) - pt.ceilingDb; };
+    return { dB (tpMax), dB (annex2Max) };
+}
+} // namespace tpceiling
+
+static void testTruePeakModeHoldsTheCeiling()
+{
+    using tpceiling::Point;
+    const Point mid  { 7.835f, -10.0f, 1.75f, 2.571f, 0.457f, 0.0f, 0, 0.5f, -0.1f };
+    const Point hot  { 18.0f,  -12.0f, 2.0f,  9.0f,   0.35f,  1.5f, 1, 1.0f, -1.0f };
+    struct Cell { int factor, phase; bool forceMax; };
+    const Cell cells[] = { { 0, 0, false }, { 1, 0, false }, { 1, 1, false }, { 2, 0, false },
+                           { 2, 1, false }, { 3, 0, false }, { 3, 1, false }, { 4, 0, false },
+                           { 4, 1, false }, { 1, 1, true } };   // the last: Force Max bounce at 16×
+
+    float worst = -100.0f, worstHot = -100.0f, worstShelf = -100.0f, worstRates = -100.0f;
+    int runs = 0, overMeter = 0, overAnnex2 = 0;
+    auto note = [&] (tpceiling::Over o, float& w)
+    {
+        w = juce::jmax (w, o.meterDb, o.annex2Db);
+        ++runs;
+        if (o.meterDb > 0.1f) ++overMeter;
+        if (o.annex2Db > 0.1f) ++overAnnex2;
+    };
+
+    for (const auto& c : cells)
+        for (int kind = 0; kind < 5; ++kind)
+        {
+            note (tpceiling::overDb (48000.0, kind, mid, c.factor, c.phase, c.forceMax, 0.0f, 0.3f), worst);
+            note (tpceiling::overDb (48000.0, kind, hot, c.factor, c.phase, c.forceMax, 0.0f, 0.3f), worstHot);
+        }
+    for (const auto& c : { Cell { 0, 0, false }, Cell { 2, 1, false }, Cell { 1, 1, true } })
+        for (int kind = 0; kind < 5; ++kind)
+            note (tpceiling::overDb (48000.0, kind, mid, c.factor, c.phase, c.forceMax, 12.0f, 0.3f), worstShelf);
+    for (const double sr : { 44100.0, 96000.0 })
+        for (const int kind : { 0, 1 })
+            for (const int factor : { 0, 2 })
+                note (tpceiling::overDb (sr, kind, hot, factor, 1, false, 0.0f, 0.3f), worstRates);
+
+    check (runs == 123, "tpCeiling: (premise) all 123 TP-mode configurations ran");
+    check (overMeter == 0,
+           "tpCeiling: invariant 4 (ADR-0043) — no TP-mode render reads > 0.1 dB over the ceiling on the product dBTP meter");
+    check (overAnnex2 == 0,
+           "tpCeiling: invariant 4 (ADR-0043) — no TP-mode render reads > 0.1 dB over the ceiling on the BS.1770 Annex 2 filter");
+    check (worst <= 0.1f, "tpCeiling: Loudness 50 % at the -0.1 dBTP default, every OS cell + Force Max");
+    check (worstHot <= 0.1f, "tpCeiling: Loudness 100 %, Punchy, Transients 100 %, every OS cell + Force Max");
+    check (worstShelf <= 0.1f, "tpCeiling: a +12 dB Post shelf into the clamp");
+    check (worstRates <= 0.1f, "tpCeiling: 44.1 and 96 kHz, where the path's delay differs");
+    // Negative control: the configurations are hot enough to have been caught
+    // at all. The operating points drive the limiter to the ceiling, so the
+    // output's true peak sits within a fraction of a decibel of it; a clamp
+    // that "passed" by muting would fail this instead.
+    check (worst > -1.0f && worstHot > -1.0f,
+           "tpCeiling: (premise) the renders really reach the ceiling — the guard is not vacuous");
+    if (overMeter > 0 || overAnnex2 > 0 || worst > 0.1f || worstHot > 0.1f || worstShelf > 0.1f
+        || worstRates > 0.1f)
+        std::printf ("       tpCeiling: %d / %d of %d runs over (product meter / Annex 2); worst %+.3f / %+.3f / %+.3f / %+.3f dB\n",
+                     overMeter, overAnnex2, runs, worst, worstHot, worstShelf, worstRates);
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0041, amended in the review of PR #42: ENGAGING true-peak
+// mode while audio plays holds the requested ceiling FROM THE TOGGLE ON.
+//
+// THE DEFECT IT GUARDS. The TP composition is latched at a silent point, and
+// that point used to be reached by the §2.8 duck's ~6 ms out-leg — emitted by
+// the composition being replaced, whose clamp is the sample clip. On hostile
+// programme that out-leg put up to +4.7 dB (product meter) / +5.5 dB (Annex 2)
+// of true-peak overs out after the user had asked for dBTP (186 of 248
+// configurations in the PR #42 review worklog's sweep). Since the fix the TP
+// composition latches at the toggle block and the output continues the last
+// emitted frame as a checked decay (EngagementTail).
+//
+// WHAT IS MEASURED: every reading of the output whose segment starts at or
+// after the first post-toggle sample, from the toggle block through the decay,
+// the silent refill, the fade-in and ~0.4 s of steady state — on the product
+// meter and on the independent Annex 2 meter, at the policy's 0.1 dB. The
+// segment ENDING at the toggle is excluded: it lies between the last TP-off
+// sample and the first post-toggle one, so it belongs to the TP-off audio.
+//
+// WHY IT CANNOT PASS VACUOUSLY: the toggle is mid-stream (0.25 s of TP-off
+// audio first, never the first-block direct adopt), and the premise checks
+// that this TP-off audio really carried overs of more than +1 dB just before
+// the toggle — the same programme would have leaked through the old out-leg.
+// The configurations mix OS cells, rates, block sizes, programme shapes and
+// where in the programme the toggle lands (a programme offset, and one run
+// whose first host block is a short one so the toggle block starts off-grid).
+//
+// AND IT MUST NOT CLICK where it can avoid it: a 100 Hz tone crosses the
+// toggle with no step (the decay starts from the last emitted value) — an
+// "instant mute" implementation of the same guarantee fails that check.
+namespace tpceiling
+{
+struct Engagement { float postMeterDb, postAnnex2Db, preOverDb; };
+
+inline Engagement engageDuringPlayback (double sr, int block, int firstBlock, int factor, int phase,
+                                        int kind, int programmeSkip, const Point& pt, float postShelfDb)
+{
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, block, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode      = false;
+    p.oversample        = (anabasis::OversampleFactor) factor;
+    p.osPhase           = (anabasis::OsPhaseMode) phase;
+    p.limGainDb         = pt.limGainDb;
+    p.compThresholdDb   = pt.compThresholdDb;
+    p.compRatio         = pt.compRatio;
+    p.clipDriveDb       = pt.clipDriveDb;
+    p.clipShape         = pt.clipShape;
+    p.dynTiltDb         = pt.dynTiltDb;
+    p.limStyle          = pt.style;
+    p.transientPreserve = pt.transientPreserve;
+    p.ceilingDbTp       = pt.ceilingDb;
+    if (! juce::exactlyEqual (postShelfDb, 0.0f))
+    {
+        p.eqPosition        = 1;
+        p.eqHighShelfGainDb = postShelfDb;
+    }
+    Programme prog;
+    prog.kind = kind;
+    prog.sr   = sr;
+    for (int k = 0; k < programmeSkip; ++k)
+    {
+        float a = 0.0f, b = 0.0f;
+        prog.frame (a, b);
+    }
+    anabasis::TruePeakEstimator meter;
+    meter.prepare();
+    Annex2Meter annex2;
+    juce::AudioBuffer<float> buf (2, block);
+    const long preSamples  = (long) (0.25 * sr);
+    const long postSamples = (long) (0.4 * sr);
+    long n = 0, toggleAt = -1;
+    float preMax = 0.0f, postMeter = 0.0f, postAnnex2 = 0.0f;
+    bool first = true;
+    while (n < preSamples + postSamples)
+    {
+        if (toggleAt < 0 && n >= preSamples)
+        {
+            p.truePeakMode = true;                       // the user engages TP, mid-stream
+            toggleAt = n;
+        }
+        const int len = first ? firstBlock : block;
+        first = false;
+        for (int i = 0; i < len; ++i)
+        {
+            float l = 0.0f, r = 0.0f;
+            prog.frame (l, r);
+            buf.setSample (0, i, l);
+            buf.setSample (1, i, r);
+        }
+        juce::AudioBuffer<float> view (buf.getArrayOfWritePointers(), 2, len);
+        engine.process (view, p);
+        for (int i = 0; i < len; ++i, ++n)
+        {
+            const float fr[2] = { buf.getSample (0, i), buf.getSample (1, i) };
+            float tp[2] = {};
+            meter.processFrame (fr, 2, tp);
+            const float a = juce::jmax (annex2.push (0, fr[0]), annex2.push (1, fr[1]));
+            const long segment = n - 6;                  // both meters report x[n−6]..x[n−5]
+            if (toggleAt >= 0 && segment >= toggleAt)
+            {
+                postMeter  = juce::jmax (postMeter, tp[0], tp[1]);
+                postAnnex2 = juce::jmax (postAnnex2, a);
+            }
+            else if (n >= preSamples - (long) (0.1 * sr))
+                preMax = juce::jmax (preMax, tp[0], tp[1], a);
+        }
+    }
+    auto dB = [&] (float v) { return 20.0f * std::log10 (juce::jmax (v, 1.0e-9f)) - pt.ceilingDb; };
+    return { dB (postMeter), dB (postAnnex2), dB (preMax) };
+}
+} // namespace tpceiling
+
+static void testTruePeakEngagementHoldsTheCeiling()
+{
+    using tpceiling::Point;
+    const Point hot { 18.0f, -12.0f, 2.0f, 9.0f, 0.35f, 1.5f, 1, 1.0f, -1.0f };
+    struct Run { double sr; int block, firstBlock, factor, phase, kind, skip; };
+    const Run runs[] = {
+        { 48000.0, 512, 512, 0, 0, 1,   0 }, { 48000.0, 512, 512, 0, 0, 4, 211 },
+        { 48000.0, 512, 512, 0, 0, 0,  97 }, { 48000.0, 512, 512, 1, 1, 1,   0 },
+        { 48000.0, 512, 512, 2, 0, 4,   0 }, { 48000.0, 512, 512, 2, 1, 1, 389 },
+        { 48000.0, 512, 512, 3, 1, 4,  97 }, { 48000.0, 512, 512, 4, 1, 1, 211 },
+        { 48000.0,  64,  64, 0, 0, 1,   0 }, { 48000.0, 480, 480, 2, 0, 4,   0 },
+        { 48000.0, 512,  97, 0, 0, 1,   0 },  // a short first host block: the toggle lands off-grid
+        { 44100.0, 512, 512, 0, 0, 4, 211 }, { 96000.0, 512, 512, 2, 1, 1,   0 },
+    };
+    float weakestPremise = 100.0f;
+    int overMeter = 0, overAnnex2 = 0;
+    for (const auto& r : runs)
+    {
+        const auto e = tpceiling::engageDuringPlayback (r.sr, r.block, r.firstBlock, r.factor, r.phase,
+                                                        r.kind, r.skip, hot, 12.0f);
+        const float post = juce::jmax (e.postMeterDb, e.postAnnex2Db);
+        weakestPremise = juce::jmin (weakestPremise, e.preOverDb);
+        if (e.postMeterDb > 0.1f) ++overMeter;
+        if (e.postAnnex2Db > 0.1f) ++overAnnex2;
+        if (post > 0.1f)
+            std::printf ("       tpEngage: %.0f Hz / %d / OS %d.%d / kind %d / skip %d: %+.3f / %+.3f dB after the toggle (product meter / Annex 2)\n",
+                         r.sr, r.block, r.factor, r.phase, r.kind, r.skip, e.postMeterDb, e.postAnnex2Db);
+    }
+    check (overMeter == 0,
+           "tpEngage: invariant 4 (ADR-0043) from the toggle on — no product-meter reading after a mid-stream TP-on toggle is > 0.1 dB over");
+    check (overAnnex2 == 0,
+           "tpEngage: invariant 4 (ADR-0043) from the toggle on — no Annex 2 reading after a mid-stream TP-on toggle is > 0.1 dB over");
+    check (weakestPremise > 1.0f,
+           "tpEngage: (premise) the TP-off audio at every toggle carried overs of more than +1 dB");
+
+    // Continuity: a low-frequency tone crosses the toggle without a step.
+    {
+        const double sr = 48000.0;
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.truePeakMode = false;
+        juce::AudioBuffer<float> buf (2, 512);
+        std::vector<float> out;
+        long t = 0;
+        for (int b = 0; b < 60; ++b)
+        {
+            if (b == 40)
+                p.truePeakMode = true;
+            for (int i = 0; i < 512; ++i, ++t)
+            {
+                const float v = 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 100.0 * (double) t / sr);
+                buf.setSample (0, i, v);
+                buf.setSample (1, i, v);
+            }
+            engine.process (buf, p);
+            for (int i = 0; i < 512; ++i)
+                out.push_back (buf.getSample (0, i));
+        }
+        const size_t n0 = 40 * 512;
+        float stepAtToggle = std::abs (out[n0] - out[n0 - 1]);
+        float maxStepInTail = 0.0f;
+        for (size_t n = n0 + 1; n < n0 + 400; ++n)
+            maxStepInTail = juce::jmax (maxStepInTail, std::abs (out[n] - out[n - 1]));
+        check (std::abs (out[n0 - 1]) > 0.05f,
+               "tpEngage: (premise) the tone is not at a zero crossing at the toggle");
+        check (stepAtToggle < 0.01f && maxStepInTail < 0.01f,
+               "tpEngage: a 100 Hz tone crosses the TP-on toggle without a step");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0041's composition, observed where it can be: in true-peak mode the
+// clamp's delay comes OUT of the constant allowance, so (a) the limiter's
+// window is capped at the line that is left — a 10 ms setting engages
+// 480 − 42 samples at 48 kHz, every smaller setting is untouched — and (b)
+// the impulse and the reported figure are the ones testReportedLatencyMatches
+// Impulse and testOsLatencyMatrix already pin, which now run in both modes.
+static void testTruePeakModeCapsTheWindowNotTheLatency()
+{
+    const double sr = 48000.0;
+    const int allowance = anabasis::maxLookaheadSamples (sr);
+    const int tpDelay   = anabasis::CeilingClamp::truePeakDelayFor (sr);
+    for (const bool tp : { false, true })
+        for (const float lookMs : { 2.0f, 9.0f, 10.0f })
+        {
+            anabasis::AnabasisEngine engine;
+            engine.prepare (sr, 512, 2);
+            anabasis::EngineParameters p;
+            p.truePeakMode = tp;
+            p.lookaheadMs  = lookMs;
+            juce::AudioBuffer<float> buf (2, 512);
+            for (int b = 0; b < 4; ++b) { buf.clear(); engine.process (buf, p); }
+            const int want = juce::jmin ((int) std::ceil (lookMs * 0.001 * sr),
+                                         tp ? allowance - tpDelay : allowance);
+            check (engine.engagedWindowSamples() == want,
+                   tp ? "tpWindow: true-peak mode caps the window at the allowance less the clamp's share"
+                      : "tpWindow: with true-peak mode off the whole allowance stays available");
+            check (engine.groupDelaySamples() == allowance,
+                   "tpWindow: the group delay the wrapper reports from is the allowance either way");
+        }
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0041: toggling true-peak mode moves the clamp's share of the allowance,
+// i.e. the region line's length, so it is a discrete rewire and rides the
+// §2.8 duck exactly like an OS latch (invariant 8's enumeration gains it).
+// Same four properties as testDuckWrapsOsLatch, both directions: the switch
+// waits for the silent bottom, never steps, recovers from the REFILLED
+// pipeline rather than partway up the ramp, and comes back at level.
+static void testDuckWrapsTruePeakLatch()
+{
+    const double sr = 48000.0;
+    for (const bool toOn : { true, false })
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.limGainDb    = 6.0f;
+        p.truePeakMode = ! toOn;
+
+        std::vector<float> out;
+        juce::AudioBuffer<float> buf (2, 512);
+        for (int b = 0; b < 40; ++b)
+        {
+            if (b == 20)
+                p.truePeakMode = toOn;
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = 0.5f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                 * 500.0f * (float) (b * 512 + n) / (float) sr);
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            for (int n = 0; n < 512; ++n)
+                out.push_back (buf.getSample (0, n));
+        }
+
+        float minEnv = 1.0f, tailPeak = 0.0f, maxDelta = 0.0f;
+        for (size_t n = 20 * 512; n < 20 * 512 + 2000; n += 60)
+        {
+            float peak = 0.0f;
+            for (size_t k = n; k < n + 240; ++k)
+                peak = juce::jmax (peak, std::abs (out[k]));
+            minEnv = juce::jmin (minEnv, peak);
+        }
+        for (size_t n = 20 * 512; n < 27 * 512; ++n)
+            maxDelta = juce::jmax (maxDelta, std::abs (out[n] - out[n - 1]));
+        for (size_t n = out.size() - 2400; n < out.size(); ++n)
+            tailPeak = juce::jmax (tailPeak, std::abs (out[n]));
+        bool allFinite = true;
+        for (float v : out) if (! std::isfinite (v)) { allFinite = false; break; }
+        size_t firstAudible = out.size();
+        for (size_t n = 21 * 512; n < out.size(); ++n)
+            if (std::abs (out[n]) > 1.0e-7f) { firstAudible = n; break; }
+        float onsetPeak = 0.0f;
+        for (size_t n = firstAudible; n < juce::jmin (firstAudible + 128, out.size()); ++n)
+            onsetPeak = juce::jmax (onsetPeak, std::abs (out[n]));
+
+        check (minEnv < 0.02f, toOn ? "duckTp: turning TP on waits for the silent bottom"
+                                    : "duckTp: turning TP off waits for the silent bottom");
+        check (maxDelta < 0.07f, "duckTp: the true-peak switch never steps the output");
+        check (firstAudible < out.size(), "duckTp: the processed path does come back");
+        check (onsetPeak < 0.05f,
+               "duckTp: the recovery starts from the REFILLED pipeline, not partway up the ramp");
+        check (tailPeak > 0.35f, "duckTp: the stream recovers in the new mode");
+        check (allFinite, "duckTp: no garbage crosses the latch");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Invariant 7's property survives the true-peak path: material whose TRUE
+// peak is under the ceiling leaves TP mode exactly as it left the sample path
+// — a bit-exact copy at the reported delay, with the clamp's share inside the
+// allowance and its gain at exactly 1.0 (the limiter reads the same estimate
+// and computes no reduction either).
+static void testTruePeakModeIsExactBelowTheCeiling()
+{
+    const double sr = 48000.0;
+    anabasis::AnabasisEngine engine;
+    engine.prepare (sr, 512, 2);
+    anabasis::EngineParameters p;
+    p.truePeakMode = true;
+    const int delay = anabasis::predictLatencySamples (p, sr);
+
+    std::vector<float> inL, outL, outR;
+    juce::AudioBuffer<float> buf (2, 512);
+    uint32_t rng = 0x5EED5EEDu;
+    for (int b = 0; b < 40; ++b)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const int t = b * 512 + n;
+            rng = rng * 1664525u + 1013904223u;
+            const float noise = ((float) (rng >> 8) / 8388608.0f - 1.0f) * 0.02f;
+            const float v = 0.5f * std::sin (2.0f * juce::MathConstants<float>::pi * 997.0f * (float) t / (float) sr)
+                          + 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi * 60.0f * (float) t / (float) sr)
+                          + noise;
+            buf.setSample (0, n, v); buf.setSample (1, n, -v);
+            inL.push_back (v);
+        }
+        engine.process (buf, p);
+        for (int n = 0; n < 512; ++n)
+        {
+            outL.push_back (buf.getSample (0, n));
+            outR.push_back (buf.getSample (1, n));
+        }
+    }
+    bool exact = true;
+    for (size_t n = (size_t) delay; n < outL.size(); ++n)
+        if (! juce::exactlyEqual (outL[n], inL[n - (size_t) delay])
+            || ! juce::exactlyEqual (outR[n], -inL[n - (size_t) delay])) { exact = false; break; }
+    check (exact, "tpNull: sub-ceiling material is a bit-exact copy at the reported delay in TP mode");
+    check (juce::exactlyEqual (engine.lastBlockMinGain(), 1.0f),
+           "tpNull: the limiter computed no reduction either");
+}
+
+// ---------------------------------------------------------------------------
+// Audit finding DSP-004, DISCLOSED rather than changed (KNOWN_ISSUES KI-005,
+// USER_MANUAL §3.5): the moment Clip Drive leaves exactly 0 dB, first-order
+// ADAA's (1 + z⁻¹)/2 kernel low-passes the whole programme in the clipper's
+// linear region — cos(πf / (N·fs)) at N× — whatever the drive amount. The
+// manual and the known-issue table quote these figures; this pins them to the
+// engine so the documents cannot drift from it quietly, and so a future droop
+// compensation fails here and is sent to re-write them. −30 dBFS keeps the
+// clipper linear; each figure is relative to drive exactly 0 at the same
+// oversampling, which isolates the clip stage from the oversampling filters.
+static void testClipDriveDroopIsTheDisclosedOne()
+{
+    const double sr = 48000.0;
+    auto responseDb = [sr] (int factor, float driveDb, double hz)
+    {
+        anabasis::AnabasisEngine engine;
+        engine.prepare (sr, 512, 2);
+        anabasis::EngineParameters p;
+        p.oversample  = (anabasis::OversampleFactor) factor;
+        p.osPhase     = anabasis::OsPhaseMode::linear;
+        p.clipDriveDb = driveDb;
+        const double a = std::pow (10.0, -30.0 / 20.0);
+        juce::AudioBuffer<float> buf (2, 512);
+        double sumSq = 0.0;
+        long long count = 0;
+        for (int b = 0; b < 60; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = (float) (a * std::sin (juce::MathConstants<double>::twoPi * hz
+                                                        * (double) (b * 512 + n) / sr));
+                buf.setSample (0, n, v); buf.setSample (1, n, v);
+            }
+            engine.process (buf, p);
+            if (b >= 30)
+                for (int n = 0; n < 512; ++n, ++count)
+                    sumSq += (double) buf.getSample (0, n) * buf.getSample (0, n);
+        }
+        return 10.0 * std::log10 (sumSq / (double) count);
+    };
+    auto droop = [&] (int factor, float driveDb, double hz)
+    { return responseDb (factor, driveDb, hz) - responseDb (factor, 0.0f, hz); };
+
+    const double off10  = droop (0, 0.07f, 10000.0);
+    const double off20  = droop (0, 0.07f, 20000.0);
+    const double off10b = droop (0, 3.0f,  10000.0);
+    const double x4At20 = droop (2, 0.07f, 20000.0);
+    check (std::abs (off10 - (-2.01)) < 0.05 && std::abs (off20 - (-11.74)) < 0.1,
+           "clipDroop: at OS Off a barely-non-zero drive costs -2.0 dB at 10 kHz and -11.7 dB at 20 kHz (48 kHz)");
+    check (std::abs (off10b - off10) < 0.01,
+           "clipDroop: the droop does not depend on the drive amount — it is the kernel, not the curve");
+    check (x4At20 > -0.6,
+           "clipDroop: 4x oversampling cuts it to under 0.6 dB at 20 kHz, as the manual says");
 }
 
 // ---------------------------------------------------------------------------
@@ -3771,6 +4649,133 @@ static void testFreezeLatchesTrims()
     feed (400, 0.0f);
     check (! juce::exactlyEqual (engine.adaptive().publishedTrimRelease(), r0),
            "freeze: unfreezing lets adaptation move again");
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0042 (audit finding STATE-004, KI-006's audio half): a host re-prepare
+// no longer takes a latched Freeze out of the AUDIO while FREEZE stays lit.
+// Deterministic, and three-way:
+//  (a) the vector keeps playing — the re-prepared engine's render is BIT-
+//      IDENTICAL to a fresh engine that had the same vector restored the
+//      ADR-0014 way, i.e. to "that vector, frozen, from the first sample";
+//      at the same rate/block (the transport-start case) and at a new one;
+//  (b) the carry republishes the APPLIED set only — the retained generation
+//      does not move, which is what keeps a re-prepare from handing the latch
+//      to whichever A/B slot is live (round 42);
+//  (c) the scope is Freeze: a latch the user engaged WHILE STOPPED still
+//      comes back (the first block's snapshot decides, not the last block's),
+//      and with Freeze OFF adaptation restarts from rest exactly as before.
+static void testAFrozenLatchSurvivesARePrepare()
+{
+    auto feed = [] (anabasis::AnabasisEngine& e, const anabasis::EngineParameters& p,
+                    double sr, int block, int blocks, int& t0, float clickAmp,
+                    std::vector<float>* out)
+    {
+        juce::AudioBuffer<float> buf (2, block);
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < block; ++n)
+            {
+                const int t = t0 + n;
+                float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                           * 220.0f * (float) t / (float) sr);
+                if ((t % 6000) < 96) v += clickAmp;
+                buf.setSample (0, n, v); buf.setSample (1, n, 0.8f * v);
+            }
+            t0 += block;
+            e.process (buf, p);
+            if (out != nullptr)
+                for (int n = 0; n < block; ++n)
+                    out->push_back (buf.getSample (0, n)), out->push_back (buf.getSample (1, n));
+        }
+    };
+    struct Vec { float r, l, h, d; };
+    auto published = [] (const anabasis::AnabasisEngine& e)
+    {
+        const auto& a = e.adaptive();
+        return Vec { a.publishedTrimRelease(), a.publishedTrimLink(),
+                     a.publishedTrimHpf(), a.publishedTrimTilt() };
+    };
+    auto same = [] (Vec x, Vec y)
+    {
+        return juce::exactlyEqual (x.r, y.r) && juce::exactlyEqual (x.l, y.l)
+            && juce::exactlyEqual (x.h, y.h) && juce::exactlyEqual (x.d, y.d);
+    };
+
+    for (const double reSr : { 48000.0, 96000.0 })
+    {
+        const int reBlock = reSr > 50000.0 ? 256 : 512;
+        anabasis::AnabasisEngine a;
+        a.prepare (48000.0, 512, 2);
+        anabasis::EngineParameters p;
+        int t = 0;
+        feed (a, p, 48000.0, 512, 400, t, 0.6f, nullptr);   // adapt on transient-dense material
+        p.freeze = true;
+        feed (a, p, 48000.0, 512, 4, t, 0.6f, nullptr);     // latch at a block boundary
+        const Vec latched = published (a);
+        const auto gen = a.adaptive().retainedTrimGeneration();
+        check (std::abs (latched.r) > 1.0e-4f,
+               "freezeRePrepare: (premise) the latch MOVED — a zero vector would pass either way");
+
+        a.prepare (reSr, reBlock, 2);                        // the host re-prepares; FREEZE still lit
+        // Every stage a trim reaches is ENGAGED for the render — the limiter
+        // (release, link), the compressor (its detector HPF) and the clipper's
+        // Dynamic Tame (tilt). At factory settings all of them are inert and a
+        // render comparison would pass with any vector at all.
+        p.limGainDb = 9.0f; p.compThresholdDb = -12.0f; p.compRatio = 2.0f;
+        p.clipDriveDb = 3.0f; p.dynTiltDb = 0.5f; p.stereoLink = 0.5f;
+        std::vector<float> outA, outB, outZ;
+        int ta = 0, tb = 0, tz = 0;
+        feed (a, p, reSr, reBlock, 60, ta, 0.6f, &outA);
+
+        anabasis::AnabasisEngine b;                          // the reference: restored, frozen
+        b.prepare (reSr, reBlock, 2);
+        b.restoreFrozenTrims (latched.r, latched.l, latched.h, latched.d);
+        feed (b, p, reSr, reBlock, 60, tb, 0.6f, &outB);
+
+        anabasis::AnabasisEngine z;                          // the old behaviour: zero trims, frozen
+        z.prepare (reSr, reBlock, 2);
+        feed (z, p, reSr, reBlock, 60, tz, 0.6f, &outZ);
+
+        check (same (published (a), latched),
+               reSr > 50000.0 ? "freezeRePrepare: a rate change keeps the latched vector in the audio"
+                              : "freezeRePrepare: a same-configuration re-prepare keeps the latched vector");
+        check (outB != outZ,
+               "freezeRePrepare: (premise) the vector is audible here — the comparison is not vacuous");
+        check (outA == outB,
+               "freezeRePrepare: the render is bit-identical to that vector restored and frozen");
+        check (a.adaptive().hasPublishedTrims(),
+               "freezeRePrepare: the readout describes a real vector again, not initialisation zeros");
+        check (a.adaptive().retainedTrimGeneration() == gen,
+               "freezeRePrepare: the carry latches nothing — the retained generation does not move");
+    }
+
+    {   // Freeze engaged WHILE STOPPED, then a re-prepare before any audio
+        anabasis::AnabasisEngine a;
+        a.prepare (48000.0, 512, 2);
+        anabasis::EngineParameters p;
+        int t = 0;
+        feed (a, p, 48000.0, 512, 400, t, 0.6f, nullptr);
+        const Vec current = published (a);
+        p.freeze = true;                                     // no block processed with it yet
+        a.prepare (48000.0, 512, 2);
+        feed (a, p, 48000.0, 512, 2, t, 0.0f, nullptr);
+        check (same (published (a), current),
+               "freezeRePrepare: Freeze engaged while stopped still latches the vector that was playing");
+    }
+
+    {   // Freeze OFF: unchanged — adaptation restarts from rest
+        anabasis::AnabasisEngine a;
+        a.prepare (48000.0, 512, 2);
+        anabasis::EngineParameters p;
+        int t = 0;
+        feed (a, p, 48000.0, 512, 400, t, 0.6f, nullptr);
+        const Vec before = published (a);
+        a.prepare (48000.0, 512, 2);
+        feed (a, p, 48000.0, 512, 1, t, 0.0f, nullptr);
+        check (std::abs (published (a).r) < 0.1f * std::abs (before.r),
+               "freezeRePrepare: with Freeze OFF the vector restarts from rest, as it always has");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -6279,25 +7284,31 @@ static void testTheAudioPathAllocatesNothing()
         // audio. Priming here keeps this case about the rewire itself; the
         // unprimed first visit is covered by the matrix above, which prepares
         // per configuration.
-        for (auto factor : factors)
-        {
-            p.oversample = factor;
-            for (int b = 0; b < 8; ++b) engine.process (buf, p);
-        }
+        for (const bool tp : { false, true })
+            for (auto factor : factors)
+            {
+                p.oversample   = factor;
+                p.truePeakMode = tp;
+                for (int b = 0; b < 8; ++b) engine.process (buf, p);
+            }
 
+        // The true-peak mode alternates per pass: since ADR-0041 it rides the
+        // same latch (it moves the clamp's share of the allowance), so the
+        // TP-mode rewire is exercised here under the same guard as the factor.
         resetCounts();
         {
             Armed arm;
             for (int pass = 0; pass < 3; ++pass)
                 for (auto factor : factors)
                 {
-                    p.oversample = factor;
+                    p.oversample   = factor;
+                    p.truePeakMode = (pass % 2) == 1;
                     engine.requestForcedDuck();
                     for (int b = 0; b < 8; ++b) { engine.process (buf, p); ++armedCalls; }
                 }
         }
         check (newCount.load() == 0 && mallocCount.load() == 0,
-               "realtime: a mid-stream oversample rewire allocates nothing on the audio thread");
+               "realtime: a mid-stream oversample / true-peak rewire allocates nothing on the audio thread");
         if (newCount.load() > 0 || mallocCount.load() > 0)
             std::printf ("       rewire: new=%ld malloc=%ld\n",
                          newCount.load(), mallocCount.load());
@@ -6359,6 +7370,14 @@ int main()
     testBypassNullUnderOs();
     testOsTransparency();
     testCeilingUnderOs();
+    testClampTruePeakDetector();
+    testCeilingClampTruePeakPath();
+    testTruePeakModeHoldsTheCeiling();
+    testTruePeakEngagementHoldsTheCeiling();
+    testTruePeakModeCapsTheWindowNotTheLatency();
+    testDuckWrapsTruePeakLatch();
+    testTruePeakModeIsExactBelowTheCeiling();
+    testClipDriveDroopIsTheDisclosedOne();
     testOsReducesAliasing();
     testDitherModes();
     testDuckWrapsDiscreteRewires();
@@ -6382,6 +7401,7 @@ int main()
     testResetCancelsAnInFlightLearnPass();
     testStopThenStartInOneBlockKeepsBoth();
     testFreezeLatchesTrims();
+    testAFrozenLatchSurvivesARePrepare();
     testTrimBounds();
     testAutoReleaseFollowsTheTrimScale();
     testAStagedFrozenVectorAlwaysGetsABottom();

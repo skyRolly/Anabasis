@@ -117,6 +117,21 @@ public:
 
     void reset() noexcept
     {
+        // STASH THE APPLIED VECTOR before zeroing it (ADR-0042, audit finding
+        // STATE-004 — KI-006's audio half). Whether it comes back is decided
+        // by the FIRST BLOCK after this reset (`resumeAfterReset`), because
+        // that is the first moment the Freeze state is known: a reset runs
+        // with processing stopped, and the user may have engaged Freeze while
+        // it was. Only the first reset of a sequence stashes — the engine's
+        // prepare() resets this object twice (here via prepare(), then through
+        // AnabasisEngine::reset()), and the second must not stash the zeros the
+        // first one left.
+        if (! carryPending)
+        {
+            carried      = trims;
+            carriedEver  = pubTrimEver.load (std::memory_order_relaxed);   // this thread wrote it
+            carryPending = true;
+        }
         trims = {};
         for (int ch = 0; ch < kMaxChannels; ++ch)
             bandLp[ch] = 0.0f;
@@ -153,20 +168,52 @@ public:
         // change is not a reason to forget it. The retained set is the one that
         // had to be argued for rather than inherited: the vector this instance
         // last latched is persistence state and belongs here, while the
-        // PUBLISHED set below describes what the audio is applying and is
-        // therefore correctly zeroed with `trims` (KI-006's audio and readout
-        // halves, which this deliberately does not touch — what a re-prepare
-        // does to a latched Freeze IN THE AUDIO is a Freeze-semantics decision
-        // behind the Architecture Review Gate).
+        // PUBLISHED set below describes what the audio is applying, so it is
+        // zeroed with `trims` here and comes back with them if the first block
+        // after this reset is frozen (ADR-0042, `resumeAfterReset`). What a
+        // re-prepare does to a latched Freeze IN THE AUDIO was KI-006's open
+        // half, a Freeze-semantics decision behind the Architecture Review
+        // Gate; ADR-0042 records the answer (FREEZE lit ⇒ the latched vector
+        // keeps playing).
         learnActive.store (false, std::memory_order_release);
         learnOnsSum  = 0.0;
         learnTiltSum = 0.0;
         learnBlocks  = 0;
 
-        publishTrims (false);      // initialisation zeros, NOT a measurement
+        publishApplied (false);    // initialisation zeros, NOT a measurement
         pubCrestDb.store (0.0f, std::memory_order_relaxed);
         pubTiltDb.store (0.0f, std::memory_order_relaxed);
         pubOnsetRate.store (0.0f, std::memory_order_relaxed);
+    }
+
+    // ADR-0042 (audit finding STATE-004): the first block after a reset says
+    // what happens to the vector reset() stashed. FREEZE ON → it is the vector
+    // the user froze, and it keeps playing: MODE_AND_ADAPTATION_POLICY
+    // invariant 3's "while frozen, the adaptive layer contributes a constant",
+    // which a host re-prepare — a rate or block-size change, and in some
+    // hosts a transport start or a bounce — used to break silently while
+    // FREEZE stayed lit and the save kept the vector. FREEZE OFF → adaptation
+    // restarts from rest, as it always has (carrying it there too is a
+    // separate owner call, ADR-0042 option A).
+    //
+    // WHAT IS REPUBLISHED, and what deliberately is not: the four PUBLISHED
+    // atomics and `pubTrimEver` go back to what they held before the reset —
+    // they describe what the audio applies, and it applies this again. The
+    // RETAINED set and `retTrimSeq` are not touched, because nothing new was
+    // latched: bumping the generation here would hand the latch to whichever
+    // A/B slot is live at the re-prepare, which is the round-42 slot-isolation
+    // defect (`testAFrozenLatchDoesNotFollowTheSlotSwitch`). Called by the
+    // engine at the block top, BEFORE a pending ADR-0014 restore is injected,
+    // so a staged restore still wins. Audio thread; no allocation.
+    void resumeAfterReset (bool freeze) noexcept
+    {
+        if (! carryPending)
+            return;
+        carryPending = false;
+        if (! freeze)
+            return;
+        trims = carried;
+        publishApplied (carriedEver);
     }
 
     // ADR-0014 (resolves OQ-013): adopt a restored frozen-trim vector as the
@@ -716,11 +763,7 @@ private:
     // acquire-loads it — see there. The same pair guards the retained set.
     void publishTrims (bool meaningful) noexcept
     {
-        pubTrimRel.store  (trims.releaseOctaves, std::memory_order_relaxed);
-        pubTrimLink.store (trims.stereoLink,     std::memory_order_relaxed);
-        pubTrimHpf.store  (trims.scHpfHz,        std::memory_order_relaxed);
-        pubTrimTilt.store (trims.dynTiltDb,      std::memory_order_relaxed);
-        pubTrimEver.store (meaningful, std::memory_order_release);
+        publishApplied (meaningful);
 
         // The retained set follows the MEANINGFUL publications only, and is
         // never cleared. `reset()`'s zeros are not a vector this instance
@@ -739,6 +782,19 @@ private:
         // publishes the four values above.
         retTrimSeq.store (retTrimSeq.load (std::memory_order_relaxed) + 1u,
                           std::memory_order_release);
+    }
+
+    // The APPLIED half of a publication alone: the four published atomics and
+    // the flag that announces them, never the retained set or its generation.
+    // `publishTrims` is this plus the retained half; `reset()` and
+    // `resumeAfterReset()` use this alone, because neither latches anything.
+    void publishApplied (bool ever) noexcept
+    {
+        pubTrimRel.store  (trims.releaseOctaves, std::memory_order_relaxed);
+        pubTrimLink.store (trims.stereoLink,     std::memory_order_relaxed);
+        pubTrimHpf.store  (trims.scHpfHz,        std::memory_order_relaxed);
+        pubTrimTilt.store (trims.dynTiltDb,      std::memory_order_relaxed);
+        pubTrimEver.store (ever, std::memory_order_release);
     }
 
     float onePoleMs (float ms) const noexcept
@@ -778,6 +834,13 @@ private:
     int    blockOnsets = 0, blockFill = 0;
 
     Trims trims;
+    // ADR-0042: the applied vector as reset() found it, held until the first
+    // block after the reset decides (from its Freeze state) whether it comes
+    // back. Audio-thread state like `trims`; reset() runs with processing
+    // stopped, on the thread that owns the engine at that moment.
+    Trims carried;
+    bool  carriedEver  = false;
+    bool  carryPending = false;
 
     std::atomic<float> pubCrestDb { 0.0f }, pubTiltDb { 0.0f }, pubOnsetRate { 0.0f };
     std::atomic<float> pubTrimRel { 0.0f }, pubTrimLink { 0.0f },

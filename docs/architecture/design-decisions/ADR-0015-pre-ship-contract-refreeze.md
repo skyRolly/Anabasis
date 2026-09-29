@@ -20,6 +20,13 @@ autonomous-decision instruction that accompanied it)
 > approval keeps its ⊕ for the post-v0.1.0 fine review, including the **wording** ⊕ on the
 > mode-aware unit's copy (item 5).
 
+> **Correction of record, 2026-09-27 (audit finding DSP-001) — decision 7's last sentence.** "The
+> DSP was right about its own guarantee the whole time" was true of the policy TEXT (invariants 3
+> and 4 are mode-conditional) and not of the code: with true-peak mode on, the clamp was still the
+> P1 sample clip, and TP-mode renders measured up to +4.8 dB over a dBTP ceiling. The decision
+> itself — the defaults, the removal, the mode-aware unit — is untouched; the implementation that
+> makes the TP-mode guarantee true is ADR-0041 (Accepted 2026-09-27).
+
 ## Context
 
 Three round-2 changes touched contracts the repository's own rules put behind a decision record,

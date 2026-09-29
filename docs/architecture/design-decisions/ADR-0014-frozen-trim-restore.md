@@ -4,6 +4,11 @@
 v0.1.0 blanket approval of 2026-08-02; flagged ⊕ for the post-v0.1.0 fine review like every
 decision taken under that approval)
 
+> **Extended by [ADR-0042](ADR-0042-a-frozen-latch-survives-a-host-re-prepare.md) (Accepted
+> 2026-09-27; filed `Proposed` and held at the gate until the owner answered).** This record restores a STAGED vector; ADR-0042 decides what
+> happens to an already-APPLIED one when the host re-prepares (it keeps playing while Freeze is ON).
+> Nothing here moves.
+
 ## Context
 
 ADR-0007's state schema carries a per-slot `FROZEN_TRIMS` child — the §5.4 trim vector latched
@@ -162,7 +167,7 @@ generation pair by slot, which buys a per-slot counter to fix one window's worth
 - `src/dsp/AdaptiveEngine.h:224-263` — `injectTrims` (clamp + publish)
 - `src/dsp/AnabasisEngine.h:243-265` — `restoreFrozenTrims`, and `:287-291` —
   `frozenRestorePending` (the staged record; the two were adjacent when this row was written and
-  the header has grown between them since); `src/dsp/AnabasisEngine.cpp:373-389` — block-top
+  the header has grown between them since); `src/dsp/AnabasisEngine.cpp:395-411` — block-top
   consume; `:461` (direct-adopt) and `:511` (duck bottom) — the two application sites
 - `src/PluginProcessor.cpp` — the capture in `saveSlotFromLive`, the stage in `applySlotToLive`
   and in `setStateInformation`

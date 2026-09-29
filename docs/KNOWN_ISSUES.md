@@ -36,9 +36,10 @@ it does not check heading nesting, so this convention is held by hand.
 
 ## Open issues
 
-*(KI-001 — unducked discrete transitions — KI-002 — inert Loudness Comp/Delta — and KI-009 — the
-silent left channel — are FIXED and recorded as `POSTMORTEMS.md` INC-001/INC-002/INC-004; their
-numbers are never reused. KI-009's entry ran to five months of round-by-round investigation, and
+*(KI-001 — unducked discrete transitions — KI-002 — inert Loudness Comp/Delta — KI-009 — the
+silent left channel — and KI-006 — a re-prepare dropping a frozen slot's trims from the audio — are
+FIXED and recorded as `POSTMORTEMS.md` INC-001/INC-002/INC-004/INC-007; their numbers are never
+reused. KI-009's entry ran to five months of round-by-round investigation, and
 what was durable in it — the hypotheses the rounds excluded, and the two ways the probe that
 finally reproduced it was vacuous first — moved into INC-004 with the mechanism, because a fixed
 issue's record lives there.)*
@@ -294,7 +295,10 @@ Evidence [Verified]:
 **Severity:** Low
 **Status:** Confirmed (fix deferred — needs a designed engage crossfade, see below)
 **Affects:** all platforms, all formats — a direct `clipDrive` move (or a
-Character-macro move that carries it) across the 0 dB boundary during playback
+Loudness-macro move that carries it: the macro's drive curve is 0 dB below Loudness 30 % and
+rises from there — `MacroEngine.h` `clipDriveDb`) across the 0 dB boundary during playback.
+*(Corrected 2026-09-27: this line said "Character-macro"; the Character macro sets the colour
+depth, not the drive — audit finding DSP-004.)*
 
 The clipper's sub-block is skipped **exactly** at 0 dB drive, which is the
 bit-identity contract. One sample later, with the drive smoother barely off
@@ -310,6 +314,31 @@ in reverse when drive returns to exactly 0.
 
 Not exposed on the bulk-swap paths — A/B, preset and session loads are covered
 by the §2.8 duck. The reachable case is a knob or automation move.
+
+**The steady-state half — the droop stays for as long as the drive is non-zero, whatever its
+amount (audit finding DSP-004, measured 2026-09-27).** The engage step above is the transition;
+the `(1 + z⁻¹)/2` response it switches to is also what the stage applies to the whole programme,
+in the clipper's linear region, the entire time the drive is off zero — and at the default
+oversampling (Off, Offline Follow, so the bounce too) that is the base rate. Measured on the real
+engine with a −30 dBFS sine (the clipper linear), response with a drive of 0.07 dB — the value the
+Loudness macro reaches at 30.5 % — or 3 dB (identical: the amount does not matter), relative to
+drive exactly 0:
+
+| Rate | Oversampling | 5 kHz | 10 kHz | 15 kHz | 16 kHz | 20 kHz |
+|---|---|---|---|---|---|---|
+| 48 kHz | Off | −0.47 dB | −2.01 dB | −5.11 dB | −6.02 dB | −11.74 dB |
+| 48 kHz | 2× | −0.12 dB | −0.47 dB | −1.09 dB | −1.25 dB | −2.01 dB |
+| 48 kHz | 4× | −0.03 dB | −0.12 dB | −0.26 dB | −0.30 dB | −0.47 dB |
+| 44.1 kHz | Off | −0.56 dB | −2.42 dB | −6.35 dB | −7.58 dB | −16.74 dB |
+| 44.1 kHz | 2× | −0.14 dB | −0.56 dB | −1.30 dB | −1.49 dB | −2.42 dB |
+| 44.1 kHz | 4× | −0.03 dB | −0.14 dB | −0.31 dB | −0.36 dB | −0.56 dB |
+
+It is the first-order ADAA kernel's own response, `cos(πf / (N·fs))` at N× oversampling, and it
+is by design (the ADAA trade recorded in `ClipSat.h`); what was missing is that nothing outside the
+code said so. **Workaround:** oversampling 4× (Settings) cuts it to ≤ 0.6 dB at 20 kHz; 2× leaves
+~2 dB there. A DSP remedy — a droop-compensating pre-emphasis on the driven branch, built together
+with this entry's engage ramp — or a non-Off oversampling default is an owner decision, not made
+here (the worklog of 2026-09-27 records the measurement and the options).
 
 **Workaround:** automate `clipDrive` from a small non-zero value rather than
 from exactly 0, or make the move while the transport is stopped.
@@ -333,122 +362,6 @@ Evidence [Verified]:
 
 ---
 
-### KI-006 — A sample-rate change silently drops a frozen slot's adaptation from the AUDIO and the readout, while the SAVE keeps it
-
-**Severity:** Medium
-**Status:** Confirmed — **audio half only** (fix deferred: it is a Freeze-semantics decision, not a
-repair). The save half is CLOSED (round 38, corrected in 39, completed in 40); the heading above
-describes what is left, and it used to describe the reverse.
-**Affects:** all platforms/formats. Trigger: Freeze ON with a latched trim
-vector, then any `prepareToPlay` — a host sample-rate or block-size change.
-
-`AnabasisEngine::prepare` calls `AdaptiveEngine::prepare` → `reset()`, which
-zeroes the internal `trims` struct along with the features **and republishes
-them**: `reset()`'s last step is a `publishTrims` call, so all four published
-atomics go to zero too, whatever Freeze says. (This entry asserted the opposite
-until 2026-08-03 — "the PUBLISHED trim atomics are NOT zeroed, and cannot be",
-reasoning from `finishBlock`'s `if (! freeze && audible)` guard and missing the
-`reset()` publish. Corrected against the code, which is the authority.)
-
-The consequence was therefore SYMMETRIC, not one-sided: after a re-prepare the
-engine applies a zero trim vector to the audio, the Advanced overlay reads zeros
-with it, **and the state half went with them**. What never went to zero is the
-wrapper's `liveFrozenTrims` mirror — the copy a load/A-B/undo placed — so a slot
-whose vector arrived that way still serialised the right thing; a vector latched
-LIVE in the session had no mirror, and after a re-prepare there was nothing left
-to save (before round 39 the save wrote the post-reset zeros, an INVALID vector
-that the next load re-injected; after it, no `FROZEN_TRIMS` child at all).
-
-**The state half is CLOSED (round 40, re-implemented correctly at round 41,
-slot-scoped at round 42) and the audio half is what remains.** The fix is an ownership statement rather than
-a Freeze decision: the ENGINE owns the durable copy, in `AdaptiveEngine`'s
-**retained** trim set — four lock-free scalars plus a release-stored flag that
-`reset()` does not clear, so the latched vector outlives a re-prepare exactly as
-`learned`/`refOnsetRate`/`refTiltDb` always have. The PUBLISHED set keeps its
-current meaning (what the DSP is applying, zeroed by `reset()`), which is what
-keeps the overlay honest. The save prefers the engine whenever
-`! frozenRestorePending() && hasRetainedTrims()` — both clauses in
-`engineFrozenTrimsIfLive()` — and falls back to the wrapper's mirror for the
-staged-but-unapplied window, which is the only window the mirror covers.
-Guarded by `testPreparedStateAndSlotOwnership` case 4 (`liveLatch:`), which
-asserts the two sets part company at the re-prepare.
-
-**Round 42 added the slot scope the retained set could not carry by itself.**
-`FROZEN_TRIMS` is per-slot; the retained vector is engine-wide and knows nothing
-about A/B. After a switch into a freeze-ON slot holding no vector of its own,
-nothing stages a restore (the stage is gated on the mirror being valid), the
-generation pair stays equal, and the incoming slot's next save serialised the
-OUTGOING slot's latch as its own — after which the next A/B or undo restore
-injected it. The retained set is a runtime CACHE of the last latch and may only
-answer for the slot it was filled under, so the wrapper records the retained
-GENERATION whenever the live surface's frozen ownership changes
-(`adoptFrozenMirror`, the single writer of the mirror) and adopts the engine's
-answer only when the generation has advanced past it. `testAFrozenLatchDoesNotFollowTheSlotSwitch`.
-
-**Round 40's version of this fix was itself a defect, recorded because the shape
-recurs:** it declared the wrapper's `juce::ValueTree` mirror the durable owner
-and had `prepareToPlay` copy the latch into it. `prepareToPlay` is a host
-callback JUCE does not deliver on the message thread, and the editor's
-`presetDirty()` poll read and `createCopy()`d that same member continuously (it
-went through `saveSlotFromLive()` until round 51 moved the marker onto
-`presetShapeFromLive()`, which touches no ValueTree at all) — both sides gated
-on Freeze being ON, so the windows coincided exactly rather than being disjoint. ThreadSanitizer reports it as a data race on
-`ReferenceCountedObjectPtr<ValueTree::SharedObject>::get()` plus one on the
-refcount increment; the current code is TSAN-clean on the same stimulus
-(`testTheFrozenLatchNeedsNoThreadCrossing`). The lesson is general: state that
-must survive a re-initialisation should be RETAINED where it already lives, not
-copied across a thread boundary to somewhere more durable.
-
-What is still open, unchanged: after a re-prepare the ENGINE applies a zero trim
-vector and the Advanced overlay reads zeros until the next load, A/B or undo
-re-injects the mirror. Closing that means "keep the trims across `reset()`",
-covering the published atomics as well as the internal struct since both are
-cleared together — which is a Freeze-semantics change, an Architecture Review
-Gate item and an AI-agent Hard Stop (`MODE_AND_ADAPTATION_POLICY` Enforcement),
-so it stays owner's business rather than a repair.
-
-**Found by** the adversarial verification pass over review round 24
-(2026-08-03), not by the review itself; it PREDATES ADR-0014 (P4 shipped the
-same reset), which is why it is recorded rather than folded into that round's
-fixes.
-
-**Why it is not simply "keep the trims across reset".** That is the likely
-resolution — the trim vector is a bounded, rate-independent control value, not
-signal state, and carrying it would also make an un-frozen re-prepare re-slew
-from where it was instead of jumping to zero — but it changes what
-`MODE_AND_ADAPTATION_POLICY` invariant 3's Freeze clause promises across a
-discontinuity, which is an owner/ADR call, not a bug fix. It would also have to
-carry the PUBLISHED copy, not just the internal struct — see the correction
-above. The alternative (re-stage the vector from the wrapper at
-`prepareToPlay`) used to be blocked by the same asymmetry — `liveFrozenTrims`
-held one only after a load — and round 41 removes that objection from the other
-side: the engine's RETAINED set holds a live latch too, so the audio-side fix no
-longer needs the wrapper at all. It would be a one-line re-injection from the
-retained values at the end of `reset()`. It is still not done here, because that
-IS the Freeze-semantics change this section defers; the retained set deliberately
-stops at the serialization boundary and feeds no audio path.
-
-**The SAVE half of the same gap, added 2026-08-03 (review round 27), CLOSED 2026-08-03 (round
-38).** The description above is about the audio; the capture had the mirror-image problem.
-`saveSlotFromLive` read `publishedTrim*()` whenever Freeze was on and no restore was pending — and
-on an instance that was prepared but had never PROCESSED a block, those atomics are all zero, so
-the session serialised an all-zero `FROZEN_TRIMS` for a slot the user believes holds a latched
-vector and the next load injected zeros. It needed no answer to the audio half after all: the
-capture now also requires `AdaptiveEngine::hasPublishedTrims()`, because "all four read 0" is
-otherwise indistinguishable between *measured, and the answer is no trim* and *initialisation* —
-and a value nothing measured cannot be more truthful than the one the slot already holds. The flag
-tracks the CURRENT contents of the four atomics rather than "has one ever been published": it is
-set by an audible `finishBlock` and by an ADR-0014 `injectTrims`, and CLEARED by `reset()` along
-with the values. Round 38 shipped it as a one-way flag set inside `publishTrims()` — which
-`reset()` also calls — so it read true for every prepared instance and the guard was inert; round
-39 made it mean what its name says. Round 40 closed the remaining save case — a latch established
-LIVE, whose only record was the atomics the re-prepare cleared — and round 41 re-implemented that
-closure without a thread crossing, by retaining the vector in the engine instead of copying it into
-the wrapper's mirror from a host callback (see above). The AUDIO half above is untouched and still
-needs the owner call.
-
-**For the post-v0.1.0 fine review.**
-
 ### KI-007 — Preset/Freeze bookkeeping edges the fine review must settle together
 
 **Severity:** Low (each is display or recall bookkeeping; none changes a rendered sample on its own)
@@ -465,7 +378,9 @@ record.
    across a preset change, the next save serialises it, and the next A/B or undo restore
    re-injects it. Whether a preset should carry or clear the Freeze memory is a
    `MODE_AND_ADAPTATION_POLICY` invariant-3 question, and it is the same question **KI-006**
-   asks about a re-prepare. Settle them together or the two answers will disagree.
+   asked about a re-prepare. Settle them together or the two answers will disagree. *(2026-09-27:
+   KI-006 is closed — ADR-0042, accepted, answers it for a re-prepare: with Freeze ON the applied
+   vector carries. This item stays open, and its answer should be consistent with that one.)*
 
 2. **RESOLVED 2026-08-08 (ADR-0022) — preset-ring navigation identified the current entry by
    NAME.** `stepPreset` matched `currentPresetName()` against the factory table first and the
@@ -597,7 +512,19 @@ record.
    rewires no discrete stage, and DSP invariant 8's click-free enumeration is about the bulk swaps
    that do. Item 7's Copy A→B, recorded here as the same shape, was settled in round 37.
 
-**For the post-v0.1.0 fine review, alongside KI-006.**
+10. **An A/B switch into a freeze-ON slot that holds no `FROZEN_TRIMS` keeps the OUTGOING
+   slot's latch in the audio** (added 2026-09-27 from the audit's merged note on STATE-004;
+   code-inferred, not run). `applySlotToLive` stages a restore only when the incoming slot has a
+   vector, so nothing replaces the engine's applied vector, and Freeze holds it — while round 42's
+   ownership rule correctly makes the incoming slot save none. The audio and the saved record then
+   disagree, and a reload renders a different sound. The option consistent with round 42's
+   no-borrowing rule is to stage a never-latched (zero) vector on that ownership change; it is the
+   same Freeze-semantics owner call as item 1, and ADR-0042 (the re-prepare carry) deliberately
+   preserves this pre-existing shape rather than resolving it — `testAFrozenLatchDoesNotFollowTheSlotSwitch`
+   pins that the carry does not make it worse.
+
+**For the post-v0.1.0 fine review, alongside ADR-0042 option A** (Freeze OFF across a re-prepare
+— KI-006, closed 2026-09-27 as `POSTMORTEMS.md` INC-007, settled only the Freeze ON half).
 
 ---
 
@@ -1179,7 +1106,8 @@ another's time base, and the price is that non-ring readers may lag by one recon
 > its own publication schedule while leaving the rate on the processor's. Measured at 6 kHz, bin 512
 > at 48 kHz and bin 256 at 96 kHz: −0.00 dB paired, −116.80 dB and −120.00 dB crossed. Repaired by
 > carrying the rate INSIDE the published frame and taking it under the GR ring's epoch (ADR-0039,
-> `Proposed`); `SpectrumView` therefore moves from the banner's unbracketed discipline to its
+> Accepted 2026-09-06 — this read `Proposed` until the 2026-09-27 acceptance sweep found it);
+> `SpectrumView` therefore moves from the banner's unbracketed discipline to its
 > bracketed one, and `CurveView` is the only unbracketed reader left — legitimately, since its curve
 > comes from the parameter set and not from a ring, and its "bounded correct-but-late frame" reading
 > above is unchanged.
@@ -1509,6 +1437,132 @@ Evidence [Verified]:
 - Test:   `testTheSpectrumsRendererNeverSeesHalfOfTwoFrames` (four placements, each counted),
   `testAResetThatLandsInsideATickNeverReachesTheScreen` (one forced straddle)
 - Related: ADR-0039 clause 12 (2026-09-07)
+
+### KI-020 — True-peak meters disagree near Nyquist, so "≤ 0.1 dBTP" is only as exact as the meter it is read on (2026-09-27)
+
+**Severity:** Medium (delivery-spec exposure on programme with strong top-octave content)
+**Status:** Confirmed, **documented limitation** — the yardstick is **decided (2026-09-27,
+[ADR-0043](architecture/design-decisions/ADR-0043-dbtp-is-defined-on-the-product-meter-and-the-annex-2-filter.md))**:
+the ≤ 0.1 dBTP promise is defined on the product meter and the BS.1770 Annex 2 filter
+(`DSP_POLICY.md` invariant 4), so the libebur128 and long-kernel residuals below are
+reference/compatibility measurements the product does not claim. The entry stays open for them and
+for the STATISTICS TP row (VIS-002). *(Until 2026-09-27 the yardstick was an owner decision, audit
+finding DSP-001 sub-item (a); the measurement below is what it was made on.)*
+**Affects:** true-peak mode, all platforms/formats; worst on synthetic or heavily clipped programme
+with energy in the last few percent below Nyquist, and after a large Post-EQ high shelf
+
+"dBTP" is the maximum of the continuous waveform, and every meter approximates it. On the engine's
+TP-mode output (ADR-0041, Accepted 2026-09-27) the ceiling holds on the product's own dBTP meter and on the
+BS.1770 Annex 2 example filter — the two meters "dBTP" is defined on, and the two readings the clamp
+is built to hold — worst **+0.005 dB**
+over 2736 TP-mode configurations covering every oversampling cell. Two further meters still read a
+residual:
+
+- **libebur128** (a widely used BS.1770 implementation, 49-tap Hann interpolator): above the
+  0.1 dB tolerance in **130 of 2736** configurations, worst **+0.18 dB** — HF-heavy and
+  transient-heavy synthetic programme (most at the linear-phase oversampling cells) and the
+  +6/+12 dB Post-shelf cases. An Ardour offline render of a hot test programme through the built
+  plug-in read +0.09 dB over on it — inside the tolerance.
+- **A 32×/128-tap Kaiser reference** (content up to ~0.47·fs): on a deliberately hot 56-configuration
+  subset, worst **+0.98 dB**. Filtering the output to 20 kHz first makes it read HIGHER, not lower —
+  the peak of near-Nyquist content depends on the reconstruction filter, which is why no meter is
+  "the" truth there.
+
+**The STATISTICS TP row can warn at the ceiling.** The row compares its hold with the ceiling
+exactly (ADR-0020 Amendment 2), and the held product-meter reading of a TP-mode render sits 0.001 to
+0.005 dB above the ceiling in 74 of the 2736 configurations (a gain that moves inside the
+interpolation window) — inside the tolerance, printed equal to the ceiling at two decimals, and red.
+Giving the row the SP row's half-print slack is the audit's VIS-002, an ADR-0020 amendment for the
+owner.
+
+Before ADR-0041 the same figures were +4.80 / +6.12 / +5.41 / +7.80 dB. The product meter itself
+(`TruePeakEstimator`, 12 taps under a Blackman window) reads HF-rich programme up to ~1.4 dB below
+the Annex 2 example filter — the same property, on the display side (DSP_POLICY invariant 11's
+≤ 0.1 dB meter accuracy holds for the fs/4 test vectors only; `TruePeak.h`'s header records it).
+
+**Workaround:** for a delivery checked on a long-kernel meter, set the ceiling ~1 dB below the spec
+when the programme is clipped or HF-heavy; oversampling reduces the near-Nyquist content the clamp
+has to catch.
+**Cause:** finite interpolators, each accurate to a different frequency. The options weighed, with
+their measured cost (worklog 2026-09-27; ADR-0043 took the first on 2026-09-27, and the others stay
+available as an amendment of that record): define the promise on the product meter + Annex 2 (the
+guard, now the definition); lengthen the clamp's accurate kernel to 64 taps (measured on the 16-phase prototype: reference
+residual +0.93 → +0.36 dB on the same subset, at twice its lookahead share and CPU); also hold
+libebur128's own interpolator (a prototype measured in the PR #42 review: libebur128 0 of 2736 over,
+worst +0.004 dB, no latency change, the long-kernel reference unchanged at +0.98 dB, ~30 % more
+detector CPU); or bring the meter's own estimator up to the accurate kernel so the display agrees
+with the clamp.
+
+Evidence [Verified]:
+- Source: `src/dsp/TruePeak.h` (`TruePeakEstimator`), `src/dsp/ClampTruePeakDetector.h`
+  (`ClampTruePeakDetector`, moved there in the PR #42 review with no change to its output)
+- Test:   `testTruePeakModeHoldsTheCeiling` and `testTruePeakEngagementHoldsTheCeiling` (the two
+  DEFINING meters, each checked on its own); the four-meter matrix is in the
+  2026-09-27 worklog, not in the suite (libebur128 and the reference are external to the build)
+- Decision: ADR-0043 (enacts `DSP_POLICY.md` invariant 4's definition); decision material:
+  `docs/reports/2026-09-27-phase0-owner-decisions.md` §1, the definitions side by side with their
+  measured consequences
+- Commit: PR #42
+
+### KI-021 — A factory preset turns TP, Dither and Noise Shaping off, and LOCK holds only the ceiling's NUMBER (2026-09-27)
+
+**Severity:** Medium
+**Status:** Confirmed — fix deferred to the owner (the core change widens ADR-0010's lockable set,
+which is `{ceiling}` by an Accepted decision whose option I — a wider set — was rejected; an ADR and
+the owner's sign-off are owed). Audit finding **STATE-002**.
+**Affects:** all platforms/formats; every factory preset, on every load path (menu, ‹ ›, re-applying
+Default), both views; a user preset saved with TP or Dither off does the same.
+
+A factory preset is applied as "defaults + the preset's intents" over every non-excluded parameter,
+and no factory table names `truePeakMode`, `dither` or `ditherShaping` — so every factory preset
+sets TP **off** (the default since ADR-0015), Dither **off** and Noise Shaping **off**. With LOCK on,
+the ceiling's VALUE is skipped and survives, but TP is not lockable: "−1.00 dBTP" becomes
+"−1.00 dB", a sample-peak limit, and true peaks may pass it. A chosen 16-bit dither is switched off
+without anything in the Simple view showing it. Undo restores all three.
+
+**Workaround:** after browsing presets, re-engage TP (and Dither / SHAPE) before a delivery render —
+or Undo back to the state you locked. The manual (§3.2, §7.3, the Presets FAQ) says so since this
+round.
+**Cause:** `PresetManager.cpp` factory apply (the defaults pass), `PluginParameters.cpp`'s exclusion
+predicate, and ADR-0010's lockable set `{ceiling}`. The owner's options, from the audit: LOCK also
+holds `truePeakMode` (a lockable-set change, ADR); a factory apply leaves the output rows untouched
+(a preset-contract change, `PARAMETER_COMPATIBILITY_POLICY` rule 6); a visible cue when a preset
+changes TP or dither (new UI copy, C8).
+
+Evidence [Verified]:
+- Source: `src/PresetManager.cpp` (factory apply), `src/PluginParameters.cpp` (exclusion predicate,
+  the three defaults)
+- Test:   none — no behaviour changed this round
+- Commit: this round's PR (documentation only)
+
+### KI-022 — Saving a preset over an existing name replaces that file without asking (2026-09-27)
+
+**Severity:** Medium (permanent loss of a user preset not loaded in the current session)
+**Status:** Confirmed, **documented behaviour** (USER_MANUAL §7.2: "Saving over an existing name
+overwrites it") — a change is deferred to the owner. Audit finding **UX-003**.
+**Affects:** all platforms/formats, the Save Preset panel
+
+The Save panel writes `<user preset folder>/<name>.anabasis` with no existence check. The name
+field opens prefilled with the current preset's name, all selected, so Return right after opening
+replaces the loaded user preset (the intended one-keystroke update); a typed name that already
+exists — or one that becomes an existing name once characters a file name cannot hold are stripped
+— replaces THAT preset, with no prompt.
+
+**Workaround:** keep copies of a preset library you care about (the folder is in §7.2); check the
+name before pressing Save.
+**Cause / why it is not changed here:** the silent overwrite is the inherited product-family
+convention (Anamorph's manual documents the same), and `BRAND_CONSISTENCY_CHECKLIST.md` §A lists the
+preset save flow as "must match" — a deviation needs an ADR and the owner's sign-off. There is no
+platform overwrite prompt to reuse (the panel is the product's own overlay, not a file dialog), and
+a confirm step needs new UI wording, which is the maintainer's (C8). The audit's recommended shape,
+for that decision: prompt on every existing-target collision except the unedited prefill of the
+currently selected user file, keyed on "the text was edited", guarded against Return auto-repeat.
+
+Evidence [Verified]:
+- Source: `src/gui/PluginEditor.cpp` (the Save panel's OK handler), `src/PresetManager.cpp`
+  (`writeTo` replaces unconditionally)
+- Test:   none — no behaviour changed this round
+- Commit: this round's PR (documentation only)
 
 ## Standing note for P1 onward
 

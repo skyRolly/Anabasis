@@ -31,12 +31,16 @@
 //    base rate:  EQ(Post) → CeilingClamp → Dither → bypass crossfade → out
 //
 //  Latency contract (ADR-0004): the audio path is delayed by the FULL 10 ms
-//  lookahead allowance at every setting (the lookahead line runs INSIDE the
-//  region at N× rate, delaying delaySamples·N OS samples = exactly 10 ms of
-//  base samples) plus the oversampler's integer group delay from Latency.h's
-//  measured table. groupDelaySamples() stays the base allowance; the wrapper
-//  adds the OS term through the same predictLatencySamples() the engine's
-//  dry-ring alignment uses, so reported and actual cannot drift silently.
+//  lookahead allowance at every setting plus the oversampler's integer group
+//  delay from Latency.h's measured table. With true-peak mode OFF the whole
+//  allowance is the lookahead line INSIDE the region (delaySamples·N OS
+//  samples = exactly 10 ms of base samples). With it ON (ADR-0041) the clamp's
+//  true-peak path takes its own short delay OUT of that allowance — the line
+//  shrinks by the same number of base samples and the limiter's window is
+//  capped to the shorter line — so the total, and the reported figure, never
+//  move. groupDelaySamples() stays the base allowance; the wrapper adds the OS
+//  term through the same predictLatencySamples() the engine's dry-ring
+//  alignment uses, so reported and actual cannot drift silently.
 //
 //  Oversampling (ADR-0003/0011): every factor × phase instance is constructed
 //  and initProcessing'd at prepare(); a runtime factor/phase change LATCHES at
@@ -48,6 +52,7 @@
 //
 //  §2.8 transition layer: asymmetric raised-cosine duck (~6 ms out / ~28 ms
 //  in) for every discrete rewire — eqPosition, colourModel, OS factor/phase,
+//  the true-peak mode (it moves the clamp's share of the allowance, ADR-0041),
 //  and wrapper-requested bulk swaps (requestForcedDuck before A/B, preset,
 //  session load). Engine rewires execute only at the silent bottom; wrapper
 //  swaps land as smoothed parameter glides under the duck's envelope.
@@ -430,7 +435,7 @@ public:
     float lastRenderPeak() const noexcept  { return renderPeakCall; }    // plain |x| max
 
 private:
-    void latchOsConfig (int factorIdx, int phaseIdx) noexcept;
+    void latchOsConfig (int factorIdx, int phaseIdx, bool truePeakClamp) noexcept;
     void processChunk (juce::AudioBuffer<float>& buffer, int start, int num,
                        const EngineParameters& p, bool eqPre, bool eqPost) noexcept;
 
@@ -447,7 +452,7 @@ private:
     juce::AudioBuffer<float> wetRing, dryRing, staging;
     int ringSizeOs   = 0;             // logical size for the CURRENT factor
     int writePosOs   = 0;
-    int delayOs      = 480;           // delaySamples · osN
+    int delayOs      = 480;           // (delaySamples − clampDelay) · osN
     int dryRingSize  = 0;
     int dryWritePos  = 0;
 
@@ -497,6 +502,11 @@ private:
 
     LookaheadLimiter limiter;
     CeilingClamp     clamp;
+    // ADR-0041 (amended in the PR #42 review): what the output does between a TP-on
+    // request during playback and the latched TP composition — a decay of the
+    // last emitted frame, checked against the ceiling (CeilingClamp.h). Fed
+    // every emitted frame; spans the latch, so latchOsConfig never resets it.
+    EngagementTail   engageTail;
     MasteringEQ      eq;
     MasteringComp    comp;
     ClipSat          clip;
@@ -531,6 +541,17 @@ private:
     float duckGain = 1.0f, duckPhase = 0.0f;
     float duckOutInc = 0.0f, duckInInc = 0.0f;
     int   appliedEqPos = 0, appliedModel = 1;   // == the POD defaults
+
+    // ADR-0041: the clamp's true-peak path and the share of the allowance it
+    // takes. Latched with the OS configuration (same silent bottom, same
+    // refill), because moving `clampDelay` moves the region's line length.
+    // `tpClampFits` is the rail for a sample rate too low for the path to fit
+    // inside the allowance at all (unreachable from a conforming host); the
+    // wanted value is computed through it so the comparison cannot request a
+    // rewire the latch would refuse, block after block.
+    bool appliedTpClamp = false;
+    bool tpClampFits    = true;
+    int  clampDelay     = 0;          // 0, or clamp.truePeakDelay() while applied
 
     // Two reasons the silent bottom is held past the block that reaches it:
     //  • refill — a latch empties the lookahead ring and resets the
