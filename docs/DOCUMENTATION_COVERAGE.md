@@ -6,7 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **OQ-020's resolution (2026-09-29, still 0.2.16)** — below 12 kHz the TP and
+**Last updated:** for **KI-028's diagnostic workflow (2026-09-29, still 0.2.16)** — a non-gating
+macOS workflow to capture pluginval's teardown abort, macOS exit 9 reported as a crash, and the
+Linux crashes recorded in KI-028 (addendum below). Before that, for **OQ-020's resolution
+(2026-09-29, still 0.2.16)** — below 12 kHz the TP and
 Ceiling tooltips name the boundary instead of claiming dBTP (addendum below). Before that, for
 **the ADR-0046 ratification (2026-09-29, still 0.2.16)** — ADR-0046 accepted at
 the Architecture Review Gate and recorded in the four places, and the low-rate true-peak contract
@@ -534,6 +537,35 @@ ADR-0046's Status, decision 5 and the Consequences bullet (dated pointers, not a
 `USER_MANUAL.md` §3.2 (the Ceiling row); `THREAD_MODEL.md` (the tick as a message-thread reader of
 the same published rate; no new atomic, writer or ordering). `CHANGELOG.md` and `HANDOVER.md` are
 left to the round's records commit.
+
+**Addendum (2026-09-29, still 0.2.16, a later commit of the same round) — KI-028: a macOS diagnostic
+workflow, and exit 9 reported as a crash.** **CI workflow** — `.github/workflows/ki028-diag.yml` and
+its interposer `.github/ki028/throwtrace.cpp` added: a DIAGNOSTIC, never a gate or a required check,
+referenced by no other workflow; push to the PR branch touching its own files, or
+`workflow_dispatch`; actions pinned to `build.yml`'s SHAs; `contents: read`; the compiler cache
+restore-only. Synced per the trigger map's CI-workflow row: `procedures/CI_CD.md` (the Workflows
+row, a section of its own, and item 5 under "Before enabling branch protection"),
+`procedures/TESTING.md` (a subsection saying it is not part of the gate), `REPOSITORY_MAP.md` (the
+`.github/` table and tree entry — two new files, though neither is a script). `TESTING_POLICY.md`
+rule 3 gains the macOS exit-9 exception; what the gate REQUIRES is unchanged. **Script** —
+`scripts/run-pluginval.sh` reports exit 9 on macOS (pluginval's own `kill9WithSomeMercy` handler)
+as `CRASHED`, not as a real validation failure; the pass still fails immediately. Synced:
+`procedures/TESTING.md`'s crash-retry table, `procedures/TROUBLESHOOTING.md` (a macOS exit-9 row),
+`REPOSITORY_MAP.md`'s `run-pluginval.sh` row. **Drift found and corrected, with evidence** — that
+crash-retry table and the TROUBLESHOOTING retry row said a crash is retried on macOS, which stopped
+being true at 0.2.0 (`7a71f2c`: `CRASH_RETRY_ATTEMPTS` 3 on Linux, 1 elsewhere). **Drift found and
+reported, not corrected** (outside this change) — `procedures/CI_CD.md`'s Workflows table and
+`REPOSITORY_MAP.md`'s `.github/` table call `release.yml` "not present", and the tree entry still
+lists the weekly C++23 canary; `.github/workflows/release.yml` is in the tree and the canary was
+removed at 0.2.0. **Known issue** — KI-028 gains a dated addendum (its words kept): the label fix,
+the workflow and what it captures, and the Linux findings (two use-after-free signatures in
+pluginval 1.0.4's own JUCE 8.0.3 host code, 0 Anabasis frames; head 0 of 89, main 5 of 88); its
+disposition waits for the workflow's run. No code under `src/` or `tests/`, and no suite test —
+the suites do not run CI scripts; the classification was exercised instead with a faked `uname`
+and a stub validator (not committed): Darwin exits 0 / 1 / 9 / 134 → PASSED / FAILED / CRASHED
+(exit 9) / CRASHED (exit 134), Linux unchanged (9 → FAILED; 134 → three retries, then 139). The
+workflow parses, `actionlint` (with `shellcheck`) reports nothing, and it has not run.
+`CHANGELOG.md` and `HANDOVER.md` are left to the round's records commit.
 
 **Addendum (2026-09-28, 0.2.16) — the fourth PR #42 review round: the low-rate true-peak contract,
 KI-024, the statistics RESET.** Code: (1) ADR-0046 — `CeilingClamp`'s eased attack (`easeWeight`,

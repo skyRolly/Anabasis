@@ -23,7 +23,8 @@ Common failures and where to look. Build/test/CI details are in `BUILD.md`, `TES
 | Editor tests fail on a headless Linux box | no display | the script uses `xvfb-run` when available — install `xvfb` |
 | Windows step passes suspiciously fast, output garbled | pluginval is a GUI-subsystem app; the call operator does not wait | use `run-pluginval.ps1`, which launches via `System.Diagnostics.Process` and `WaitForExit()` |
 | Passes deterministic, fails randomise | an order- or value-dependent defect — usually state restoration | do **not** dismiss it; the randomise mode exists precisely to find these |
-| Repeated crash, exit ≥ 128 | a signal crash; retried 3× | if it survives the retries it is treated as a failure — investigate rather than raising the retry count |
+| Repeated crash, exit ≥ 128 | a signal crash; retried 3× (Linux only — the retry is scoped to the X11/XEmbed flake) | if it survives the retries it is treated as a failure — investigate rather than raising the retry count |
+| macOS: `pluginval: CRASHED (…, exit 9)` after `pluginval received <signal>, exiting immediately` | a crash that pluginval's own macOS signal handler turned into exit 9 — not a validation failure; macOS has no crash-retry, so the pass fails | read the log above it; if it follows `SUCCESS`, see `KNOWN_ISSUES.md` KI-028 |
 
 ## Runtime / DAW
 

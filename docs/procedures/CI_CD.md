@@ -10,6 +10,7 @@ Continuous integration / delivery. Source of truth: `.github/workflows/`.
 | `codeql.yml` | CodeQL analysis (`c-cpp` + `actions`). Uploads to Code Scanning **and** keeps the raw SARIF as an artifact. |
 | `msvc.yml` | MSVC `/analyze` → SARIF. Uploads to Code Scanning **and** keeps the raw SARIF as an artifact. |
 | `dependency-review.yml` | Dependency Review on PRs to `main`. |
+| `ki028-diag.yml` | **Diagnostic, not a gate** (KI-028, 2026-09-29). macOS only: captures the throw site of pluginval's teardown abort. Never a required check and gates nothing — see its section below. |
 | ~~`cxx23-canary.yml`~~ | **Removed at 0.2.0 (ADR-0030).** C++23 is the baseline, so every job in `build.yml` compiles it on all three platforms as a blocking check and the weekly non-blocking copy became a duplicate build of the baseline. |
 | `release.yml` | Tag-triggered draft release. Not present — deferred to the first commercial release by **OQ-007** (resolved 2026-08-02), no longer a P6 item. |
 
@@ -315,6 +316,27 @@ The conclusion still holds — the workflow is inert until P1 — but the pinned
 action has consequently **never executed** here. **Run it once via `workflow_dispatch` at P1**,
 rather than discovering an incompatibility inside the P1 build PR.
 
+## `ki028-diag.yml` — a diagnostic workflow, not a gate (KI-028)
+
+Added 2026-09-29 to capture the throw site of `KNOWN_ISSUES.md` KI-028's macOS failure (pluginval
+printed `SUCCESS`, then aborted on `std::bad_function_call`, which its own signal handler turned into
+exit 9). The released `pluginval.app` is hardened-runtime signed, so dyld ignores
+`DYLD_INSERT_LIBRARIES` for it; the workflow therefore builds its own.
+
+| | |
+|---|---|
+| **Triggers** | a push to the PR branch that changes the workflow file or `.github/ki028/**`; and `workflow_dispatch`, so it can be re-run by hand, including from the default branch after merge |
+| **Matrix** | `macos-15-intel` (thin x86_64, as the `macos-intel` job) and `macos-latest` (universal, as the `macos` job) × the commit under test (`github.sha`; on `workflow_dispatch`, the dispatched commit) and `MAIN_SHA` (pinned in the workflow's `env:`) |
+| **What it builds** | pluginval v1.0.4 from source with Ninja — tag, commit and pinned JUCE commit verified; ad-hoc signed without the hardened runtime (asserted); `-g` and a dSYM; the one deviation is the deployment target, 10.11 → 10.13. The AU and VST3 with the configure line of the `build.yml` job it mirrors, and their dSYMs. The interposer `.github/ki028/throwtrace.cpp` (always from the commit that carries the workflow) |
+| **What it runs** | the AU randomise lane at the strictness READ from the tested commit's `build.yml` (never restated): `KI028_SEEDED_RUNS` passes on the recorded seed, `KI028_RANDOM_RUNS` on fresh seeds, `KI028_FAST_RUNS` on the recorded seed with only `Editor Automation` disabled, cycling three variants — A stock (reproduces exit 9), B pluginval's handler refused so ReportCrash writes an `.ips`, C as B plus `MallocScribble=1` (separates an empty `std::function` from a freed one) |
+| **What it captures** | per pass: the log with timestamps, the interposer's trace (throwing thread, every frame with its image base, the thrown `type_info`'s owning image and base), `atos`-symbolicated stacks, crash reports; a `runs.tsv` summary in the job summary. Binaries and dSYMs are uploaded only when something was captured. Artifacts `ki028-<runner>-<ref_label>-logs` / `-symbols`, 14-day retention |
+| **Isolation** | `permissions: contents: read`; actions pinned to the same SHAs `build.yml` uses (`actions/cache/restore` is the same pinned `actions/cache` commit); both cache steps are **restore-only** (the compiler cache from `build.yml`'s lineage, and a pluginval build if one was ever cached), so this workflow never writes or evicts the caches the gate depends on and rebuilds pluginval each run; both checkouts set `persist-credentials: false`, since third-party build code runs in the job; `timeout-minutes: 150` |
+| **Verdict** | **red when KI-028 reproduced** (a non-zero exit or a `std::bad_function_call` throw), so a reproduction cannot be missed; green means that many clean passes — evidence of rarity, not of absence |
+
+It is **not** part of the release gate, is referenced by no other workflow (no `workflow_call`,
+`workflow_run` or cross-file `needs:`), and must never be made a required check (item 5 under
+"Before enabling branch protection"). Whether it stays is decided with KI-028's disposition.
+
 ## The C++23 canary — retired (ADR-0030)
 
 This section described a weekly, non-blocking job that built the DSP suite at C++23 on three OSes to
@@ -465,6 +487,11 @@ protection is switched on. None is a defect; all are traps if configured blindly
    PR events, so requiring it would block every PR on a check that cannot report there even when
    green. If the canary is red, the to-do is a code or toolchain fix (or a deliberate, ADR-gated
    baseline decision) — never "make the check required so someone has to look at it".
+
+5. **`ki028-diag.yml` must never be in the required set either** (2026-09-29). It is a diagnostic:
+   it runs only on a push to one branch that touches its own files, or by hand, so a required check
+   named after it could not report on an ordinary PR; and it is RED BY DESIGN when it reproduces
+   KI-028, which is a finding, not a merge blocker.
 
 ## Artifact safety rules (fail-closed)
 

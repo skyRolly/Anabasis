@@ -1897,6 +1897,65 @@ Evidence [Partially Verified — observed; not reproduced on demand]:
 - Test:   none — pluginval's own teardown, not reproducible headlessly on demand
 - Commit: PR #42 (recorded)
 
+**Addendum, 2026-09-29 — the exit-9 label fixed, a diagnostic workflow added, the Linux crashes
+captured. This entry stays OPEN and the words above are unchanged; its disposition will be recorded
+after the diagnostic workflow has run.**
+
+- **(a) The exit-9 mislabel is fixed in the script; the step still fails.** On macOS pluginval's
+  command-line mode installs its own handler for SIGFPE, SIGILL, SIGSEGV, SIGBUS and SIGABRT
+  (`Source/CommandLine.cpp`, `kill9WithSomeMercy`) that ends the process with
+  `std::_Exit (SIGKILL)`, so a crash there exits **9** — below 128, which `scripts/run-pluginval.sh`
+  read as a real validation failure (the failing job printed `FAILED … (exit 9) -- real validation
+  failure, not a crash`). The script now reports exit 9 on macOS as `CRASHED`, and still fails the
+  pass immediately — macOS has no crash-retry — so the gate's behaviour is unchanged, only the
+  label. `TESTING_POLICY.md` rule 3 records the exception.
+- **(b) A diagnostic workflow exists, `.github/workflows/ki028-diag.yml`** — never a gate and never
+  a required check (`procedures/CI_CD.md`). On `macos-15-intel` and `macos-latest`, for the commit
+  under test and for `main` (`ed06ad0`), it builds pluginval v1.0.4 from source without the
+  hardened runtime (so `DYLD_INSERT_LIBRARIES` is honoured) and the AU with the mirrored
+  `build.yml` configure line, each with a dSYM, and injects `.github/ki028/throwtrace.cpp`. That
+  interposer records, for every `std::bad_function_call` thrown, the throwing thread, every frame
+  with its image base, and the image that owns the thrown `type_info` and its base; it adds a
+  `std::terminate` handler and, in two of three variants, refuses pluginval's exit-9 handler so a
+  fault handler prints the faulting stack and ReportCrash writes an `.ips` with every thread (the
+  third variant adds `MallocScribble=1`, which separates an empty `std::function` from a freed one).
+  The AU randomise lane runs on seed `0x5161f59`, on fresh seeds, and on that seed without
+  `Editor Automation`; every frame is symbolicated with `atos`, and the logs, traces and crash
+  reports are uploaded. It had not run when this was written.
+- **(c) Linux, this round** [Verified — measured: stacks symbolised by gdb, freed state read from the
+  cores; local, not CI]. 177 runs of `--strictness-level 10 --randomise` under gdb and Xvfb, with
+  pluginval v1.0.4 built from source (RelWithDebInfo; its JUCE 8.0.3) and the VST3 built
+  RelWithDebInfo with `ANABASIS_NO_LTO=ON` — not the shipping configuration — at `6ee9f29`
+  ("head") and `ed06ad0` ("main"). 5 crashes, every one a SIGSEGV on pluginval's message thread and
+  a use-after-free **in pluginval 1.0.4's own JUCE 8.0.3 host code, with 0 frames from Anabasis
+  source on any thread** (read from one core of each signature: the object's first word is a glibc
+  safe-linked free-list pointer, in a chunk sized for the 80-byte object). Two signatures:
+  - **A — in-test, 3 of 5.** `juce_XEmbedComponent_linux.cpp:570` (JUCE 8.0.3), the
+    `MessageManager::callAsync ([this] { componentMovedOrResized (owner, true, true); })` that a
+    ConfigureNotify on the plug-in's window posts, delivered after the editor that owned `this` was
+    deleted — each time in the first test after `Editor Automation`, with no `SUCCESS` printed. This
+    is the X11/XEmbed class the Linux crash-retry exists for. The plug-in's part is indirect: its editor
+    resizes on every `advanced` change (in one measured run, 337 of 347 `applyUiScale` calls fell in
+    `Editor Automation`), which widens the host's race.
+  - **B — after `SUCCESS`, 2 of 5: the KI-028 exit crash on Linux.**
+    `juce_VST3PluginFormat.cpp:477` (JUCE 8.0.3), the fd callback `RunLoop::Impl::registerEventHandler`
+    registers with `[this]`, invoked from a batch of ready-fd callbacks snapshotted before
+    `deletePluginAsync` destroyed the plug-in — and with it the `Impl` — earlier in the same batch.
+    Fixed upstream by JUCE `04e167d64` (2026-09-03, "VST3 Host: Fix an occasional crash when removing
+    callbacks from the message loop during shutdown"; 9.0.2 and later), which is in neither
+    pluginval 1.0.4 (JUCE 8.0.3) nor the plug-in's JUCE 9.0.1.
+  - **Head vs main:** head 0 of 89 runs, main 5 of 88 (2 of them after `SUCCESS`). On the planned
+    matrix alone (head 0 of 77, main 4 of 76) Fisher's exact one-sided p ≈ 0.058 — not significant;
+    the 24-run replay was seeded from main's crashes and is not counted in that test. No mechanism for a
+    difference between the trees was found. Neither signature reproduces from its seed (a seed
+    fixes the test order, not the timing): the four earlier seeds, `0x5161f59` among them, gave 0 of
+    72; the four new crash seeds, replayed three times per tree, recurred once (main, 1 of 3). gdb
+    does not suppress the crash — 5 of 177 here — so the entry's earlier 0 of 8 under gdb does not
+    show that it does.
+  - Both signatures end in SIGSEGV (exit ≥ 128), which the Linux crash-retry covers. Nothing here
+    was run on macOS, whose event loop is different code; the macOS `std::bad_function_call` is what
+    the diagnostic workflow is for.
+
 ## Standing note for P1 onward
 
 Two categories are known in advance to need entries in this project, from the sibling product's

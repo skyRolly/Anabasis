@@ -773,18 +773,29 @@ The script downloads pluginval if absent, finds the built `Anabasis.vst3`, and r
 
 ### Crash retry — what it is and is not
 
-An **abnormal termination** of the validator is retried up to 3 times; a **real validation
-failure** fails immediately and is never retried. The retry exists to absorb host-side validator
-crashes, not plugin defects — a real plugin defect crashes deterministically and still fails after
-the retries.
+An **abnormal termination** of the validator is retried up to 3 times (on Linux and Windows; not on
+macOS — see the table); a **real validation failure** fails immediately and is never retried. The
+retry exists to absorb host-side validator crashes, not plugin defects — a real plugin defect
+crashes deterministically and still fails after the retries.
 
 **The boundary is platform-specific** (`docs/policies/TESTING_POLICY.md` rule 3 is the binding
 statement):
 
 | | abnormal termination → retried | real failure → immediate |
 |---|---|---|
-| **Linux / macOS** | `exit ≥ 128` (128 + signal number) | `exit < 128` |
+| **Linux** | `exit ≥ 128` (128 + signal number) | `exit < 128` |
+| **macOS** | **not retried** — `exit ≥ 128`, or **exit 9** (below), is reported as `CRASHED` and fails the pass on the first attempt | `exit < 128` other than 9 |
 | **Windows** | Win32 exception code (`≥ 256`), negative, or no code at all | **`1…255`, including 128…255** |
+
+*(2026-09-29: this table read "Linux / macOS … retried", which stopped being true at 0.2.0
+(`7a71f2c`), when `run-pluginval.sh` made the retry Linux-only — `CRASH_RETRY_ATTEMPTS` is 3 on
+Linux and 1 elsewhere. Drift corrected here; the retry's scope did not change.)*
+
+**Exit 9 on macOS is a crash, not a failure (KI-028).** pluginval's command-line mode installs its
+own handler for SIGFPE, SIGILL, SIGSEGV, SIGBUS and SIGABRT on macOS (`Source/CommandLine.cpp`,
+`kill9WithSomeMercy`), which prints `pluginval received <signal>, exiting immediately` and ends the
+process with `std::_Exit (SIGKILL)` — a normal exit with status 9, not `128 + signal`. `run-pluginval.sh` reports that code as
+`CRASHED … exit 9` rather than as a real validation failure; the step still fails immediately.
 
 pluginval's own exit code is only ever **0 or 1** (`Source/CommandLine.cpp` funnels every failure
 through `exitWithError`, which returns 1; the failure count goes to the log, not the exit code), so
@@ -795,14 +806,28 @@ from `run-pluginval.sh` by design.
 
 The one code neither script classifies correctly is a **malformed command-line argument**:
 pluginval exits `-1` (255 on POSIX), which both scripts read as an abnormal termination and retry
-three times before failing. Both scripts construct their own arguments, so that code means the
-script itself is broken — it still fails, just noisily.
+three times before failing (on macOS, which has no retry, it fails on the first attempt as a
+crash). Both scripts construct their own arguments, so that code means the script itself is
+broken — it still fails, just noisily.
 
 On Windows, `run-pluginval.ps1` launches pluginval via `System.Diagnostics.Process` and
 `WaitForExit()` rather than the call operator: pluginval is a **GUI-subsystem** app, so `& $pv`
 returns immediately with a `$null` `$LASTEXITCODE`, which both false-greens the step and (with a
 retry loop) spawns concurrent background validators. The exit code is the only trustworthy signal,
 and it is only trustworthy after an explicit wait.
+
+### The KI-028 diagnostic workflow — not part of the gate
+
+`.github/workflows/ki028-diag.yml` (2026-09-29) runs pluginval on macOS to capture the throw site
+of `KNOWN_ISSUES.md` KI-028's teardown abort. It is **not** a level of `TESTING_POLICY.md`, gates
+nothing and must never be a required check; the gate is `build.yml` alone. It builds pluginval
+v1.0.4 from source (no hardened runtime, with a dSYM), builds the AU and VST3 with the configure
+line of the `build.yml` job it mirrors, injects the `__cxa_throw` / terminate / fault-handler
+interposer `.github/ki028/throwtrace.cpp` with `DYLD_INSERT_LIBRARIES`, runs the AU randomise lane
+repeatedly on the recorded seed, on fresh seeds, and on the recorded seed without
+`Editor Automation`, symbolicates with `atos` and uploads the logs, traces and any crash reports.
+A red run means KI-028 reproduced; a green one is N clean passes — evidence of rarity, not of
+absence. Wiring and triggers: `CI_CD.md`.
 
 ## What cannot be verified headlessly
 
