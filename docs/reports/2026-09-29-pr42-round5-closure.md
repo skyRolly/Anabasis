@@ -139,8 +139,26 @@ input − matched):
   success. This is the green head DSP-005 was committed on.
 - **The diagnostic workflow** (never a gate): red by design on the pr-head jobs that reproduced
   KI-028; the control job green.
-- **This record's head:** its CI is recorded by the follow-up commit that the fourth round's
-  pattern established (`6ee9f29` recorded `fe29bda`'s), not asserted here.
+- **`43d1bbc`** (DSP-005 and these records; recorded by the follow-up commit, as `6ee9f29` recorded
+  `fe29bda`'s): push run 36541576163 — `docs`, `preflight`, `source-lint`, `linux` (pluginval ×3 both
+  modes), `linux-lto-tests`, `linux-lto-clang`, `realtime`, `sanitizers` (ASan / UBSan, then valgrind
+  on both suites: **success**), `windows`, `macos` and `macos-intel` (AU randomise ×3 included) —
+  **every job success**; pull-request run 36541582708 `merge-check` success; **CodeQL: "No new alerts
+  in code changed by this pull request"**; dependency review success; **PREfast** success with "107
+  new alerts" (raw SARIF: 201 results — C6262 186, C28182 13, C6011 1, C26495 1 in JUCE — **0 in
+  `src/`**). The six added since `6ee9f29` are this round's test code: C6262 on
+  `testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio` (177 936 B — two engines),
+  `matchmon::settle` (73 864 B) and `testTheTruePeakTipsFollowTheRateTheTruePeakPathEngagesAt` (46 188
+  B), and C28182 on the tooltip test's three component-walk helpers (the scanner audit's G3
+  `dynamic_cast` pattern, DO NOT FIX). The largest frame is still `testTeardownAndReengageInvariants`
+  (367 332 B), under the ~768 KB trigger; the Windows self-tests passed. Classified G2 / G3, no code
+  change.
+- **The KI-028 diagnostic's last run** (36537705309 on `5562229`): the control 14 / 14 clean; the
+  pr-head job reproduced in **13 of 14** passes, every one the same AudioToolboxCore stack, **0
+  Anabasis frames in all 8 crash reports**. One pass never exited after `SUCCESS` (sampled by the
+  watchdog: pluginval's main thread idle in its run loop, nothing else running, no Anabasis code) —
+  the third such hang, all three in the diagnostic's handler-refusing variant B, none in CI's stock
+  lanes; recorded in KI-028, not investigated further.
 
 ## 7. Roadmap
 

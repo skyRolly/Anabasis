@@ -2044,6 +2044,13 @@ unchanged; this is the disposition they waited for. Evidence: `worklogs/2026-09-
   a listener with events queued, is the owner's decision (`docs/reports/2026-09-29-pr42-round5-closure.md` §6).
 - **The diagnostic stays** (`ki028-diag.yml`, never a gate): it re-runs on a push that touches it and
   reproduces the abort on demand, which is what a pluginval or macOS upgrade has to be checked against.
+  Its last run's pr-head job (36537705309, finished after this addendum was first written) aborted in
+  13 of 14 passes with the same stack and 0 Anabasis frames in all 8 crash reports.
+- **A diagnostic-only hang, recorded:** three passes across the diagnostic's runs never exited after
+  `SUCCESS` — pluginval's main thread idle in its run loop, the validator thread gone, no Anabasis code
+  running (the watchdog's `sample`) — all three in variant B, where pluginval's crash handler is refused
+  and the interposer's own is installed; none in variant A or in any CI stock lane. Not investigated
+  further; if a stock CI lane ever times out after `SUCCESS`, this is where to start.
 - **Not established:** which event was queued (a parameter change or a property change) and Apple's
   internal ordering; whether any real host disposes its listener the same way (none was run); why
   arm64 does not reproduce.

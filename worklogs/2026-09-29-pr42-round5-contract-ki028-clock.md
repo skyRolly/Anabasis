@@ -566,7 +566,24 @@ number only):
   reproducing; arm64 green), 36533479226 (pr-head red — reproduced; control stopped at its DWARF
   check), 36535966698 (cancelled by the next push), 36537705309 (control **green**, 14 / 14; pr-head
   recorded by the follow-up).
-- **The records head:** recorded by the follow-up commit, as `6ee9f29` recorded `fe29bda`'s.
+- **The records head `43d1bbc`** (recorded by the follow-up commit): push run 36541576163 — `docs`,
+  `preflight`, `source-lint`, `linux` (pluginval ×3 both modes), `linux-lto-tests`, `linux-lto-clang`,
+  `realtime`, `sanitizers` (ASan / UBSan, then valgrind on both suites: **success**), `windows`,
+  `macos` and `macos-intel` (AU randomise ×3 included) — **every job success**; pull-request run
+  36541582708 `merge-check` success; CodeQL "No new alerts in code changed by this pull request";
+  dependency review success; PREfast success, "107 new alerts" — raw SARIF (artifact
+  `prefast-sarif-9e56ba5…`): 201 results, C6262 186 / C28182 13 / C6011 1 / C26495 1 (JUCE), 0 in
+  `src/`; the six added since `6ee9f29` are this round's tests (C6262: the session-clock test
+  177 936 B, `matchmon::settle` 73 864 B, the tooltip test 46 188 B; C28182: the tooltip test's three walk
+  helpers, G3); largest frame unchanged, `testTeardownAndReengageInvariants` 367 332 B.
+- **The KI-028 diagnostic, run 36537705309's pr-head job** (on `5562229`, finished after the records
+  were written): **13 of 14** passes aborted with the same AudioToolboxCore stack; **0 Anabasis frames
+  in all 8 crash reports** (every thread). Pass r014 (fast, variant B) never exited after `SUCCESS`:
+  the watchdog's `sample` shows pluginval's main thread idle in `-[NSApplication run]`'s event wait,
+  the NSEvent thread and one idle worker, nothing else — the validator thread gone, no Anabasis code
+  running. It is the third such hang (run 36520602892 had one per Intel job), all three in variant B
+  (pluginval's crash handler refused, the interposer's own installed); none in variant A or in any CI
+  stock lane. Recorded in KI-028 as a diagnostic-only observation; not investigated further.
 
 ## 11. Corrections to earlier records
 

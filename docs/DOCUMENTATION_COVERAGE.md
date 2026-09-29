@@ -6,8 +6,9 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.17 (2026-09-29) — the fifth PR #42 review round's records** (addendum
-below). Before that, for **DSP-005 (2026-09-29, still 0.2.16 until the round's records commit)** — MATCH's
+**Last updated:** for **0.2.17's records head CI (2026-09-29)** — the follow-up that records it
+(addendum below). Before that, for **0.2.17 (2026-09-29) — the fifth PR #42 review round's
+records** (addendum below). Before that, for **DSP-005 (2026-09-29, still 0.2.16 until the round's records commit)** — MATCH's
 predict floor counts the compressor (× Comp Mix) and the Clip/Sat stage (addendum below). Before that,
 for **KI-028's disposition (2026-09-29, still 0.2.16)** — pre-existing / external:
 the macOS abort's throw site captured in Apple's AudioToolboxCore under pluginval's AU host teardown,
@@ -652,6 +653,12 @@ text otherwise untouched). **README** and **REPOSITORY_MAP** list the new closur
 **ADR_INDEX** — ADR-0020's evidence cell names the two session-length tests. **TESTING.md** — the
 session clock's mandated stimulus (the count Nine → Ten). No code changes in this commit beyond the
 version number.
+
+**Addendum (2026-09-29, 0.2.17, the follow-up) — the records head's CI.** The closure record's §6 and
+the worklog's §10.1 record `43d1bbc`'s CI (every job success; CodeQL no new alerts; PREfast 201 SARIF
+results, 0 in `src/`, the six added this round's test code, classified G2 / G3) and the KI-028
+diagnostic's last pr-head job (13 / 14, 0 Anabasis frames); KI-028 gains two sentences (that run, and a
+diagnostic-only hang seen three times, all in variant B). No code change.
 
 **Addendum (2026-09-28, 0.2.16) — the fourth PR #42 review round: the low-rate true-peak contract,
 KI-024, the statistics RESET.** Code: (1) ADR-0046 — `CeilingClamp`'s eased attack (`easeWeight`,
