@@ -544,7 +544,8 @@ left to the round's records commit.
 workflow, and exit 9 reported as a crash.** **CI workflow** — `.github/workflows/ki028-diag.yml` and
 its interposer `.github/ki028/throwtrace.cpp` added: a DIAGNOSTIC, never a gate or a required check,
 referenced by no other workflow; push to the PR branch touching its own files, or
-`workflow_dispatch`; actions pinned to `build.yml`'s SHAs; `contents: read`; the compiler cache
+`workflow_dispatch` *(removed in the next commit: CodeQL's actions analysis reported the dispatch
+path as cache poisoning; push-only since)*; actions pinned to `build.yml`'s SHAs; `contents: read`; the compiler cache
 restore-only. Synced per the trigger map's CI-workflow row: `procedures/CI_CD.md` (the Workflows
 row, a section of its own, and item 5 under "Before enabling branch protection"),
 `procedures/TESTING.md` (a subsection saying it is not part of the gate), `REPOSITORY_MAP.md` (the

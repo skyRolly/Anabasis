@@ -43,12 +43,14 @@ name: KI-028 diagnostics (macOS pluginval teardown abort)
 # and macos-latest (universal, the macos job's configuration), each for the
 # PR head (github.sha) and for main (MAIN_SHA).
 #
-# Triggers: a push to the PR branch that changes THIS FILE or the interposer
-# (.github/ki028/**), and workflow_dispatch, so the owner can re-run it by
-# hand -- including from the default branch after merge. Under
-# workflow_dispatch the "pr-head" matrix entry tests the DISPATCHED commit
-# (github.sha); "main" always tests MAIN_SHA below. To re-run with different
-# counts, edit the env block below and push, or dispatch after editing.
+# Trigger: ONLY a push to the PR branch that changes THIS FILE or the
+# interposer (.github/ki028/**). No workflow_dispatch: a dispatched run executes
+# in the default branch's context and cache scope while it builds a commit
+# chosen at run time, which CodeQL's actions analysis rightly reports as a
+# cache-poisoning path (its alert on 0d42384, this file's pluginval-run step);
+# a branch push keeps the run in the branch's own scope. To re-run, edit the
+# env block below (the run counts) on a branch that carries this file and push.
+# "pr-head" tests the pushed commit (github.sha); "main" tests MAIN_SHA below.
 # ---------------------------------------------------------------------------
 
 on:
@@ -57,7 +59,6 @@ on:
     paths:
       - ".github/workflows/ki028-diag.yml"
       - ".github/ki028/**"
-  workflow_dispatch:
 
 permissions:
   contents: read
