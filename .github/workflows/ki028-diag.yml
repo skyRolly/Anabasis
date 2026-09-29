@@ -321,9 +321,14 @@ jobs:
             echo 'add_subdirectory("${KI028_JUCE_SRC}" juce)'
             echo 'add_subdirectory("${KI028_JUCE_SRC}/examples/CMake/AudioPlugin" example)'
           } > "$CTRL/CMakeLists.txt"
+          # -g as the Anabasis build carries it (its own flags), so the
+          # control's frames symbolicate too; no other flag is added.
+          G="-g"
           cmake -S "$CTRL" -B "$CTRL/build" -G Ninja \
             -DKI028_JUCE_SRC="$JUCE_SRC" \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="$G" -DCMAKE_CXX_FLAGS="$G" \
+            -DCMAKE_OBJC_FLAGS="$G" -DCMAKE_OBJCXX_FLAGS="$G" \
             -DCMAKE_OSX_ARCHITECTURES="${{ matrix.archs }}" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
           cmake --build "$CTRL/build" --target AudioPluginExample_AU
