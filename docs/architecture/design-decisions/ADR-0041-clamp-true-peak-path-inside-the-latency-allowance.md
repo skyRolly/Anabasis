@@ -37,6 +37,45 @@ completed at acceptance — and explicitly *not* of the voicing constants (attac
 10 ms), which stay ⊕ listening material, nor of the TP-mode cost at ≥ 4× over DESIGN §9's
 limiter + TP-detection row (`PERFORMANCE_BUDGET.md`), which stays recorded.
 
+> **Amended 2026-09-28 by [ADR-0046](ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md)
+> (decisions 3 and 4, and the "rail" sentence of decision 4; on the owner's direction, ⊕ for
+> review).** The gain law of decision 3 — "a linear attack ramp" over A = max(8, round(0.25 ms · fs))
+> — bounded a segment's reading only while the gains its interpolation read were equal, and at the
+> 8-sample floor a worst-case burst read up to +0.157 dB over the ceiling below 44.1 kHz (KI-025).
+> The ramp is now a geometrically weighted mean that eases in, the release rises at most 1 % per
+> sample, and the attack floor is 16 samples, so **D = 46 at every rate below 66 kHz** (41 / 42 at
+> 44.1 / 48 kHz in the figures below; unchanged at 88.2 kHz and up) and the longest engaged window in
+> TP mode is 9.04 ms at 48 kHz (9.125 below). The composition rule, the reported latency, the three
+> readings and the backstop are unchanged. Decision 4's rail — "no conforming rate reaches it" — is
+> replaced by a stated rate contract: the path engages from 12 kHz (`truePeakPathEngages`), and
+> below it the sample clip runs and the Ceiling reads dB. The text below keeps the figures it was
+> accepted with. *(Ratified 2026-09-29: ADR-0046 cleared the Architecture Review Gate on the owner's
+> explicit approval, so this amendment, filed ⊕ for review on 2026-09-28, is in effect. Its
+> figures read more precisely in ADR-0046's ratification note: the D of the text below was up to
+> 45 below 62 kHz, so the TP-mode window is shorter from 12 kHz to below 62 kHz and unchanged from
+> 62 kHz.)*
+>
+> **Amended 2026-09-28 by [ADR-0045](ADR-0045-true-peak-mode-answers-to-the-ceiling-in-force-at-emission.md)
+> (decision 3; on the owner's direction, ⊕ for review).** "Each frame carries the ceiling the limiter
+> used for it" made every true-peak frame answer to the ceiling in force when it ENTERED the clamp,
+> `truePeakDelay` samples before it left — so while the Ceiling descended the output read up to
+> +2.7 dB (−1 → −20 dB) over the ceiling the smoother held at that instant, where the TP-off clip,
+> which reads the live value, had none. Each frame now answers to the ceiling in force at its
+> EMISSION (the smoother's deterministic glide, run ahead; frames in flight revised at a retarget),
+> and the limiter plays to the same value in true-peak mode. Decision 3 is otherwise unchanged; the
+> latency composition, the three readings, the gain law and every static-ceiling sample are.
+> *(Added 2026-09-29: ADR-0045 itself stays ⊕ pending the owner's review. The stamp it set is in
+> turn amended by ADR-0046, ratified 2026-09-29: a true-peak frame answers to the LOWER of the
+> ceiling at its entry and the one predicted at its emission — the same on a static or falling
+> ceiling; on a rising one, the entry value — and the limiter plays to that same value.)*
+>
+> **Implementation note 2026-09-28 (decision 5, not an amendment).** "Adopted directly … on entering
+> offline" did not hold for an engagement decay in flight: the offline-entry branch forced the duck
+> to unity and left `EngagementTail` running, so the last realtime frame's decay played into the head
+> of the render (up to +1.46 dB over the ceiling with the Post EQ's ring-out). The branch now resets the
+> decay with the duck, and restarts the output dBTP tap when it cut one
+> (`testOfflineEntryDropsTheEngagementTail`; `KNOWN_ISSUES.md` KI-004).
+
 > **Revised 2026-09-27, before acceptance (review of PR #42).** A review found that ENGAGING true-peak
 > mode while audio plays leaked the requested ceiling: the latch waited for the §2.8 duck's out-leg,
 > and that out-leg is emitted by the composition being replaced, whose clamp is the sample clip —

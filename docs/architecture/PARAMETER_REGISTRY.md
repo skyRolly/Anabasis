@@ -104,7 +104,9 @@ them. A Parameter Registry change is an `ARCHITECTURE_REVIEW_GATE.md` item and a
 ADR-0015's Status banner). Neither is ⊕ any longer. A consequence worth carrying at the row: with `truePeakMode` off the ceiling is a
 **sample-peak** limit (`DSP_POLICY.md` invariant 3, ADR-0006 item 3), so `ceiling`'s value text
 prints `dB` and switches to `dBTP` only while the mode is engaged —
-`testTheCeilingAdvertisesTheUnitItEnforces`. The **text** is not part of the snapshot (ID · name ·
+`testTheCeilingAdvertisesTheUnitItEnforces` — and, since ADR-0046 (ratified 2026-09-29), only at
+host rates where the true-peak path engages (12 kHz and up; below it the ceiling is a sample-peak
+one with the switch on, `testTheCeilingUnitFollowsTheRateTheTruePeakPathEngagesAt`). The **text** is not part of the snapshot (ID · name ·
 range · default · steps · automatable), and both spellings parse back identically, so it is
 display-only.
 

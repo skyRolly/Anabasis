@@ -75,6 +75,12 @@ public:
     // constructor, which suppresses the implicit default one.
     AnabasisEngine() = default;
 
+    // The Ceiling's glide: a LINEAR ramp in gain, restarted by every block
+    // whose target differs (DSP_POLICY invariant 8). Public so a test can
+    // rebuild the live smoothed ceiling sample by sample — the value the
+    // output is held under at every automation rate (invariant 4).
+    static constexpr double kCeilingGlideSeconds = 0.020;
+
     void prepare (double sampleRate, int maxBlockSize, int numChannels);
     void reset() noexcept;
 
@@ -396,7 +402,10 @@ public:
 
     // §2.9 meter-hold reset, audio thread (the wrapper consumes the request at
     // the top of processBlock and calls this). Clears ONLY the render meter's
-    // session-cumulative half — the integrated histogram. Deliberately not
+    // session-cumulative half — the integrated histogram, the ungated mean and
+    // LRA — and the session length (ADR-0020 amendment 4), and starts the
+    // session TP at the reset's position (below); the wrapper clears its two
+    // holds. Deliberately not
     // touched: the §2.7 dry/wet meters (they feed the loudness COMPENSATION,
     // a monitor function — clearing them would bounce the monitor gain, which
     // is not what a meter-reset button means) and the GR ring (a rolling
@@ -406,7 +415,28 @@ public:
     // window is `GrHistoryView::windowSeconds (rate, block)`, twenty seconds
     // wherever the ring holds them (ADR-0040), and nothing here depends on
     // the figure.
-    void resetMeterHolds() noexcept { outMeter.resetIntegrated(); }
+    void resetMeterHolds() noexcept
+    {
+        outMeter.resetIntegrated();
+        sessionSamples = 0;
+        // The session TP after a reset is the true peak of the output
+        // waveform AT POSITIONS FROM THE RESET ON. The output estimator
+        // reports kReportLag samples late, so its first kReportLag readings
+        // after this call describe positions BEFORE the reset — and they used
+        // to reach the fresh hold: a reset straight after a loud passage
+        // brought the old peak back into the new session (the PR #42 review
+        // of 0.2.15; up to +0.96 dB above the old session's own maximum,
+        // because those last positions had never been reported to it). They
+        // stay out of the session TP now; every later reading describes a
+        // post-reset position, so no post-reset sample or 4x point is skipped.
+        // `outTp` keeps its history on purpose: restarting it from zeros
+        // would invent an onset that is not in the audio (a continuing
+        // programme read up to +0.97 dB high), and the rolling reading and
+        // the GR history are untouched. What a reading of a post-reset
+        // position may still carry is the real waveform there — the kernel's
+        // tail over the samples just before the reset, at most −12 dB.
+        sessionTpSkip = TruePeakEstimator::kReportLag;
+    }
 
     // The per-stage GR figures the panel meters read, cleared. Called by the
     // wrapper's `publishSilentMeters()` so the two GR lanes obey the SAME
@@ -434,6 +464,23 @@ public:
     float lastRenderTpMax() const noexcept { return renderTpMaxCall; }   // linear
     float lastRenderPeak() const noexcept  { return renderPeakCall; }    // plain |x| max
 
+    // The SESSION half of the two render peaks, and the length of programme
+    // the session figures cover (ADR-0020 amendment 4, audit VIS-001 /
+    // VIS-009). Identical to the two above except over the frames a REALTIME
+    // bypass audition was audible (`bypassMix > 0` and not `nonRealtime`),
+    // which the session statistics leave out: the integrated figure, LRA and
+    // the TP / SP holds describe the processed programme, and a comparison
+    // against the input is not part of it. Offline the bypass is part of the
+    // rendered file, so it is measured like everything else. The wrapper's
+    // holds read these; the GR history's waveform keeps reading
+    // `lastRenderPeak`, unchanged. Audio thread, plain reads after `process`.
+    float lastSessionTpMax() const noexcept { return sessionTpMaxCall; }   // linear
+    float lastSessionPeak() const noexcept  { return sessionPeakCall; }    // plain |x| max
+    // Frames measured into the session since the last `resetMeterHolds` or
+    // prepare, as seconds of programme. Stops while a realtime bypass is
+    // audible and while no audio is processed.
+    double sessionSeconds() const noexcept { return (double) sessionSamples / sr; }
+
 private:
     void latchOsConfig (int factorIdx, int phaseIdx, bool truePeakClamp) noexcept;
     void processChunk (juce::AudioBuffer<float>& buffer, int start, int num,
@@ -458,8 +505,20 @@ private:
 
     // Per-base-sample control values, filled in stage A and indexed by the
     // region at OS rate (i >> osShift): the same instantaneous ceiling the
-    // gain computer uses reaches the clamp, exactly as before.
+    // gain computer uses reaches the clamp — `ceilArr`, the live smoothed
+    // value, in TP-off.
     std::vector<float> ceilArr;
+    // True-peak mode (ADR-0045, amending ADR-0041 decision 3): the TP path
+    // emits each frame clampDelay base samples after it enters, so the limiter
+    // and the clamp judge it against the ceiling in force THEN — `ceilingAhead`
+    // is ceilingLinear run clampDelay samples ahead (re-derived at every block
+    // top), `ceilEmitArr` the lower of its per-base-sample value and `ceilArr`'s
+    // (ADR-0046 decision 4: on a rising ceiling a frame answers to its entry
+    // value), `ceilInFlight` the new
+    // trajectory's value at the emission of each frame already in flight at a
+    // block top (CeilingClamp::lowerInFlightCeilings).
+    juce::SmoothedValue<float> ceilingAhead { 0.8912509f };
+    std::vector<float> ceilEmitArr, ceilInFlight;
     std::vector<int>   wArr;
     std::vector<float> pushArr;       // limiter push, applied inside the region
 
@@ -546,9 +605,11 @@ private:
     // takes. Latched with the OS configuration (same silent bottom, same
     // refill), because moving `clampDelay` moves the region's line length.
     // `tpClampFits` is the rail for a sample rate too low for the path to fit
-    // inside the allowance at all (unreachable from a conforming host); the
-    // wanted value is computed through it so the comparison cannot request a
-    // rewire the latch would refuse, block after block.
+    // inside the allowance, or below CeilingClamp::kMinTruePeakRate (12 kHz,
+    // KI-025 / ADR-0046: under it no bound keeps a full-range Ceiling cut's
+    // revision step inside the tolerance); the wanted value is computed
+    // through it so the comparison cannot request a rewire the latch would
+    // refuse, block after block.
     bool appliedTpClamp = false;
     bool tpClampFits    = true;
     int  clampDelay     = 0;          // 0, or clamp.truePeakDelay() while applied
@@ -584,12 +645,17 @@ private:
     // either side's momentary drops under the BS.1770 −70 LUFS absolute gate,
     // chosen over a dBFS gate because a mastering plugin meets quiet
     // classical passages). Predict: stateless floor from the deterministic
-    // gain lift (inputGain + limGain + average measured GR), only ever
-    // LOWERING monitor gain — cranking the macro pre-ducks instantly, no
-    // ratchet. Applied = min(measure, predict), smoothed 200 ms, POST-mix so
-    // the bypass leg carries the same compensation (the §2.7 loudness-matched
-    // bypass). Delta = (delay-aligned dry − processed) behind its own
-    // always-running ~10 ms crossfade.
+    // gain lift (inputGain + limGain) less the previous call's expected GR —
+    // the limiter's DEEPEST reduction (a per-call minimum, not an average),
+    // the compressor's block-end reduction weighted by Comp Mix, and the
+    // Clip/Sat stage's measured level change (`clipLevelDb`) — only ever
+    // LOWERING monitor gain: cranking the macro pre-ducks instantly, no
+    // ratchet.
+    // Applied = min(measure, predict), smoothed 200 ms, on the PROCESSED leg
+    // before the bypass crossfade (ADR-0044), so BYPASS plays the input at
+    // unity and the bypass comparison is loudness-matched. Delta =
+    // (delay-aligned dry − processed) behind its own always-running ~10 ms
+    // crossfade; with MATCH on it is heard as g·(dry − processed).
     LoudnessMeter dryMeter, wetMeter;
 
     // §2.9 render-tap meters (see the public accessors for why these live in
@@ -600,6 +666,10 @@ private:
     TruePeakEstimator outTp;
     float renderTpMaxCall = 0.0f, renderPeakCall = 0.0f;
     float renderTpMaxChunk = 0.0f, renderPeakChunk = 0.0f;
+    float sessionTpMaxCall = 0.0f, sessionPeakCall = 0.0f;       // see lastSessionTpMax
+    float sessionTpMaxChunk = 0.0f, sessionPeakChunk = 0.0f;
+    int64_t sessionSamples = 0;
+    int     sessionTpSkip = 0;   // see resetMeterHolds
 
     // THE HISTORY ENTRY UNDER CONSTRUCTION (0.2.12, OQ-017 fix 1): the two
     // statistics an entry carries, folded over the samples it has collected so
@@ -642,6 +712,12 @@ public:
 private:
     AdaptiveEngine adaptiveEngine;
     float compMeasureDb = 0.0f;              // frozen on silence
+    // The Clip/Sat stage's level change (dB, energy out/in) over the previous
+    // call — the §2.7 predict floor's third expected-GR term (audit DSP-005,
+    // KNOWN_ISSUES KI-023). Audio thread only: accumulated per chunk in the
+    // region loop, folded per call, read at the next block top.
+    float  clipLevelDb = 0.0f;
+    double clipInSqCall = 0.0, clipOutSqCall = 0.0;
     juce::SmoothedValue<float> monitorGain { 1.0f };
     float deltaMix = 0.0f, deltaStep = 0.0f;
     bool  deltaTarget = false;

@@ -148,6 +148,32 @@ re-state the flag set if a future round ever adds LTO to the bench.
 - Worst-block figures include scheduler noise (a 64-sample block stamped at 1.8 ms on a shared
   Xeon is a preemption, not DSP) — treat the median column as the load-bearing one.
 
+## Message thread — the numeric GR readout (2026-09-27, 0.2.14)
+
+Not audio-thread work and outside DESIGN §9's allocation, recorded because it grows with the host's
+block rate: the editor's 24 Hz tick scans the GR history ring for the "lim GR" / "GR max" readout
+(audit VIS-007), one min-fold over the readout span. Measured on the reference Xeon, scratch bench
+over a full ring (method in `worklogs/2026-09-27-phase1-match-statistics-observability.md`):
+
+| Pair | Span (entries) | per read | at 24 Hz |
+|---|---|---|---|
+| 48 kHz / 512 | 1875 | 0.0025 ms | 0.006 % of a core |
+| 48 kHz / 64 | 15000 | 0.019 ms | 0.045 % |
+| 96 kHz / 32 | 60000 | 0.074 ms | 0.18 % |
+| 384 kHz / 16 (saturated) | 258047 | 0.32 ms | 0.77 % |
+
+Only a pair already past the ring's full-window band pays the last row, the same shape as ADR-0040's
+paint scan.
+
+**Since 0.2.15 (the PR #42 review) the span is the graph's drawn history**, not the nominal window
+less a lap margin: the bucket-aligned range `paintHistory` reads, which the plot width decides —
+1884–1886 entries at 48 kHz / 512 on the Simple well (1892–1895 on Advanced), 261435–261869 at
+384 kHz / 16 — read in two lap-certified chunks when it outgrows the guarded span. Re-measured with
+the scratch probe of the 2026-09-28 worklog on a loaded machine (load average ~3.8, so indicative):
+2.60–2.66 µs per read at 48 kHz / 512, 20.0 µs at 48 kHz / 64, 80.3–80.7 µs at 96 kHz / 32 and
+356–383 µs at 384 kHz / 16 — +4 to +12 % on the rows above, under 1 % of a core at 24 Hz in the
+worst row.
+
 ## Refresh rule
 
 Re-run `AnabasisBench` and replace the table whenever the chain gains a stage, an OS mode

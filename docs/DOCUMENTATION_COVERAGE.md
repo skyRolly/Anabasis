@@ -6,9 +6,29 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **the PR #43 split review (2026-09-29, still 0.2.13)** — Phase 0's evidence
-re-run on PR #43's own head and the suite count re-counted (addendum below). Before that, for **the
-Phase 0 closure (2026-09-27, still 0.2.13)** — ADR-0041 and ADR-0042
+**Last updated:** for **the PR #43 split review, merged into this branch (2026-09-29)** — Phase 0's
+evidence re-run on PR #43's own head and the Phase 0 suite count re-counted (1977 = 548 + 1429; the
+addendum above the Phase 0 closure addenda), and the Phase 0 baseline in HANDOVER's count chain
+corrected with it. Before that, for **0.2.17's records head CI (2026-09-29)** — the follow-up that records it
+(addendum below). Before that, for **0.2.17 (2026-09-29) — the fifth PR #42 review round's
+records** (addendum below). Before that, for **DSP-005 (2026-09-29, still 0.2.16 until the round's records commit)** — MATCH's
+predict floor counts the compressor (× Comp Mix) and the Clip/Sat stage (addendum below). Before that,
+for **KI-028's disposition (2026-09-29, still 0.2.16)** — pre-existing / external:
+the macOS abort's throw site captured in Apple's AudioToolboxCore under pluginval's AU host teardown,
+a JUCE-example control that never aborts (addendum below). Before that, for **the session length's
+semantics (2026-09-29, still 0.2.16)** — the review
+item "Session clock includes unmeasured return audio" closed as preserved and pinned (addendum
+below). Before that, for **KI-028's diagnostic workflow (2026-09-29, still 0.2.16)** — a non-gating
+macOS workflow to capture pluginval's teardown abort, macOS exit 9 reported as a crash, and the
+Linux crashes recorded in KI-028 (addendum below). Before that, for **OQ-020's resolution
+(2026-09-29, still 0.2.16)** — below 12 kHz the TP and
+Ceiling tooltips name the boundary instead of claiming dBTP (addendum below). Before that, for
+**the ADR-0046 ratification (2026-09-29, still 0.2.16)** — ADR-0046 accepted at
+the Architecture Review Gate and recorded in the four places, and the low-rate true-peak contract
+stated in the user-facing documents (addendum below). Before that, for **0.2.16 (2026-09-28) — the
+fourth PR #42 review round** (addendum below; the
+0.2.15 round added its addendum without moving this line). Before that, for **0.2.14 (2026-09-27) — Phase 1 of the 2026-09-26 audit** (addenda below).
+Before that, for **the Phase 0 closure (2026-09-27, still 0.2.13)** — ADR-0041 and ADR-0042
 accepted by the owner, KI-006 closed as INC-007 (addendum below). Before that, for **the PR #42 review
 round (2026-09-27, still 0.2.13)** — the true-peak engagement fix (ADR-0041 decision 5 revised, then
 Proposed), the JUCE-free split of the clamp's
@@ -459,6 +479,363 @@ rewritten. **New/changed test** (`state_tests.cpp` — `specGen` and `specStradd
 **Ship a version** (`CHANGELOG.md`, `HANDOVER.md`, `README.md`'s suite total, which was three rounds
 stale at 1324). Trail: `worklogs/2026-09-05-gr-history-tip.md` §19.
 
+**Addendum (2026-09-29, still 0.2.16) — ADR-0046 ratified at the Architecture Review Gate, recorded
+in the four places, and the low-rate true-peak contract stated.** The owner approved ADR-0046 at the
+gate; the instruction of record is quoted in its Status, and the brief's "from Proposed" is recorded
+there as drift — the record had been filed `Accepted` on the owner's direction, ⊕ for review, so
+acceptance is its ratification, as in `e4f9205`. This change moves no code, only comments.
+**The ADR** — a `✅ RATIFIED` banner keeping the five gate items, the ⊕ history and why the
+architecture changed; a Status naming what the approval covers and what it does not (ADR-0045,
+ADR-0041's voicing constants, OQ-020); decision 5's alternative marked not taken; decision 6 marked
+completed; a dated ratification note — (a) the re-verification against `6ee9f29`, with a per-rate
+A / D / window table (the TP-mode window shorter from 12 kHz to below 62 kHz, unchanged from 62 kHz,
+and LONGER at 3901–11999 Hz, where 0.2.15 engaged the path) and the reported-latency identity
+labelled derived, the impulse tests its measurement; (b) below 12 kHz the TP switch still moves the
+limiter's detector at Oversampling Off / 2× — a best effort, no dBTP guarantee, recorded as
+intended, no DSP change; (c) the unit at a host rate ≤ 0, a non-conforming host's limitation; (d)
+invariant 3's prescribed text.
+**Banners on the records it moves** — ADR-0041 (a dated note on each 2026-09-28 banner), ADR-0015
+item 5 and ADR-0004 (in effect; ADR-0004's D figure), ADR-0045 (a separately dated note naming which
+of its decisions stand and which are in force as amended; its 2026-09-28 banner kept word for word,
+the record itself still ⊕). **ADR_INDEX** — the status cells of ADR-0046 and ADR-0045, ADR-0041's D
+figure, three registry rows. **Policies and ledgers** — `DSP_POLICY.md` invariant 3 (prescribed
+text), invariant 4 (decision 6's text exactly, with a dated note of the split form it replaces; the
+guard label), the invariant → test map rows 4 and 8 (the ADR-0045 / ADR-0046 guards, which the map
+had not listed); `THREAD_MODEL.md` (ratified; the unit's read is the pair's two relaxed loads, not
+one); `KNOWN_ISSUES.md` KI-025; `FUTURE_RISKS.md` RISK-003 (triggered twice more on 2026-09-28).
+**The low-rate contract where a user reads it** — `USER_MANUAL.md` §1, §2.4 step 5 (the unit follows
+the switch and the rate), §3.2 (the dBTP ceiling needs 12 kHz or more; below it the Ceiling holds
+sample peak, not dBTP, whatever the switch says, and the switch still helps the limiter), §3.3
+(below 12 kHz the whole 10 ms goes to the limiter), §3.4 (a red TP reading below 12 kHz is a real
+over), §6, §8; `COMPATIBILITY_MATRIX.md` §Sample rates (its "true-peak mode is not available"
+replaced, with a dated note). No UI string is touched (C8; OQ-020 stays open). **Living copy the
+sweep found stale** — `PARAMETER_REGISTRY.md` note 15; code comments in `CeilingClamp.h`,
+`AnabasisEngine.h` and `AnabasisEngine.cpp` (the emission-only stamp), `Latency.h` (the rail's
+"TP mode is not applied"), `PluginEditor.cpp` (the unit), `dsp_tests.cpp` (D = 42) and
+`state_tests.cpp` (the round-19 quote kept, ADR-0046's wording appended). **Ship a version** —
+`HANDOVER.md` (the Current Version row, the Pending Tasks lead). Historical records — worklogs,
+dated reports, CHANGELOG entries, earlier addenda and dated banners' words — are not edited.
+
+**Addendum (2026-09-29, still 0.2.16, the next commit of the same round) — OQ-020 resolved: the TP
+and Ceiling tooltips name the 12 kHz boundary.** The owner's 2026-09-29 brief asked for the words
+(quoted in OQ-020's Decision); option 2 is taken for both tooltips that claimed dBTP, and the
+wording is recorded, ⊕, with "sample rate(s)" (new to UI strings) and the Ceiling tooltip's
+inclusion named for the owner's confirmation. **Code** — `CeilingUnitSource::rateEngagesTruePeak`,
+the rate half of `truePeakEngaged`, which now calls it (one decider, the same read);
+`tipBelowTruePeakRate` and `truePeakRateBoundary` (the figure formatted from
+`CeilingClamp::kMinTruePeakRate`), beside their one caller rather than beside `tipFor` — lines
+added above the About block would move the two `PluginEditor.cpp` anchors CHANGELOG 0.2.4's
+build-number finding cites, and a past entry is not rewritten; `applyTruePeakTips` / `refreshTruePeakTips` and `shownTpRate`,
+seeded and applied in the constructor before the timer, edge-gated on the tick after
+`refreshCeilingUnit`; `Knob::setTooltip` forwards a knob's tip to its value box. **The value-box
+choice**: the forward is on every knob rather than on the two Ceiling knobs, because it changes no
+other box — each other knob's tip is set once in `setupRotary`, before `setTextBoxStyle` rebuilds its
+box from `getTooltip()` — and the test's all-knob sweep passes at 48 kHz with the forward removed.
+No other UI string changes (C8); the STATISTICS **TP** row is unchanged (a measurement, not the
+Ceiling's promise); option 3 stays the owner's. **New/changed test** —
+`testTheTruePeakTipsFollowTheRateTheTruePeakPathEngagesAt` (state suite, +22 checks: 1605 → 1627;
+DSP suite unchanged at 737), registered after `testTheTickCallsTheSettingsAndCeilingRefreshes`;
+`procedures/TESTING.md`. Mutations, each against the full state suite, each KILLED: the tick call
+removed (3 checks fail: both 11.025 kHz absence checks and the 8 kHz open); the seed hard-coded to
+engaged (1: the 8 kHz open); the value-box forward dropped (7: agreement, absence and the knob sweep
+at 11.025 kHz in both switch states — the sweep naming only the two Ceiling knobs — and the 8 kHz
+open); and two more — the switch-aware predicate (8) and one view only (5). The DSP policy's
+invariant → test map is not touched: this is UI copy, not a DSP invariant, as the unit's own test is
+not listed there; `TEST_REPORT.md` holds measured figures and this adds none. **Open question**
+— `OPEN_QUESTIONS.md` OQ-020 resolved (the question as raised kept as written). **Records it
+points from** — `KNOWN_ISSUES.md` KI-025 remains item (2) (its words kept, a dated note appended);
+ADR-0046's Status, decision 5 and the Consequences bullet (dated pointers, not amendments);
+`COMPATIBILITY_MATRIX.md` §Sample rates (the below-12-kHz row: a clause and the evidence column);
+`USER_MANUAL.md` §3.2 (the Ceiling row); `THREAD_MODEL.md` (the tick as a message-thread reader of
+the same published rate; no new atomic, writer or ordering). `CHANGELOG.md` and `HANDOVER.md` are
+left to the round's records commit.
+
+**Addendum (2026-09-29, still 0.2.16, a later commit of the same round) — KI-028: a macOS diagnostic
+workflow, and exit 9 reported as a crash.** **CI workflow** — `.github/workflows/ki028-diag.yml` and
+its interposer `.github/ki028/throwtrace.cpp` added: a DIAGNOSTIC, never a gate or a required check,
+referenced by no other workflow; push to the PR branch touching its own files, or
+`workflow_dispatch` *(removed in the next commit: CodeQL's actions analysis reported the dispatch
+path as cache poisoning; push-only since)*; actions pinned to `build.yml`'s SHAs; `contents: read`; the compiler cache
+restore-only. Synced per the trigger map's CI-workflow row: `procedures/CI_CD.md` (the Workflows
+row, a section of its own, and item 5 under "Before enabling branch protection"),
+`procedures/TESTING.md` (a subsection saying it is not part of the gate), `REPOSITORY_MAP.md` (the
+`.github/` table and tree entry — two new files, though neither is a script). `TESTING_POLICY.md`
+rule 3 gains the macOS exit-9 exception; what the gate REQUIRES is unchanged. **Script** —
+`scripts/run-pluginval.sh` reports exit 9 on macOS (pluginval's own `kill9WithSomeMercy` handler)
+as `CRASHED`, not as a real validation failure; the pass still fails immediately. Synced:
+`procedures/TESTING.md`'s crash-retry table, `procedures/TROUBLESHOOTING.md` (a macOS exit-9 row),
+`REPOSITORY_MAP.md`'s `run-pluginval.sh` row. **Drift found and corrected, with evidence** — that
+crash-retry table and the TROUBLESHOOTING retry row said a crash is retried on macOS, which stopped
+being true at 0.2.0 (`7a71f2c`: `CRASH_RETRY_ATTEMPTS` 3 on Linux, 1 elsewhere). **Drift found and
+reported, not corrected** (outside this change) — `procedures/CI_CD.md`'s Workflows table and
+`REPOSITORY_MAP.md`'s `.github/` table call `release.yml` "not present", and the tree entry still
+lists the weekly C++23 canary; `.github/workflows/release.yml` is in the tree and the canary was
+removed at 0.2.0. **Known issue** — KI-028 gains a dated addendum (its words kept): the label fix,
+the workflow and what it captures, and the Linux findings (two use-after-free signatures in
+pluginval 1.0.4's own JUCE 8.0.3 host code, 0 Anabasis frames; head 0 of 89, main 5 of 88); its
+disposition waits for the workflow's run. No code under `src/` or `tests/`, and no suite test —
+the suites do not run CI scripts; the classification was exercised instead with a faked `uname`
+and a stub validator (not committed): Darwin exits 0 / 1 / 9 / 134 → PASSED / FAILED / CRASHED
+(exit 9) / CRASHED (exit 134), Linux unchanged (9 → FAILED; 134 → three retries, then 139). The
+workflow parses, `actionlint` (with `shellcheck`) reports nothing, and it has not run.
+`CHANGELOG.md` and `HANDOVER.md` are left to the round's records commit.
+
+**Addendum (2026-09-29, still 0.2.16, a later commit of the same round) — the session length counts
+the open frames (review item "Session clock includes unmeasured return audio",
+`src/dsp/LoudnessMeter.h:205`).** Investigated, not a defect: the length counts every frame the
+session is open (no part of a realtime bypass audible; every offline frame) from the first open
+frame, which are the SP / TP holds' frames; I and LRA are gated block measurements whose resume
+watermark leaves up to 100 ms before a pause and 100–200 ms after a resume out, as after a RESET.
+Kept as ADR-0020 amendment 4 item 3 defines it (option A, elapsed monitored programme), ⊕ for the
+owner's review with amendment 4. **ADR** — ADR-0020 gains a dated implementation note (not an
+amendment) stating the relation, with measurements. **User manual** — §3.4 "What the session
+covers" states the guard around an audition as it already did for a RESET. **New tests** —
+`testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio` (DSP, +32 checks: the length equals the
+open frames exactly around auditions, resumes, RESETs and offline, the holds bit-identical to a model
+over the same frames, I's and LRA's first admissions exactly where the watermark puts them) and
+`testThePublishedSessionLengthIsTheOpenFrames` (state, +11: `pubSessionSecs` and the header text are
+the open frames); eight mutants (the clock counting paused frames, the ramp counted as open, the
+watermark removed, the clock skipping the guard, the SP hold taking paused frames, offline pausing,
+RESET not zeroing the clock, whole-second publication) each killed. No code, UI string, parameter,
+state or ADR decision changes; no `CHANGELOG.md` entry (no user-visible behaviour change).
+
+**Addendum (2026-09-29, still 0.2.16, a later commit of the same round) — KI-028 dispositioned
+pre-existing / external.** The diagnostic workflow ran four times (`0d42384`, `839685d`, `9a19b02`,
+`5562229`; its own fixes between them: the `workflow_dispatch` trigger removed after CodeQL's
+cache-poisoning alert, Intel only, a per-pass watchdog, the frames in the job log, uploads on
+`always()`, a control AU built with `-g` and a retained LTO object). **KNOWN_ISSUES** — KI-028's
+heading carries the disposition and a dated disposition addendum follows the first (the entry's words
+kept): the throw site in AudioToolboxCore's `AUParameterListener` block on pluginval's message
+thread, no Anabasis frame on any thread, the host's listener disposed first in JUCE 8.0.3's (and
+9.0.1's) AU host teardown, the control 0 / 14 against Anabasis 4 / 14, `main` as frequent as the
+head, the Linux signatures external (JUCE `04e167d64`, 5 / 567 vs 0 / 567), and what a red macOS AU
+pass with this signature means for the gate (re-run and record; no retry raised; the owner decides
+whether it may be re-run past at a release). **Procedures** — `CI_CD.md` (the workflow stays, as the
+reproducer; its runs), `TESTING.md` (the control and the disposition), `TROUBLESHOOTING.md` (the
+exact signature, and that any other one is a new failure). **Correction** to the session-length
+addendum above: it lists eight mutants; ten were run and killed — also the TP hold taking readings
+at paused frames and the loudness ring-out guard removed (the round's worklog §5). No code, UI string,
+parameter, state or ADR changes.
+
+**Addendum (2026-09-29, a later commit of the same round) — DSP-005: MATCH's predict floor counts
+every level-taking stage (decided Modify; KI-023 partly fixed).** `AnabasisEngine.{h,cpp}`: decision
+7's expected GR = the limiter's deepest reduction + the compressor's block-end reduction × Comp Mix
+(read from the stage, not the published atomic) + the Clip/Sat stage's measured level change over
+the previous block; the block-top comment that called the deepest-GR choice "the safe direction" is
+corrected (it is the shallower floor), and the GR-tap comment no longer says the floor is the
+limiter's alone. **New test** — `testMatchPredictCountsEveryLevelTakingStage` (DSP, +4 checks; 3 fail
+on 0.2.16; the Clip/Sat term removed, the compressor term removed and the compressor term unweighted
+each fail their own check). **Docs** — `KNOWN_ISSUES.md` KI-023 (heading and a dated addendum: the
+table before / after, the ADAA-droop mechanism, what stays open — the percussive term and the EQ —
+and the attenuation-only limit) and **KI-029 new** (MATCH can play the processed signal above the
+input for ~0.2 s after a prepare and up to 0.5 s after a macro jump; recorded, not changed); ADR-0044
+a dated note (⊕) under "What is left of the gap"; `ADR_INDEX` (ADR-0044's and ADR-0006's evidence
+cells); `DSP_POLICY.md` invariant 10's guards and its test-map row; `USER_MANUAL.md` §2.4 step 6 (the
+residual as it now is, the percussive case, the attenuation-only limit, KI-029's two moments);
+`TESTING.md` (the test's mandated stimulus; the count Eight → Nine). **Citations** — the engine's
+line moves re-anchored in ADR-0013, ADR-0014, ADR-0046 and OPEN_QUESTIONS (10 anchors, each read to
+point at the same text); the fourth round's closure record's CodeQL anchor, which named a line of
+`58107a4`, is pinned as `58107a4:tests/dsp_tests.cpp:6695` instead of renumbered (a dated record
+quoting a tool's report). No parameter, state, latency, signal-order or threading change; the
+render and the invariant-7 null are unchanged.
+
+**Addendum (2026-09-29, 0.2.17) — the fifth PR #42 review round's records.** New:
+`worklogs/2026-09-29-pr42-round5-contract-ki028-clock.md` (the evidence: the state at the start, Devin
+A / B re-verified, ADR-0046's verification and ratification, the low-rate contract, OQ-020, the
+session clock, KI-028 across four diagnostic runs and the Linux causal test, the 22 778-render
+true-peak matrix and its re-run on the final engine, PREfast, DSP-005's investigation and decision,
+the gates and CI, corrections, what was not verified) and
+`docs/reports/2026-09-29-pr42-round5-closure.md` (the closure: item by item, the contract by rate,
+KI-028's disposition, the session clock, DSP-005, CI, the roadmap, the owner decisions carried).
+**CHANGELOG** `[0.2.17]` (the MATCH predict floor, Fixed in part; the below-12 kHz tooltips, Changed;
+evidence `86bfdf5`, `c194000`); **version** 0.2.17. **HANDOVER** — Current Version, Test Status (2411
+= 773 + 1638, re-counted) and Pending Tasks gain a 0.2.17 lead (the earlier text kept after "Before
+it"). **Forward pointers** — the Phase 1 roadmap (DSP-005 done in part; §2 resumes at VIS-010) and
+the fourth round's closure (what this round settles and the two PREfast figures it corrects; its
+text otherwise untouched). **README** and **REPOSITORY_MAP** list the new closure record.
+**ADR_INDEX** — ADR-0020's evidence cell names the two session-length tests. **TESTING.md** — the
+session clock's mandated stimulus (the count Nine → Ten). No code changes in this commit beyond the
+version number.
+
+**Addendum (2026-09-29, 0.2.17, the follow-up) — the records head's CI.** The closure record's §6 and
+the worklog's §10.1 record `43d1bbc`'s CI (every job success; CodeQL no new alerts; PREfast 201 SARIF
+results, 0 in `src/`, the six added this round's test code, classified G2 / G3) and the KI-028
+diagnostic's last pr-head job (13 / 14, 0 Anabasis frames); KI-028 gains two sentences (that run, and a
+diagnostic-only hang seen three times, all in variant B). No code change.
+
+**Addendum (2026-09-28, 0.2.16) — the fourth PR #42 review round: the low-rate true-peak contract,
+KI-024, the statistics RESET.** Code: (1) ADR-0046 — `CeilingClamp`'s eased attack (`easeWeight`,
+`kEaseSpan`, `kMinAttackSamples` 16), the release rise cap (`kReleaseRise`, `kRiseFloor`), the
+revision's defining reach (`segReqEntry`, `scratchE`, `kRevisionLead`), `kMinTruePeakRate` (12 kHz);
+stage A's min(entry, emission) stamp; `truePeakPathEngages` in `Latency.h`, read by the engine's rail
+and by `CeilingUnitSource` through `preparedPair` (a new reader of the GR ring's published rate —
+`THREAD_MODEL.md`); (2) the offline-entry latch restarts the EQ and the dBTP tap (KI-024 route C);
+(3) `resetMeterHolds` skips the estimator's report lag (`TruePeakEstimator::kReportLag`,
+`sessionTpSkip`) and `LoudnessMeter::firstCleanSubBlock` guards the watermark. **ADR** — ADR-0046 added;
+dated amendment banners in ADR-0041, ADR-0045 and ADR-0015; ADR-0020 gains an implementation note;
+`ADR_INDEX.md` row and three registry entries. **Policy** — `DSP_POLICY.md` invariant 4 (the rate
+contract, the low-rate guard) and invariant 8 (the step figure), prescribed text in ADR-0046.
+**Architecture** — `LATENCY_MODEL.md` (D = 46, the rail), `COMPATIBILITY_MATRIX.md` (a new §Sample
+rates — this file had no rate row), `THREAD_MODEL.md` (the unit's read). **Known issues** — KI-024
+dispositioned (two statements corrected, route C fixed), KI-025 closed (its under-statement
+corrected), KI-026 added. **Open questions** — OQ-018 resolved; OQ-020 added. **User manual** — §3.2
+(the rate contract), §3.3 (the 9.0 ms window), §3.4 (where a new session starts). **Procedure** —
+`procedures/TESTING.md` (two mandated-stimulus rows; the table's count corrected). **Citations** — 43
+anchors re-anchored after the engine's, the clamp's and the processor's lines moved, read back;
+clean against `8ab0532`, `ed06ad0` and `origin/main`; the fix commit re-anchored the ones it moved
+in the same commit. **The round's own review** (fix commit `f03d673`): code — `easeTotal` (the eased
+reduction normalised by the float weights' own sum, capped at 1), `dryRing.clear()` in the latch,
+`firstCleanSubBlock` a whole sub-block, `<cstddef>` / `std::size_t`; records — ADR-0046's
+implementation note, ADR-0020's note (100 ms; the cost 200 ms), KI-024 row C (the bypass leg),
+KI-025's banner, **KI-027 and KI-028 added**, `USER_MANUAL.md` §3.4 (0.2 s), `procedures/TESTING.md` (the
+statistics-reset row's stimulus); the Phase 1 roadmap (`2026-09-27-phase1-roadmap.md`) gains a dated
+forward pointer only. **New tests** —
+`testTruePeakModeHoldsTheCeilingBelow44k`, `testAForceMaxEntryStartsTheRenderClean`,
+`testStatisticsResetStartsTheSessionAtTheReset`, and after the review
+`testTruePeakModeLagsAnAscentByTheEntryCeiling`, `testTheClampReleaseRiseIsCapped`,
+`testTheClampSilencesAnAstronomicalInput` (DSP), `testTheCeilingUnitFollowsTheRateTheTruePeakPathEngagesAt`,
+`testResetRightAfterALoudPassageKeepsTheOldPeakOut` (state). Evidence:
+`worklogs/2026-09-28-pr42-round4-tp-lowrate-reset.md`; record: `docs/reports/2026-09-28-pr42-round4-closure.md`.
+
+**Addendum (2026-09-28, 0.2.15) — the third PR #42 review round: two true-peak paths, GR max, the copy
+record.** Code: (1) the offline-entry branch of `AnabasisEngine::process` resets `EngagementTail` with
+the duck and restarts the output dBTP tap when it cut a decay; (2) ADR-0045 — true-peak frames judged
+against the ceiling in force at EMISSION (`ceilingAhead` / `ceilEmitArr` / `ceilInFlight` in the
+engine, `CeilingClamp::lowerInFlightCeilings` and its per-segment history in the clamp, the region's
+`ceilingNow` on the same value in TP mode, `AnabasisEngine::kCeilingGlideSeconds` public so a test
+rebuilds the smoother); (3) `GrHistoryView::readingFrom (ring, cols)` over the graph's drawn range in
+two lap-certified chunks, `plotColumns` shared with `paintHistory`; (4) the STATISTICS panel tooltip
+back to its recorded 0.1.1 wording. Rows engaged: **ADR** — ADR-0045 (new), ADR-0041 (dated
+amendment banner for decision 3, implementation note for decision 5), `ADR_INDEX.md` (row and
+amendment registry). **Policy** — `DSP_POLICY.md` invariant 4's guard list (the automation guard with
+its reference stated, the offline-entry guard). **Known issues** — KI-024 added (a reset or an unducked latch cuts the TP stream at full gain; pre-existing, found by the adversarial review), KI-025 added (below 44.1 kHz a worst-case burst reads over the TP ceiling — under a fast cut at 22.05 / 32 kHz, with a static ceiling below 22.05 kHz; found by a search for worst-case bursts after the ADR was taken; the clamp header and ADR-0045 corrected to match), KI-004 corrected (the offline-entry
+route was described as bounded to one sample; the pipeline plays at unity, and the decay no longer
+reaches the render). **User manual** — §3.4 GR max. **Performance** — `PERFORMANCE_BUDGET.md`'s
+readout span and cost. **Procedure** — `procedures/TESTING.md` (a lap is constructed, not raced for).
+**Open questions** — OQ-018 (the tooltip's bypass announcement; interim applied) and OQ-019 (the GR
+readout's captions). **Effects tier** — `tests/realtime_effects.cpp` drives `lowerInFlightCeilings`
+and the tail reset (a seeded allocation in the former is reported at the driver's call). **New/changed
+tests** — `testOfflineEntryDropsTheEngagementTail`, `testTruePeakModeHoldsTheCeilingUnderAutomation`,
+`testTruePeakModeBoundsTheStepAtACeilingCut` (invariant 8's second yielding place, prescribed text in ADR-0045),
+`testTheGrReadoutReadsTheRingItNames` (rewritten, deterministic), `testTheTickMaxIsTheDeepestEntryTheGraphDraws`,
+a tooltip truth check in `testTheStatisticsPanelResetsOnlyFromItsResetControl`. **Ship a version** —
+`CHANGELOG.md` 0.2.15, `CMakeLists.txt`, `HANDOVER.md`, `README.md` (2233 = 649 + 1584),
+`REPOSITORY_MAP.md`. **Add a document** — `docs/reports/2026-09-28-pr42-review-closure.md` and
+`worklogs/2026-09-28-pr42-review-tp-contract.md`; the 2026-09-27 Phase 1 roadmap gains a dated
+forward pointer and is otherwise not edited. Drift reported and corrected with evidence: the engine's
+"behave exactly like the re-prepare path" comment (the pipeline is not reset on that route), the
+"same instantaneous ceiling" comments (true in TP-off only until this round), KI-004's "bounded to the
+first sample". Drift reported, not corrected here: `ADR_INDEX.md`'s policy-amendment registry lists
+five ADRs and none of the later ones that amended a policy (0041, 0043, 0044, 0045).
+
+**Addendum (2026-09-27, 0.2.14) — the Phase 1 records: the roadmap, the gates and the hosts.**
+Documentation only. **Add a document** — `docs/reports/2026-09-27-phase1-roadmap.md`, the durable
+Phase 1 follow-up: per-finding status after this round (UX-009, UX-002, VIS-001, VIS-009, DOC-002,
+TEST-001, VIS-007/VIS-003 step 1 done or in part; DSP-005, VIS-010 next; the rest not started), the
+recommended order for the next round, the owner decisions not taken, and the evidence limits. It is a
+dated snapshot beside the audit, which is not edited; linked from `REPOSITORY_MAP.md`, `README.md`
+and `HANDOVER.md`. The worklog gains its host section (Carla 2.5.8 realtime MATCH/BYPASS against a
+0.2.13 build; Ardour 8.4.0 offline re-exports byte-identical to the review round's; what was not run,
+named host by host), its gates section (local results, the RTSan lane's disclosed allocation-guard
+skip, GitHub not yet run on this round's commits) and the re-check of the review round's pluginval
+exit segfault (15 runs, the failing seed replayed 3 times, not reproduced — recorded as not
+diagnosed, not as fixed). **Ship a version** rows: `HANDOVER.md` (current version 0.2.14, test status,
+pending tasks), `README.md` (suite total 2138 = 565 + 1573; the Phase 1 record). No code, test,
+ADR or policy change in this unit.
+
+**Addendum (2026-09-27, 0.2.14) — the limiter's reduction as a number (audit VIS-007 / VIS-003
+step 1).** Code: `GrHistoryView` gains pure statics (`readingFrom` with `paintHistory`'s epoch/lap
+discipline, `readoutSpan` with a 4096-entry lap margin, `readoutCurrentEntries`, `readoutStale`,
+`grText`); the editor tick reads them in both views and places two caption/value label pairs (under
+out LUFS in Simple, in the LIMITER foot in Advanced); the clock seam TEST-001 added is renamed
+`setClockForTest` now that the readout's stall rule reads it too; the engine's GR-tap comment no
+longer says the compressor figure is "read only by the tests". No new thread, atomic, ordering or
+path — a const message-thread ring read the ring's header already admits — and nothing drawn in the
+graph well (ADR-0023 d7) or the STATISTICS panel (ADR-0020 D6). Rows engaged: **Metering / UI** —
+`USER_MANUAL.md` §3.4 (what the two numbers are, whose reduction, the no-data and 0.0 forms, the
+BYPASS caveat), `CHANGELOG.md` 0.2.14. **Performance** — `PERFORMANCE_BUDGET.md` gains a
+message-thread section with the measured scan (0.0025 ms at 48 kHz / 512 to 0.32 ms at a saturated
+384 kHz / 16). **New/changed test** — `testTheGrReadoutReadsTheRingItNames`,
+`testTheTickShowsTheLimiterGrReadout`; `procedures/TESTING.md` (the clock seam's rename). Wording
+from existing terms: "lim" as in the LIMITER panel, "GR" as in the graph pill and the manual, the
+"out LUFS" caption grammar, "-" as the product's no-reading form, and "max" for the window figure
+so it does not read as the STATISTICS peak holds. Mutation table in the worklog: 7 of 8 killed; the
+survivor (the lap re-check removed) is recorded as not observable by value, since every slot a
+min-fold can read is a real measurement from the ring's last lap. The audit files VIS-007/VIS-003
+under Phase 2; pulled forward as the groundwork this round was asked for.
+
+**Addendum (2026-09-27, 0.2.14) — STATISTICS: RESET, the bypass audition, the session length
+(ADR-0020 amendment 4).** Code: `LoudnessMeter::setSessionPaused` (the session half pauses; resume
+re-applies the straddler watermark); the engine's per-frame `sessionOpen` gate feeding session TP/SP
+maxima and a measured-sample count (`lastSessionTpMax`/`lastSessionPeak`/`sessionSeconds`); the
+wrapper's holds read them and publish `pubSessionSecs`; `LoudnessMeterView` loses its whole-panel
+`mouseDown`, gains a RESET `TextButton` and the header's `m:ss`; the editor eases RESET's hover.
+Rows engaged: **Metering** — ADR-0020 amendment 4 (on the owner's direction, ⊕ for review) and its
+ADR_INDEX status cell and registry row (the registry had never listed ADR-0020's three 2026-08-07
+self-amendments — drift, corrected), `USER_MANUAL.md` §3.4 (RESET, what is and is not reset — the
+DOC-002 blank-until-audio sentence — what the session covers, host-dependent behaviour kept
+separate) and §8 (the podcast step). **Threading** — `THREAD_MODEL.md`'s Meters → GUI row (eleven
+scalars, the session accessors, RESET as the message-thread writer) and `THREADING_POLICY.md`'s
+meter row: one more scalar on the existing path and clear list, the precedent of ADR-0020's own
+five — no new path, no new ordering. **Brand/UI** — `BRAND_CONSISTENCY_CHECKLIST.md` records the
+deliberate deviation from Anamorph's click-a-readout reset. **Design** — DESIGN §1.2's monitoring
+diagram gets a dated reconciliation note (the bypass crossfade runs in a render; the session figures
+alone skip a realtime audition). **Realtime** — no allocation added (plain members, fixed at
+`prepare`), so `REALTIME_SAFETY_AUDIT.md`'s allocation table needs no row; the per-frame work is one
+compare and, while measured, two `jmax` and an increment. **New/changed test** — four tests (two
+suites) and one hardened: the extreme-level route through the bypassed histogram now runs offline
+with a live-premise, since a realtime-bypassed session would have made its integrated check vacuous.
+Mutation table in the worklog; one equivalent mutant recorded (the child-click flag). The DSP-policy
+row (`DSP_ALGORITHMS.md`) is still planned.
+
+**Addendum (2026-09-27, 0.2.14) — MATCH on the processed leg (ADR-0044).** Code: stage E's §2.7
+gain moves from after the bypass crossfade onto `wetLeg`, before it; two engine comments corrected
+(the member comment still said "average measured GR" and "POST-mix"; the GR-tap comment stated the
+predict floor's error direction backwards — audit DSP-005). Rows engaged: **Signal-flow / stage
+order** — ADR-0044 (new; on the owner's direction, ⊕ for review), ADR-0006's dated amendment banner
+(decision 8), ADR_INDEX (row and amendment registry), `DSP_POLICY.md` invariants 7, 10 and 12
+(prescribed text) and the invariant→test map rows 7, 8 and 10 (row 8's "loudnessComp/delta crossfades
+arrive with their P3 features" had been stale since P2), DESIGN §2.7 (dated superseded note; the ADR
+outranks it), `CHANGELOG.md` (new 0.2.14 entry with the release note that MATCH + BYPASS is 5–10 dB
+louder), version 0.2.14. The row's `SIGNAL_FLOW.md` and `DSP_GRAPH_REFERENCE.md` are still planned
+(`REPOSITORY_MAP.md`). **Metering / listening aids** — `USER_MANUAL.md` §2.4 step 6 and the BYPASS row
+(what BYPASS plays; MATCH's slight low bias; MATCH and DELTA never in a bounce — UX-010's missing
+sentence), `procedures/DEVELOPMENT.md` and `procedures/TROUBLESHOOTING.md` (the matched-comparison
+advice now true as written), KNOWN_ISSUES KI-023 (new: the residual, with the clipper/compressor
+isolation). `LATENCY_MODEL.md` checked and unchanged (no delay or read position moved). **New/changed
+test** — four DSP tests and one state test (`testMatchLeavesBypassAtUnity`,
+`testMatchedBypassIsLoudnessMatched`, `testMonitorTogglesAreClickFree`, the offline BYPASS-toggle
+block of `testLoudnessCompensationDoesNotAlterRender`, `testBypassPlaysTheInputAtUnityWithMatchOn`);
+the regression tests fail on the old order and each toggle ramp's removal fails its own click case —
+the table is in the new worklog. **Add a document** — `worklogs/2026-09-27-phase1-match-statistics-observability.md`.
+**Drift recorded, not corrected:** ADR-0006's Consequences and DESIGN §7 promise per-slot compensation
+memory that does not exist (banner on ADR-0006). Historical records quoting the post-mix rationale
+(POSTMORTEMS INC-002, earlier addenda, HANDOVER round logs, older CHANGELOG entries) are history and
+are not edited.
+
+**Addendum (2026-09-27, TEST-001) — the editor tick is tested, and every test was made to fail
+first.** Code: `refreshFromModel()` is the whole 24 Hz tick body, public; `timerCallback` calls it.
+Behaviour-neutral seams only (identical statements in identical order; no parameter, state, DSP,
+latency, threading or macro change): component IDs `outLufsValue`, `editedDot`, `compGrMeter`,
+`limGrMeter`, `dimOverlay` (none a look-and-feel key — those branch on `bypass`, `ghost`, `presetname`,
+`presetnav`, `icon`); `GrMiniMeter::shownDb` / `isMono`; `GatedTooltipWindow::gateOpen` (De Morgan of
+the old test) behind `tooltipGateOpen()`; `learnClockMs` behind `setLearnClockForTest`, the default
+being the same clock both Learn reads used. Eleven tests, 89 checks (state suite 1429 → 1518). **The
+mutation table, each run against the full state suite** — every one KILLED by the check it targets:
+T0 delete the flag consumer; T1 delete the hover loop / hard-wire hovered = true; T6 drop the
+settings refresh; T7 drop the preset display; T8 delete the dim edge (killed only by the RAW-store
+check — a notified write reaches the dim through T0 too, which is why the audit's end-to-end
+criterion would not have caught it); T9 delete the out-LUFS write / move the −99 guard; T10 delete
+the countdown / the accent / the stop-pending block, invert `! moved`, force the flash compare true,
+drop the 5 s minimum; T11 drop the undo refresh / swap undo and redo; T12 delete the lane writes,
+swap stages, swap channels, invert `advanced`; T13 drop the ceiling refresh; T14 delete the flip /
+hard-code the SPEC seed false; T15 delete the dot block, drop `! advanced &&`, delete the
+else-if; the tooltip gate: delete its wiring, delete the mirror write, bind `onClick` instead of
+`onStateChange` — 29 of 29. Rows engaged: **New/changed test** — `procedures/TESTING.md` (the tick
+hook, the seams, the synchronous `Value` delivery), this file (the ADR-0025 disclosure annotated:
+the tooltip gate's predicate and wiring left it; `getTipFor`'s early return stays). Citations
+re-anchored by `check-citations.py --fix` (`THREAD_MODEL.md`, ADR-0027: the editor lines moved).
+**Drift:** none beyond the moved anchors.
 **Addendum (2026-09-29, PR #43 split review, still 0.2.13) — Phase 0's evidence made self-contained,
 the suite count re-counted.** PR #42 was split into stacked PRs; this tree ships as PR #43. **Drift
 reported, then corrected:**
@@ -1509,7 +1886,10 @@ consequently unprotected: a future edit to the shield's z-order, its interceptio
 menu-tracking hooks or the focus ordering can regress silently. INC-005 is defended by the build's
 own fail-closed assertions plus the A/B probe that proves those assertions can fire. The exception
 lapses for any of these the day the suites gain a driven-input fixture (the closest prior art is
-the X11/XTEST probe recorded under `worklogs/` for KI-012).
+the X11/XTEST probe recorded under `worklogs/` for KI-012). *(2026-09-27, TEST-001: the tooltip gate
+left this list in part — its predicate and its wiring to the switch are pinned by
+`testTheTooltipSwitchGatesEveryTip`; only `getTipFor`'s one-line early return and tip timing stay
+under it, because JUCE returns no tip to a process that is not in the foreground.)*
 
 **Suites: `AnabasisTests` 296 + `AnabasisStateTests` 845 = 1141 checks green**, up 102 on 0.1.3's
 1039 — ten new state tests (`testANoOpPresetApplyIsNotAUserAction`,

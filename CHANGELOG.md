@@ -15,8 +15,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning:
 - Compatibility-affecting entries cross-link the relevant ADR and note any migration.
 
 **No tag has been cut yet, so nothing has left this repository.** A version entry here means its
-notes are written, dated and complete — not that the build shipped. Twenty such entries now exist
-(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`, `[0.2.12]`, `[0.2.13]`) and none has been tagged; WHICH version the first annotated
+notes are written, dated and complete — not that the build shipped. Twenty-four such entries now exist
+(`[0.1.1]`, `[0.1.2]`, `[0.1.3]`, `[0.1.4]`, `[0.1.5]`, `[0.1.6]`, `[0.2.0]`, `[0.2.1]`, `[0.2.2]`, `[0.2.3]`, `[0.2.4]`, `[0.2.5]`, `[0.2.6]`, `[0.2.7]`, `[0.2.8]`, `[0.2.9]`, `[0.2.10]`, `[0.2.11]`, `[0.2.12]`, `[0.2.13]`, `[0.2.14]`, `[0.2.15]`, `[0.2.16]`, `[0.2.17]`) and none has been tagged; WHICH version the first annotated
 `vX.Y.Z` tag cuts is a decision nobody has taken yet, and this file does not presume it.
 `release.yml` is what turns a tag into a DRAFT release, and
 publishing that draft stays a human action (ADR-0021). The fact lives HERE rather than inside a
@@ -44,6 +44,180 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ```
 
 ---
+
+## [0.2.17] — 2026-09-29
+
+**The fifth review round of PR #42: MATCH settles closer to the input's loudness, and below 12 kHz
+the TP and Ceiling tooltips say what the Ceiling holds.** Nothing here moves the reported latency, a
+parameter or the saved state, and every rendered sample is what 0.2.16 rendered — MATCH is a
+monitoring aid and the tooltips are text. Measurement trail:
+[`worklogs/2026-09-29-pr42-round5-contract-ki028-clock.md`](worklogs/2026-09-29-pr42-round5-contract-ki028-clock.md).
+
+### Fixed
+- **MATCH settles closer to the input's loudness (in part).** With MATCH on, the processed signal
+  settled under the input — +0.6 LU at the default Loudness on steady material, up to +3 LU with the
+  compressor working hard — because MATCH counted only the limiter's gain reduction. It now also
+  counts the compressor's (weighted by Comp Mix) and the Clip/Sat stage's level change: +0.3 LU and
+  +0.2 LU in those two cases. On percussive or sparse material it can still settle 1–3 LU under,
+  and it never turns the processed signal up ([`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-023).
+  Offline bounces never include MATCH and are unaffected. Evidence: commit 86bfdf5. [Verified]
+
+### Changed
+- **Below 12 kHz the TP and Ceiling tooltips name the boundary.** At a host sample rate under
+  12 kHz, where the Ceiling holds sample peak rather than dBTP, the **TP** switch's tooltip now
+  reads "Catch inter-sample peaks at sample rates from 12 kHz up - below that the Ceiling holds
+  sample peak, not dBTP" and the Ceiling's "The output limit - nothing leaves the plugin above it.
+  Sample peak at sample rates below 12 kHz, with or without TP"; at 12 kHz and up both are unchanged.
+  No other text changes. The wording is held for the owner's review
+  ([`OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) OQ-020). Evidence: commit c194000. [Verified]
+
+## [0.2.16] — 2026-09-28
+
+**A correctness round from the fourth review of PR #42: true-peak mode holds the ceiling at every
+sample rate it runs at, a statistics RESET no longer lets the previous session back in, and a
+bounce entered without a re-prepare starts clean.** Nothing here moves the reported latency, a
+parameter or the saved state; with true-peak mode off every rendered sample is what 0.2.15
+rendered, except the head of a Force Max bounce entered without a re-prepare (below). Measurement
+trail: [`worklogs/2026-09-28-pr42-round4-tp-lowrate-reset.md`](worklogs/2026-09-28-pr42-round4-tp-lowrate-reset.md).
+
+### Fixed
+- **True-peak mode now holds the ceiling below 44.1 kHz.** Constructed bursts could read over the
+  ceiling at every rate from 4 to 32 kHz — up to +0.16 dB at the bottom of a fast Ceiling cut at
+  22.05 / 32 kHz, and, found by a longer search this round, up to +0.19–0.23 dB on a static Ceiling
+  at 8–32 kHz ([`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-025). The true-peak ceiling's gain now eases into a
+  reduction instead of ramping at a constant rate, and releases at a bounded rate, so it holds inside
+  the 0.1 dB tolerance at every rate from 12 kHz up — including a Ceiling that reverses while it is
+  still rising, which could read up to +0.3 dB over at 48 kHz in 0.2.15 when the clamp alone had to
+  catch it. With TP on, output that the ceiling clamp acts on changes slightly; output under the
+  ceiling is untouched. [ADR-0046](docs/architecture/design-decisions/ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md)
+  (on the owner's direction; flagged for review). Evidence: commits 4ff71bd, f03d673. [Verified]
+- **An astronomical input is silenced again at every rate with TP on.** The eased attack first
+  shipped with its weights' float sum just over 1 at 88.2 / 384 / 768 kHz, so a finite input around
+  1e30 drove the true-peak ceiling's gain a hair below zero and the output to a sign-inverted
+  full-scale sample (+1.85 dB over the ceiling) where 0.2.15 was silent. Found by the round's own
+  review before release; the sum is now normalised by its own float total. An input near +180 dBFS
+  can still read over the ceiling, as in 0.2.15 ([`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-027).
+  Evidence: commit f03d673. [Verified]
+- **RESET no longer brings the last peak back.** Pressing RESET straight after a loud passage could
+  put that passage's last peak into the new session's TP hold — up to ~1 dB above what the old
+  session itself had shown — and a few seconds of silence after a reset could still show an
+  integrated loudness carried over from before. The new session now starts exactly at the reset;
+  up to the first 0.2 s after a reset (or a return from BYPASS) is left out of the integrated
+  reading so the loudness filter's ring-out of what came before cannot reach it. Evidence: commits
+  0f162c8, f03d673. [Verified]
+- **A Force Max bounce entered without a re-prepare starts clean.** A host that switches to an
+  offline render without preparing the plugin again, with Force Max changing the oversampling,
+  could carry up to ~15 ms of the EQ's ring-out of what was playing (at up to −1 dBFS) into the head
+  of the bounce, and
+  the plugin's own dBTP hold read about +0.9 dB over the ceiling for a file that had none; with
+  **BYPASS** on, the bounce's first ~10 ms carried the realtime input itself (the same in 0.2.15).
+  All three now restart with the render ([`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-024).
+  Evidence: commits a43094b, f03d673. [Verified]
+
+### Changed
+- **True-peak mode needs a sample rate of 12 kHz or more.** Below 12 kHz — 8 and 11.025 kHz
+  included — the Ceiling limits sample peaks and reads `dB` even with **TP** on; 0.2.15 ran the
+  true-peak path down to 3.9 kHz (with the KI-025 overshoot, up to about +0.2 dB there), and no
+  analysis supports the promise through a fast Ceiling cut below 12 kHz. No other rate changes.
+  Evidence: commit 4ff71bd. [Verified]
+- **With TP on, the Lookahead's longest setting engages a little less below 66 kHz** — 9.0 ms at
+  48 kHz, 9.0 ms at 44.1 kHz (was 9.1), because the true-peak ceiling now takes 46 samples of the
+  fixed 10 ms; the reported latency is unchanged. Evidence: commit 4ff71bd. [Verified]
+
+## [0.2.15] — 2026-09-28
+
+**A correctness round from the review of PR #42: two paths on which true-peak mode could let the
+output over its ceiling are closed, and GR max now reads everything its graph shows.** Nothing here
+moves the reported latency, a parameter or the saved state; with true-peak mode off, and with a
+ceiling that does not move, every rendered sample is what 0.2.14 rendered. Measurement trail:
+[`worklogs/2026-09-28-pr42-review-tp-contract.md`](worklogs/2026-09-28-pr42-review-tp-contract.md).
+
+### Fixed
+- **True-peak mode now holds the ceiling while the Ceiling is moving.** With TP on, lowering the
+  Ceiling — an automation move, a preset, a drag — let the output run above the new value for the
+  length of the 20 ms glide: the TP path's own short delay meant each sample was held to the ceiling
+  as it was just before it left the plugin. The overshoot was largest at the end of a fast cut —
+  about +1.1 dB for 0 → −12 dB and +2.7 dB for −1 → −20 dB — and was measurable on slower DAW ramps
+  too (+0.3 dB over 50 ms). Every sample is now held to the ceiling in force at the moment it leaves
+  the plugin, as with TP off. At 44.1 kHz and above that holds inside the 0.1 dB tolerance on
+  either defining meter in every tested case — +0.004 dB at most across the main measurement, no more
+  than the static-ceiling floor in a search for worst-case bursts, and +0.071 dB in one recorded
+  corner (a cut one host block after switching TP on, at 1-sample host buffers). At 22.05 and 32 kHz
+  a burst constructed to land at the bottom of a fast full-range cut can still read up to +0.16 dB
+  over (0.2.14: +3.6 dB on the same burst) — recorded as
+  [`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-025, with the static-ceiling floor below 22.05 kHz.
+  A static Ceiling renders exactly as before, and nothing changes with TP off.
+  [ADR-0045](docs/architecture/design-decisions/ADR-0045-true-peak-mode-answers-to-the-ceiling-in-force-at-emission.md)
+  (on the owner's direction; flagged for review). Evidence: this release. [Verified]
+- **A bounce started during a true-peak engagement no longer carries the engagement's fade.**
+  Switching TP on while audio plays fades the last output out over ~6 ms. If the host then went
+  straight into an offline render without preparing the plugin again, that fade — the tail of what
+  was playing — was added onto the head of the bounce, and together with the Post EQ's ring-out it
+  could read up to 1.5 dB over the ceiling there; the plugin's own dBTP hold read it too. The render
+  now starts without it. Evidence: this release. [Verified]
+- **GR max reads the whole history the graph draws.** It used to stop up to ~0.2 s short of the
+  graph's left edge (a little more at the highest sample rates with the smallest buffers), so a
+  reduction still visible at the left of the graph could be missing from the number. Evidence: this
+  release. [Verified]
+
+### Changed
+- **The STATISTICS panel's tooltip is back to "Waveform statistics off the output".** 0.2.14 had
+  added a sentence about BYPASS there; the wording of that announcement is the owner's decision
+  ([`OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md) OQ-018), and the behaviour stays documented in the
+  user manual (§3.4). The "lim GR" / "GR max" captions ship as flagged placeholders (OQ-019).
+  Evidence: this release. [Verified]
+
+## [0.2.14] — 2026-09-27
+
+**Phase 1 of the 2026-09-26 product audit: listening and measurement you can trust.** MATCH now
+makes the BYPASS comparison loudness-matched, and the STATISTICS panel resets only from a RESET
+button and says what it measured. Nothing here changes a rendered sample, the reported
+latency, a parameter or the saved state. Measurement trail:
+[`worklogs/2026-09-27-phase1-match-statistics-observability.md`](worklogs/2026-09-27-phase1-match-statistics-observability.md).
+
+### Fixed
+- **With MATCH on, BYPASS is now a loudness-matched comparison.** MATCH used to turn the bypassed
+  signal down by the same amount as the processed one, so switching BYPASS still jumped by the full
+  level difference MATCH exists to remove (6.8 LU on pink noise at Loudness 70 %) and BYPASS played
+  your input 5–10 dB below itself. MATCH now brings only the processed signal to the input's
+  loudness, and BYPASS plays the input untouched: the same switch now moves the loudness by +0.6 LU.
+  DELTA with MATCH is unchanged, and nothing changes in an offline bounce or on the meters.
+  [ADR-0044](docs/architecture/design-decisions/ADR-0044-match-applies-to-the-processed-leg-so-bypass-is-loudness-matched.md)
+  (on the owner's direction; flagged for review). Evidence: this release. [Verified]
+- **Listening to BYPASS no longer changes the session statistics.** During playback, a bypass
+  comparison was measured into the integrated loudness, the loudness range and the peak holds —
+  so auditioning an input that peaked above your Ceiling turned the TP and SP holds red for the
+  rest of the session, and the integrated figure drifted toward the input. A realtime bypass is
+  now left out of those figures (the M, S and RMS readings still follow what you hear); an
+  offline bounce still measures its bypassed sections, because they are in the file.
+  [ADR-0020 amendment 4](docs/architecture/design-decisions/ADR-0020-waveform-statistics-panel.md)
+  (on the owner's direction; flagged for review). Evidence: this release. [Verified]
+
+### Added
+- **The limiter's gain reduction as a number**: **lim GR** (now — the deepest over the last
+  0.3 s) and **GR max** (the deepest over the GR history window), in dB, under out LUFS in Simple
+  and in the LIMITER panel in Advanced, whichever graph is showing. It is the limiter's reduction
+  only — the compressor's has its own meter and the clipper's is not measured — and reads "-"
+  once the host stops sending audio. Evidence: this release. [Verified]
+- **The STATISTICS header shows how much programme the figures cover** (`m:ss`): it stops while
+  you listen to BYPASS and while no audio plays, and returns to 0:00 after RESET, a project load
+  or a host sample-rate/buffer change. Evidence: this release. [Verified]
+
+### Changed
+- **STATISTICS resets only from its RESET button**, on the panel's header line. Until now any
+  click on the panel — a right-click, a drag, a click on the empty space under the readings —
+  discarded the integrated measurement, the loudness range and both peak holds. A deliberate
+  difference from Anamorph, which resets its holds on a click on a readout. What a reset clears is
+  unchanged. Evidence: this release. [Verified]
+- **MATCH + BYPASS is 5–10 dB louder than before** — it is now your input at its own level, never
+  louder than a plain BYPASS. A realtime print that automates BYPASS with MATCH on records the input
+  at unity in the bypassed sections. Evidence: this release. [Verified]
+
+### Known issues
+- **MATCH settles slightly low**: the matched processed signal sits +0.6 LU under the input on
+  typical material, up to about 1.7 LU on very hot material — the predict floor counts only the
+  limiter's reduction ([`KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) KI-023, audit DSP-005). The next
+  MATCH item.
 
 ## [0.2.13] — 2026-09-27
 

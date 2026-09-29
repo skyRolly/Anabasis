@@ -186,7 +186,7 @@ transitions per switchable path; no NaN/Inf/denormals across the feature × over
 sample-rate matrix; loudness-compensation render neutrality; LUFS against the EBU R128 vectors;
 dither placement and default.
 
-**Five of these have a stimulus mandated by an ADR, not left to the implementer.** A test name
+**Ten of these have a stimulus mandated by an ADR, not left to the implementer.** *(The count read "Five" until 2026-09-28, two rows after the table had six; "Eight" and then "Nine" on 2026-09-29.)* A test name
 alone does not carry the property; these are the cases where the wrong stimulus passes vacuously:
 
 | Test | Mandated stimulus | Source |
@@ -197,6 +197,10 @@ alone does not carry the property; these are the cases where the wrong stimulus 
 | click-free transitions | Must include a **lookahead move** — it is the one switchable path with neither a duck nor a latch (`DSP_POLICY.md` invariant 8) — and, since ADR-0041, a **true-peak toggle in both directions** (`testDuckWrapsTruePeakLatch`), which moves the lookahead line's length and is latched like an OS change | ADR-0004, ADR-0041 |
 | `testTruePeakModeHoldsTheCeiling` | **True-peak mode ON** (the two older ceiling tests pin it off), on the **real engine**, at **every OS cell and the Force Max bounce**, with programme that exercises each over mechanism — transient-heavy (one-sample clicks), HF-heavy (near-Nyquist tones), a +12 dB Post shelf, the limiter's slewed attack (Punchy, Transients 100 %) — read on **two meters**: the product's dBTP estimator AND an independently implemented BS.1770 Annex 2 filter — the two meters `DSP_POLICY.md` invariant 4 defines dBTP on (ADR-0043), **each with its own check** so a failure names its meter; libebur128 and the long-kernel reference are measured in the worklog matrix, not asserted. One meter alone passes a clamp that shares its blind spot (measured: the product meter alone read +0.008 dB on an output the Annex 2 filter read +1.44 dB over) | ADR-0041 |
 | `testTruePeakEngagementHoldsTheCeiling` | True-peak mode turned ON **mid-stream at a block top**, on the real engine, with programme whose TP-off output carries **real overs at the toggle** (a premise the test checks — a quiet toggle passes vacuously), at several OS cells, block sizes including a **short first block** (the toggle lands off the host grid) and more than one rate, read on the **same two meters**, each with its own check, from the first segment at or after the toggle; plus a **clean low-frequency tone** across the toggle, because an instant mute also holds the ceiling and only a continuity check rejects it | ADR-0041 decision 5 (revised) |
+| `testTruePeakModeHoldsTheCeilingBelow44k` | The **saved worst-case bursts** a hill-climbing search found against 0.2.15 (16 / 22.05 / 32 kHz, embedded verbatim) placed where they were found — at the bottom of a fast full-range Ceiling cut or on a static ceiling — with a **premise that each burst's reading reaches the live ceiling** (a burst that lands under it passes vacuously), and the 8 kHz one below the rail against the sample-peak promise; the clamp-level vectors driven with the engine's own stamping and once-per-block revision (a reversal whose emission-only stamping reads over is the premise for the min-stamping check); and the rail at **11999 and 12000 Hz**. Fails 12 checks on 0.2.15 | ADR-0046 |
+| `testStatisticsResetStartsTheSessionAtTheReset` | The programme must END EXACTLY AT THE RESET, with the render tap digital silence from it on (a premise) — a reset after the estimator has drained passes vacuously; plus a CONTINUING programme compared against a second engine with no reset (the over-correction a zero-started estimator makes), a click in the first post-reset samples (the under-correction a whole-reach skip makes), the loudness ring-out on and 64 samples off a sub-block boundary, and DC at 0.99 cut at the minimum gap the guard admits (fills L/2 − 1 / L/2 / L/2 + 1, an odd L among the rates) — the slowest ring-out, which a 50 ms guard let into the ungated mean | ADR-0020 (implementation note, 2026-09-28) |
+| `testMatchPredictCountsEveryLevelTakingStage` | The compressor must **engage** (−20 dBFS pink, threshold −24, ratio 4, limGain +6): at the −17 dBFS calibration point its reduction is exactly 0, so a compressor term passes vacuously there. And one case must run at **Comp Mix 50 % after lead silence**, so the predict floor acts alone for its first seconds — the only phase in which a term unweighted by the mix plays the matched signal above the input | ADR-0006 decision 7, audit DSP-005 |
+| `testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio` | A **never-bypassed twin** run in lockstep, so the frames a bypass made audible are read off the audio rather than off the engine's own flag (a test that trusts the flag pins nothing); a **RESET inside an audition**; and **open runs shorter than 0.5 s** between auditions — the case where the length grows and I cannot | ADR-0020 amendment 4 item 3 |
 
 ### `tests/state_tests.cpp` → `AnabasisStateTests`
 
@@ -210,6 +214,36 @@ editor is built, sized and inspected, never shown, and nothing here runs a messa
 why a `juce::Value` change (asynchronous through that loop) and anything requiring a modal pop-up
 are outside what this target can reach, and are carried in `DEPENDENCY_POLICY.md`'s JUCE-internals
 register instead.
+
+**The editor's 24 Hz tick is driven directly** (TEST-001, 2026-09-27). With no message loop the
+timer never fires, so the tick body is the public `refreshFromModel()`, which `timerCallback` is one
+line calling — the WHOLE body, so a direction added to the tick later is reachable the day it lands.
+The `testTheTick…` cases each check a PREMISE that the widget has not moved before calling it, so a
+pass means the tick did the work; each was run against a mutation that deletes or inverts its
+branch (29 of 29 killed, `DOCUMENTATION_COVERAGE.md`). Their handles are test-only seams that change
+no behaviour: component IDs on the out-LUFS label, the edited dot, the two GR mini-meters and the
+bypass dim; `GrMiniMeter::shownDb` / `isMono`; `tooltipGateOpen()` (the tooltip switch's predicate —
+a check through `getTipFor` would be vacuous, because JUCE returns no tip to a background process);
+and `setClockForTest`, which replaces the editor tick's wall clock so the Learn button's 5 s
+minimum pass and 1.5 s empty-pass flash, and the GR readout's stall rule, are stepped rather than
+slept (it was `setLearnClockForTest` until the readout joined it). A stored-value change can be delivered
+synchronously where a test needs the load path — `Value::getValueSource().sendChangeMessage (true)`
+is the message loop's own delivery (`testTheTooltipSwitchGatesEveryTip`). The tick's pop-up
+housekeeping is inert with nothing open and stays under ADR-0025, as does a hovered = true combo
+flag, which needs a pointer.
+
+**The tooltips that follow the rate** (OQ-020, 2026-09-29).
+`testTheTruePeakTipsFollowTheRateTheTruePeakPathEngagesAt` drives the tick across re-prepares at
+11.025 and 12 kHz with the editor open, both switch states, and opens a second editor at 8 kHz to
+pin the constructor's seed. It reads `getTooltip()`, which is what JUCE's button and slider
+accessibility handlers return as help — headless there is no peer and so no handler to ask. About
+the below-boundary words it asserts truths, not the words: both views and the Ceiling value boxes
+agree, the from-12-kHz dBTP clause is absent, the boundary is the one `CeilingClamp::kMinTruePeakRate`
+gives, and the switch makes no difference. The from-12-kHz words are held to the shipped strings,
+because the change must not move them. Its sweep of every knob's value box also passes at 48 kHz
+with `Knob::setTooltip`'s forward removed — the evidence that the forward changes nothing for a knob
+whose tip never moves. Removing the tick call, hard-coding the seed and dropping the forward each
+fail it (`DOCUMENTATION_COVERAGE.md`, the 2026-09-29 OQ-020 addendum).
 
 A view's own ARITHMETIC is reached a different way, and 0.1.6 is the case that shows why both are
 needed. `GrHistoryView` publishes the parts of its draw that carry a correctness argument as pure
@@ -265,6 +299,18 @@ back to rings nothing was written to must hold its trace bit-identically
 (`testTheSpectrumHoldsItsTraceWhenNothingArrivedWhileHidden`), and a re-prepare during the switch
 must reach the first visible frame as the floor
 (`testARePrepareWhileHiddenDoesNotReachTheFirstVisibleSpectrumFrame`).
+
+**A lap is constructed, not raced for** (0.2.15, the PR #42 review). The numeric GR readout's lap
+discipline was first tested with a real producer thread pushing while the readout scanned, with a
+premise that it had pushed during the scans. Under valgrind — the `sanitizers` job — threads run one
+at a time and the compute-bound reader kept the lock, so the premise failed intermittently (0–4
+pushes in 60 scans; 3 of 20 standalone runs). `GrHistoryView::readingFrom` is a template on the ring
+type for this reason only, and the suite hands it a ring adaptor that pushes a chosen burst at a
+chosen PEEK — the exact interleaving a concurrent producer creates, at an exact entry, on one
+thread. That turns "stays live while the producer pushes" into a boundary the test can pin from both
+sides: each certified chunk absorbs exactly its slack and not one push more, and a scan that did read
+an overwritten slot (the premise, counted by the adaptor) is never published. Prefer this form for
+any SPSC reader test: a scheduling-dependent premise is a flaky test under every serialising tool.
 
 The 0.2.12 review round added one more thing the suite could not previously see: a defect that is
 not in either trace but in the PAIR. `SpectrumView` draws two traces from two rings the audio thread
@@ -729,18 +775,29 @@ The script downloads pluginval if absent, finds the built `Anabasis.vst3`, and r
 
 ### Crash retry — what it is and is not
 
-An **abnormal termination** of the validator is retried up to 3 times; a **real validation
-failure** fails immediately and is never retried. The retry exists to absorb host-side validator
-crashes, not plugin defects — a real plugin defect crashes deterministically and still fails after
-the retries.
+An **abnormal termination** of the validator is retried up to 3 times (on Linux and Windows; not on
+macOS — see the table); a **real validation failure** fails immediately and is never retried. The
+retry exists to absorb host-side validator crashes, not plugin defects — a real plugin defect
+crashes deterministically and still fails after the retries.
 
 **The boundary is platform-specific** (`docs/policies/TESTING_POLICY.md` rule 3 is the binding
 statement):
 
 | | abnormal termination → retried | real failure → immediate |
 |---|---|---|
-| **Linux / macOS** | `exit ≥ 128` (128 + signal number) | `exit < 128` |
+| **Linux** | `exit ≥ 128` (128 + signal number) | `exit < 128` |
+| **macOS** | **not retried** — `exit ≥ 128`, or **exit 9** (below), is reported as `CRASHED` and fails the pass on the first attempt | `exit < 128` other than 9 |
 | **Windows** | Win32 exception code (`≥ 256`), negative, or no code at all | **`1…255`, including 128…255** |
+
+*(2026-09-29: this table read "Linux / macOS … retried", which stopped being true at 0.2.0
+(`7a71f2c`), when `run-pluginval.sh` made the retry Linux-only — `CRASH_RETRY_ATTEMPTS` is 3 on
+Linux and 1 elsewhere. Drift corrected here; the retry's scope did not change.)*
+
+**Exit 9 on macOS is a crash, not a failure (KI-028).** pluginval's command-line mode installs its
+own handler for SIGFPE, SIGILL, SIGSEGV, SIGBUS and SIGABRT on macOS (`Source/CommandLine.cpp`,
+`kill9WithSomeMercy`), which prints `pluginval received <signal>, exiting immediately` and ends the
+process with `std::_Exit (SIGKILL)` — a normal exit with status 9, not `128 + signal`. `run-pluginval.sh` reports that code as
+`CRASHED … exit 9` rather than as a real validation failure; the step still fails immediately.
 
 pluginval's own exit code is only ever **0 or 1** (`Source/CommandLine.cpp` funnels every failure
 through `exitWithError`, which returns 1; the failure count goes to the log, not the exit code), so
@@ -751,14 +808,31 @@ from `run-pluginval.sh` by design.
 
 The one code neither script classifies correctly is a **malformed command-line argument**:
 pluginval exits `-1` (255 on POSIX), which both scripts read as an abnormal termination and retry
-three times before failing. Both scripts construct their own arguments, so that code means the
-script itself is broken — it still fails, just noisily.
+three times before failing (on macOS, which has no retry, it fails on the first attempt as a
+crash). Both scripts construct their own arguments, so that code means the script itself is
+broken — it still fails, just noisily.
 
 On Windows, `run-pluginval.ps1` launches pluginval via `System.Diagnostics.Process` and
 `WaitForExit()` rather than the call operator: pluginval is a **GUI-subsystem** app, so `& $pv`
 returns immediately with a `$null` `$LASTEXITCODE`, which both false-greens the step and (with a
 retry loop) spawns concurrent background validators. The exit code is the only trustworthy signal,
 and it is only trustworthy after an explicit wait.
+
+### The KI-028 diagnostic workflow — not part of the gate
+
+`.github/workflows/ki028-diag.yml` (2026-09-29) runs pluginval on macOS to capture the throw site
+of `KNOWN_ISSUES.md` KI-028's teardown abort. It is **not** a level of `TESTING_POLICY.md`, gates
+nothing and must never be a required check; the gate is `build.yml` alone. It builds pluginval
+v1.0.4 from source (no hardened runtime, with a dSYM), builds the AU and VST3 with the configure
+line of the `build.yml` job it mirrors, injects the `__cxa_throw` / terminate / fault-handler
+interposer `.github/ki028/throwtrace.cpp` with `DYLD_INSERT_LIBRARIES`, runs the AU randomise lane
+repeatedly on the recorded seed, on fresh seeds, and on the recorded seed without
+`Editor Automation`, symbolicates with `atos` and uploads the logs, traces and any crash reports.
+A red run means KI-028 reproduced; a green one is N clean passes — evidence of rarity, not of
+absence. Since 2026-09-29 it also builds a control — JUCE's own `examples/CMake/AudioPlugin` AU
+from the pinned JUCE — and runs it the same way; with it, KI-028 was dispositioned **pre-existing /
+external** (the throw is in Apple's AudioToolboxCore under pluginval's AU host teardown, no
+Anabasis frame on any thread; the control never aborted). Wiring and triggers: `CI_CD.md`.
 
 ## What cannot be verified headlessly
 

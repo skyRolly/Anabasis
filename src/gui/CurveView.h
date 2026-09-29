@@ -113,6 +113,12 @@ public:
         }
     }
 
+    // Read-only, for the headless suite (audit finding TEST-001): the lane
+    // values the last `setGrDb` left, so a test can pin the editor tick's
+    // stage-to-lane wiring without a pixel read.
+    float shownDb (int lane) const noexcept { return lane == 0 ? shownL : shownR; }
+    bool  isMono() const noexcept           { return mono; }
+
 private:
     float shownL = 0.0f, shownR = 0.0f;
     bool  mono = false;

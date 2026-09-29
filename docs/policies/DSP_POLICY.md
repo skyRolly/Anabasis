@@ -86,13 +86,25 @@ stage exists; evidence citations are added as the modules land (constraint C7).
 
 3. **True-peak detection runs at ≥ 4× oversampling and is BS.1770-4 compliant.** A true-peak
    reading is an inter-sample estimate, not a sample peak; the ceiling is interpreted as dBTP when
-   true-peak mode is on.
+   true-peak mode is ENGAGED — the switch on and the host sample rate 12 kHz or more
+   (`truePeakPathEngages`, ADR-0046) — and as a sample-peak ceiling otherwise. *(Until 2026-09-29
+   this read "when true-peak mode is on"; below 12 kHz the switch can be on while the ceiling is a
+   sample-peak one. Prescribed text in ADR-0046's ratification note.)*
    Guarded by: the true-peak accuracy test (≤ 0.1 dB against known inter-sample-peak signals).
 
 4. **The output never exceeds the ceiling.** A final safety clamp sits after the limiter and
    before dither, and holds **under every condition** — any input, any parameter combination, any
-   automation rate, any sample rate, during and after every transition. Tolerance ≤ 0.1 dBTP in
-   true-peak mode, dBTP as defined below.
+   automation rate, any host sample rate, during and after every transition — true-peak mode's
+   inter-sample promise holds wherever the path engages, 12 kHz and up (`truePeakPathEngages`,
+   ADR-0046); below 12 kHz the ceiling holds on sample peaks and the Ceiling reads dB. Tolerance
+   ≤ 0.1 dBTP in true-peak mode, dBTP as defined below. *(Until 2026-09-28 this sentence said "any sample rate"
+   with no boundary; the path engaged from 3901 Hz and read up to +0.23 dB over below 44.1 kHz,
+   KI-025.)* *(From 2026-09-28 to 2026-09-29 the rate clause stood split in two — "any host sample
+   rate" in the list and a bold sentence of its own, "True-peak mode's inter-sample promise holds
+   wherever the path engages — 12 kHz and up …" — and it now carries ADR-0046 decision 6's
+   prescribed text as written, completed at the record's ratification — the list's closing "during
+   and after every transition" kept ahead of the rate clause, where it had stood, so it does not read
+   as part of the below-12 kHz sentence.)*
    **Scope: the PROGRAMME path** — the processed signal, and everything an offline render can
    emit. The two monitor-only audition legs are outside it by the same reading that lets bypass
    carry the unclamped dry signal (invariant 7): bypass monitoring plays the input as-is, and
@@ -117,7 +129,14 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    two meters the definition below names, each checked on its own;
    and, for the moment the promise is made, `testTruePeakEngagementHoldsTheCeiling` — true-peak mode
    engaged MID-STREAM on hostile programme, every reading from the toggle on (ADR-0041 decision 5,
-   revised in the PR #42 review).
+   revised in the PR #42 review); for "any automation rate", `testTruePeakModeHoldsTheCeilingUnderAutomation`
+   — instant and ramped cuts, a ±6 dB zig-zag, rises and a static ceiling, every reading and every
+   emitted sample checked against the LIVE smoothed ceiling at the output sample, the value the TP-off
+   clip holds (ADR-0045); for "any host sample rate", `testTruePeakModeHoldsTheCeilingBelow44k` —
+   worst-case bursts and fast cuts at 12–32 kHz, OS off to 4×, the clamp-level reversal, the
+   engagement rail at 11999 / 12000 Hz (ADR-0046); and for a render entered during an engagement,
+   `testOfflineEntryDropsTheEngagementTail` (the render read as a file, on both meters and on the
+   engine's own dBTP tap).
    **What "dBTP" means in this promise is defined, not assumed** (ADR-0043, 2026-09-27; audit
    finding DSP-001 sub-item (a)). In true-peak mode the tolerance applies to each of two meters
    reading the output: (i) the product's own dBTP estimator, `TruePeakEstimator` (4× polyphase,
@@ -154,14 +173,16 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    flat EQ, compressor below threshold, clipper/saturation at zero drive, limiter below threshold,
    dither off. Bypass is a null test.
    **Scope, the same carve-out invariants 4 and 12 carry** (recorded 2026-08-01, PR #5): the
-   bypass null is a property of the **programme path** — bit-exact with the §2.7 monitor
-   functions off, and bit-exact in every render, since both are snapped inert under
-   `nonRealtime` (invariant 10). Auditioning with **Loudness Comp** engaged scales the bypass leg
-   too, by design: the monitor gain is applied POST-mix precisely so that A/B-ing against bypass
-   is loudness-matched, which is the feature (§2.7, ADR-0006 "monitoring never in the render
-   path"). A bypass null measured with Loudness Comp on is measuring the monitor, not the
-   invariant.
+   bypass null is a property of the **programme path** — bit-exact in every render, since the §2.7
+   monitor functions are snapped inert under `nonRealtime` (invariant 10). Since ADR-0044
+   (2026-09-27) the §2.7 monitor gain is applied to the processed leg before the bypass crossfade,
+   so settled bypass is a bit-exact null in every monitor state — MATCH, DELTA or both — and the
+   loudness-matched comparison comes from the processed leg meeting the input's loudness, not from
+   scaling the input. *(Until then this paragraph carved Loudness Comp out: the gain was applied
+   post-mix and scaled the bypass leg too, which kept the level difference instead of removing it —
+   audit finding UX-009.)*
    Guarded by: `testNullWithDefaults`, `testBypassNull` (both with the monitor functions off),
+   `testMatchLeavesBypassAtUnity` (MATCH, and MATCH with DELTA, on),
    `testLoudnessCompensationDoesNotAlterRender` (the render-side half).
 
 8. **Every transition is click-free.** Toggling bypass, loudness compensation, delta monitoring,
@@ -177,7 +198,13 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    composition after dBTP was asked for. The decay is value-continuous; where the audio just
    before the toggle would ring above the ceiling it starts lower, the one place this invariant
    yields to invariant 4 — no lower than −1.7 dB over a 248-configuration hostile sweep, −3.2 dB
-   for a synthetic full-scale Nyquist-rate history.)*
+   for a synthetic full-scale Nyquist-rate history.)* *(A second place, since ADR-0045, 2026-09-28: in
+   true-peak mode a DOWNWARD Ceiling retarget, with the output at the ceiling, may drop the clamp's
+   gain within one sample by up to about (Z + 1 + E) ≈ 4.9 glide steps — 0.0040 on 0.9 DC for a
+   −1 → −20 dB cut at 48 kHz, where TP-off glides 0.0008 per sample — because frames already in
+   flight get the new ceiling with less notice than the attack ramp needs;
+   `testTruePeakModeBoundsTheStepAtACeilingCut` bounds it. The figure is ADR-0046's, whose narrower
+   revision reach replaced ADR-0045's "(16 + A/2 + 1) glide steps — 0.0185".)*
    Guarded by: the click-free transition tests (one per switchable path) — the three bulk-swap
    routes by `testAbSwitchRequestsDuck`, `testUndoRequestsDuck` and the preset bracket's duck
    request; the true-peak mode by `testDuckWrapsTruePeakLatch` and, for the engagement decay's
@@ -283,10 +310,12 @@ stage exists; evidence citations are added as the modules land (constraint C7).
    recovery half; `testSelfHealDoesNotSnapTheEnvelope` for the manner of the recovery.
 
 10. **Loudness-compensated monitoring and loudness-matched bypass are honest** (§3). The
-    compensation is a measurement-driven gain applied to the *monitoring* path; it must never
+    compensation is a measurement-driven gain applied to the *monitoring* path's processed leg,
+    before the bypass crossfade (ADR-0044), so BYPASS plays the input at unity; it must never
     alter the rendered output, and it must not become a continuous AGC. Delta monitoring
     (auditioning the difference signal) is likewise monitoring-only.
-    Guarded by: `testLoudnessCompensationDoesNotAlterRender`.
+    Guarded by: `testLoudnessCompensationDoesNotAlterRender`, `testMatchedBypassIsLoudnessMatched`,
+    `testBypassPlaysTheInputAtUnityWithMatchOn`, `testMatchPredictCountsEveryLevelTakingStage`.
 
 11. **Metering accuracy is a contract, not a display detail.** LUFS (momentary / short-term /
     integrated, gated per BS.1770-4 / EBU R128) is accurate to **≤ 0.1 LU** against the official
@@ -300,8 +329,8 @@ stage exists; evidence citations are added as the modules land (constraint C7).
     **Scope, stated for the same reason invariant 4's is** (recorded 2026-08-01, PR #5): "last
     stage" means last on the **programme path**, and **three** legs sit downstream of the
     quantiser (the count was corrected from two on 2026-08-02 — the delta leg was missed):
-    - the **§2.7 loudness-compensation gain**, applied post-mix so a loudness-matched bypass
-      carries the same gain. Monitor-only, snapped inert under `nonRealtime` (invariant 10), so
+    - the **§2.7 loudness-compensation gain**, applied to the processed leg before the bypass
+      crossfade (ADR-0044; until 2026-09-27 it was applied post-mix). Monitor-only, snapped inert under `nonRealtime` (invariant 10), so
       it never reaches a render: auditioning with Loudness Comp engaged does scale the dithered
       signal off the grid, which is correct — the monitor is not the export.
     - the **§2.8 bypass crossfade**, which is *not* monitor-only and does run in a render when a
@@ -312,7 +341,8 @@ stage exists; evidence citations are added as the modules land (constraint C7).
       **invariant 7 requires bypass to be a bit-exact null**. A bounded off-grid ramp on an
       audition toggle is the cheaper of the two, and the corrected claim is that a render is on
       the grid *except* across a bypass toggle — not unconditionally.
-    - the **§2.9 delta substitution**, `wetLeg = dryForDelta − processed`: it subtracts the
+    - the **§2.7 delta substitution**, `wetLeg = dryForDelta − processed` (this bullet said §2.9
+      until 2026-09-27): it subtracts the
       undithered delay-aligned dry signal from the dithered processed one, so an audition with
       Delta engaged is off the grid too. Monitor-only and snapped inert under `nonRealtime`, so
       like the compensation gain it never reaches a render — which is why the substance of the
@@ -333,13 +363,13 @@ where feasible (`TESTING_POLICY.md`). An invariant with no test is a documented 
 | 1 chain order | `testLimiterPushDoesNotDriveTheClipper` (the push sits after Clip/Sat), `testEqPositionsAreDistinct` + `testOutputNeverExceedsCeiling` in BOTH EQ positions (the clamp is last before dither) | **live** (P2) |
 | 2 latency exactness | `testReportedLatencyMatchesImpulse`, `testOsLatencyMatrix`, `testTruePeakModeCapsTheWindowNotTheLatency` | **live (P2)** — the impulse lands at exactly `maxLookahead + osLatency` for every lookahead value AND every factor × phase cell, Force-Max-offline included; linear-phase cells are sample-exact, min-phase cells within 1 sample of the nominal bulk delay (IIR dispersion, documented in the test). **Both true-peak modes since 2026-09-27** (ADR-0041 moves the composition in TP mode, not the total) |
 | 3 true peak ≥ 4× | `testTruePeakAccuracy`, `testLimiterTruePeakMode`, `testClampTruePeakDetector` | **partial (P2)** — the 4× measurement-tap estimator is live in the limiter's detector (grid-aligned ISP −0.004 dB, off-grid −0.171 dB recorded; the ceiling is dBTP-aware in true-peak mode); the clamp's own tap (ADR-0006 item 2) is live since 2026-09-27 (ADR-0041, Accepted 2026-09-27) and pinned by `testClampTruePeakDetector`. **Recorded gap:** the vectors this row tests sit at fs/4; on HF-rich programme the 4× estimator reads up to ~1.4 dB below the BS.1770 Annex 2 example filter (worklog 2026-09-27, `KNOWN_ISSUES.md` KI-020) |
-| 4 ceiling never exceeded | `testOutputNeverExceedsCeiling`, `testTruePeakModeHoldsTheCeiling`, `testTruePeakEngagementHoldsTheCeiling`, `testCeilingClampTruePeakPath` | **live (2026-09-27)** — the ADR-0002 mandated stimulus: BOTH EQ positions, the Post case with a +12 dB shelf after the limiter (mutation-verified: clamp moved upstream of the post EQ fails it); the ≤ 0.1 dBTP matrix: 123 TP-mode runs on the product meter and an independent BS.1770 Annex 2 meter, worst +0.001 dB — it fails on `main` (102 of 123 runs over on either meter, worst +6.04 dB) and passes on ADR-0041 (Accepted 2026-09-27); **since 2026-09-27** the engagement: TP engaged mid-stream in 13 configurations, every reading from the toggle on ≤ ceiling + 0.1 dB — it fails on the pre-fix engine in all 13 (+2.4 to +4.7 dB) |
+| 4 ceiling never exceeded | `testOutputNeverExceedsCeiling`, `testTruePeakModeHoldsTheCeiling`, `testTruePeakEngagementHoldsTheCeiling`, `testCeilingClampTruePeakPath`, `testTruePeakModeHoldsTheCeilingUnderAutomation`, `testTruePeakModeHoldsTheCeilingBelow44k` | **live (2026-09-27)** — the ADR-0002 mandated stimulus: BOTH EQ positions, the Post case with a +12 dB shelf after the limiter (mutation-verified: clamp moved upstream of the post EQ fails it); the ≤ 0.1 dBTP matrix: 123 TP-mode runs on the product meter and an independent BS.1770 Annex 2 meter, worst +0.001 dB — it fails on `main` (102 of 123 runs over on either meter, worst +6.04 dB) and passes on ADR-0041 (Accepted 2026-09-27); **since 2026-09-27** the engagement: TP engaged mid-stream in 13 configurations, every reading from the toggle on ≤ ceiling + 0.1 dB — it fails on the pre-fix engine in all 13 (+2.4 to +4.7 dB); **since 2026-09-28** ceiling automation against the LIVE smoothed ceiling (ADR-0045 — fails on the unfixed engine, 64 of 100 renders over) and the rate contract — the 12 kHz rail, the low-rate bursts and cuts (ADR-0046, ratified 2026-09-29 — fails 12 checks on 0.2.15); this row did not list either guard until 2026-09-29 |
 | 5 oversampling scope | `testOsLatencyMatrix`, `testOsReducesAliasing`, `testCeilingUnderOs`, `testBypassNullUnderOs` | **live (P2)** — the region wraps Clipper/Sat → Limiter; EQ/comp/clamp/dither at base rate; bypass stays bit-exact at every factor; measured: 4× drops the driven-clipper folded 3rd by ~74 dB beyond ADAA alone |
 | 6 ADAA | `testClipAdaaReducesAliasing` | **partial (P2)** — first-order ADAA on the clip curve, measured at OS Off: the folded 3rd/5th of a driven 11.72 kHz tone drop 14.8 / 10.4 dB vs the memoryless curve (numbers recorded in the test); the OS × aliasing matrix arrives with the oversampler |
-| 7 identity at zero | `testNullWithDefaults`, `testBypassNull` | **live (P1)** |
-| 8 click-free transitions | per-path click tests | **live (P2)** — smoothed paths pinned (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`, `testEqGainIsSmoothed`); the §2.8 duck wraps every discrete rewire (`testDuckWrapsDiscreteRewires`, `testDuckWrapsOsLatch`, and since 2026-09-27 the true-peak mode, `testDuckWrapsTruePeakLatch`; its engagement decay's continuity since 2026-09-27, `testTruePeakEngagementHoldsTheCeiling`) and the wrapper bulk swaps (`testDuckOnWrapperRequest`, `testAbSwitchRequestsDuck`) — all mutation-verified; loudnessComp/delta crossfades arrive with their P3 features |
+| 7 identity at zero | `testNullWithDefaults`, `testBypassNull`, `testMatchLeavesBypassAtUnity` | **live (P1)** — since 2026-09-27 (ADR-0044) settled bypass is also bit-exact with MATCH and DELTA on |
+| 8 click-free transitions | per-path click tests | **live (P2)** — smoothed paths pinned (`testCeilingIsSmoothed`, `testLookaheadIsSmoothed`, `testEqGainIsSmoothed`); the §2.8 duck wraps every discrete rewire (`testDuckWrapsDiscreteRewires`, `testDuckWrapsOsLatch`, and since 2026-09-27 the true-peak mode, `testDuckWrapsTruePeakLatch`; its engagement decay's continuity since 2026-09-27, `testTruePeakEngagementHoldsTheCeiling`) and the wrapper bulk swaps (`testDuckOnWrapperRequest`, `testAbSwitchRequestsDuck`) — all mutation-verified; the three monitor toggles — BYPASS with and without MATCH, MATCH, DELTA — mid-stream since 2026-09-27 (`testMonitorTogglesAreClickFree`, each ramp's removal failing its own case; this row had read "arrive with their P3 features" since P2); **since 2026-09-28** the second place this invariant yields to invariant 4 — the one-sample clamp step at a downward Ceiling retarget in TP mode — is bounded at 7 glide steps (`testTruePeakModeBoundsTheStepAtACeilingCut`; ADR-0045, the figure ADR-0046's; listed here from 2026-09-29) |
 | 9 no NaN/Inf/denormals | `testNoBadSamples`, `testExtremeLevelDoesNotSilencePermanently`, `testExtremeLevelDoesNotBreakTheMetersOrAdaptation`, `testALearnPassThatOverflowedIsNotCommitted`, `testSelfHealDoesNotSnapTheEnvelope`, `testClipSatCannotLoseAChannel`, `testClipSatCannotHideANonFiniteFromTheBoundary` | **live (P1, extended P4)** — a non-finite value never leaves the engine, and the engine RECOVERS from one rather than degrading permanently. Both sources are covered: contamination that arrives (a hostile input buffer, zeroed before any state sees it) and contamination a stage generates from a legal float (EQ biquad in either position, RMS detector square, colour c⁵, polyphase IIR — each verified by its own stimulus, and each case dies against exactly one element of the recovery being reverted), and the stages that emit no audio to check at all (the meters and the feature extractor, repaired per block). **Extended 0.1.3** with the PER-CHANNEL half, which the runs above did not reach because they drive one block into both channels: every boundary substitutes `0.0f` for the OFFENDING CHANNEL ALONE, so a stage that keeps regenerating a non-finite value from a FINITE input silences one channel indefinitely while the other plays — and the state repair this invariant relies on cannot help, because nothing about the stage's state is wrong. `testClipSatCannotLoseAChannel` pins the §2.4 stage as channel-symmetric and non-finite-free over a swept fuzz (the premise), and `testExtremeLevelDoesNotSilencePermanently` gained the SUSTAINED one-channel case at three Clip Mix values × four magnitudes (the consequence). RULE FOR NEW STAGES, alongside the reset-list rule in `AnabasisEngine::processChunk`: a stage whose failure mode is INPUT-magnitude-driven rather than state-driven must bound its own arithmetic — being in the sanitise list is necessary and not sufficient. **Extended again 0.1.3 round 8** with the OBSERVABILITY half: a stage with a dry/wet mix stops being observable at its dry endpoint, because the mix loop leaves the input sample untouched and the boundary that raises the repair flag has nothing to see — so warm state kept across that endpoint is a latch that surfaces later, on ordinary audio, when the mix opens. `testClipSatCannotHideANonFiniteFromTheBoundary` pins the §2.4 stage against it (30 poisoning attempts up to FLT_MAX, colour swept on and off, at Clip Mix 0 then re-opened with the tame engaged); removing the colour-argument bound fails it with 32 000 of 120 000 non-finite samples on ORDINARY audio, which is the failure class no other test in the suite can reach |
-| 10 monitoring honesty | `testLoudnessCompensationDoesNotAlterRender`, `testDeltaMonitor` | **live (P3)** — offline render bit-identical with comp on/off and with delta on/off; realtime monitor pulled to the dry loudness with the predict floor acting before the measure exists (all mutation-verified) |
+| 10 monitoring honesty | `testLoudnessCompensationDoesNotAlterRender`, `testDeltaMonitor`, `testMatchedBypassIsLoudnessMatched`, `testBypassPlaysTheInputAtUnityWithMatchOn`, `testMatchPredictCountsEveryLevelTakingStage` | **live (P3)** — since 2026-09-29 (DSP-005) the predict floor counts the compressor (× Comp Mix) and the Clip/Sat stage as well as the limiter: MATCH settles within 0.45 LU at the calibration point and 0.5 LU with the compressor engaged or in parallel, and a parallel-compressed signal is never matched 0.75 LU above the input before the measure exists; offline render bit-identical with comp on/off and with delta on/off; realtime monitor pulled to the dry loudness with the predict floor acting before the measure exists (all mutation-verified); since 2026-09-27 (ADR-0044) the loudness-matched BYPASS comparison: with MATCH on, switching to BYPASS moves the short-term loudness by ≤ 1 LU on pink at the Loudness 70 % point (−6.76 LU before), an offline BYPASS toggle with MATCH + DELTA on stays bit-identical, and through the wrapper BYPASS is sample-identical with MATCH on and off |
 | 11 metering accuracy | `testLufsCalibration`, `testLufsGating`, `testLufsWindows` | **partial (P3)** — LUFS M/S/I live against the standard's synthesised calibration points (997 Hz compliance vector −3.01 LKFS ≤ 0.1 LU at 48/44.1 kHz; both gate halves isolated by stimulus, incl. the silence-in-the-threshold-base case only mutation testing surfaced); the dBTP meter and the file-based EBU vector sweep remain |
 | 12 dither placement/default | `testDitherModes` + `testNullWithDefaults` | **live (P2)** — Off default is a true no-op (the bit-exact null proves it); 16-bit lands on the 2⁻¹⁵ grid with a randomised LSB; shaping tilts the error spectrum +12.6 dB toward the top of the band; placement after the clamp, processed path only |
 | 13 format-agnostic core | build-level: `AnabasisDSP` links without the wrapper | **live (P1)** — the `AnabasisTests` target compiles the core with no wrapper and no GUI |

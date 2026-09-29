@@ -165,6 +165,150 @@ public:
         return (double) windowEntries (sr, bs) * (double) bs / sr;
     }
 
+    // ---- The numeric GR readout (audit VIS-007 / VIS-003 step 1) -----------
+    // Two figures read from THIS ring by the editor's 24 Hz tick, in both
+    // views and whichever graph is showing: the limiter's reduction NOW — the
+    // deepest entry over the last ~0.3 s — and its MAX. Both are the ring's
+    // own figure: the LIMITER's reduction, deepest channel, one entry per
+    // prepared block (ADR-0023 decision 10) — the compressor and clipper are
+    // not in it, which is why the captions say "lim". Pure and public, like
+    // everything above, so the suite pins them on a standalone ring.
+    //
+    // THE MAX IS THE DEEPEST ENTRY OF THE HISTORY THE GRAPH DRAWS AT THE
+    // READING'S HEAD, through the newest entry: `[buckets (head, want,
+    // cols).first, head)` — every drawn bucket's whole span (the lead buckets
+    // and the alignment `buckets` adds included) plus the still-collecting
+    // bucket the graph holds back and "now" already reports, so max ≥ now at
+    // every head. It is the GRAPH's range and not `want`'s because the two
+    // differ by the geometry: the graph reaches `lead · stride` plus up to
+    // `stride − 1` entries past the nominal window (9–11 entries, 96–117 ms,
+    // at 48 kHz / 512 on the Simple well: the panel's leftmost columns), and
+    // at a saturated pair it draws a little less than `want`. `cols` is the
+    // GR view's plot width in the current layout (`plotColumns`): the view
+    // keeps its bounds while the spectrum owns the well, so the figure is the
+    // history the GR graph shows the instant it is revealed. Until the PR #42
+    // review of 0.2.14 the max read a width-free `want` entries (less a lap
+    // margin), missing the graph's oldest drawn entries — up to ~0.2 s of it.
+    //
+    // A const, message-thread read with `paintHistory`'s discipline: epoch
+    // first (odd = a clear in flight, take nothing), the pair and the head
+    // inside the bracket, peeks, then `batchIntact` and the lap re-read as
+    // two sequenced statements. No new thread, atomic or ordering — the ring's
+    // header already admits any number of message-thread readers.
+    //
+    // IN TWO CERTIFIED CHUNKS, because a drawn range can reach `kSize − 1`
+    // entries back (a saturated pair) and a single closing check would then
+    // fail on the first push during the scan. A `batchIntact` + `available()`
+    // re-read certifies every peek sequenced before it against the oldest
+    // index among them (a peek that saw a lapping push forces the re-read past
+    // `readFloor`, `push`'s fence argument), so the scan reads the OVERHANG —
+    // the drawn entries older than `kReadoutGuardedSpan`, empty at every pair
+    // whose drawn history fits inside it — first and certifies it at once,
+    // then reads the guarded span and closes as before with
+    // `kReadoutLapMargin` pushes in hand. Either chunk failing discards the
+    // whole reading: a taken reading is always the exact minimum of the range
+    // above.
+    static constexpr double  kReadoutCurrentSeconds = 0.3;
+    // Pushes a scan of the guarded span tolerates before its closing check.
+    // 4096 entries is over 0.17 s of producer progress at 24000 entries/s.
+    static constexpr int64_t kReadoutLapMargin      = 1 << 12;
+    static constexpr int64_t kReadoutGuardedSpan    = (int64_t) anabasis::GrHistoryBuffer::kSize - 1
+                                                    - kReadoutLapMargin;
+
+    // The plot's pixel columns for a view of these bounds — `paintHistory`'s
+    // expression, shared so the readout reads the geometry the graph draws.
+    static int plotColumns (juce::Rectangle<int> viewBounds) noexcept
+    {
+        return juce::jmax (1, (int) viewBounds.toFloat().reduced (10.0f, 8.0f).getWidth());
+    }
+
+    static int64_t readoutCurrentEntries (double sampleRate, int blockSize) noexcept
+    {
+        const double sr = sampleRate > 0.0 ? sampleRate : 48000.0;
+        const int    bs = juce::jmax (1, blockSize);
+        return juce::jlimit ((int64_t) 1, kReadoutGuardedSpan,
+                             (int64_t) std::ceil (kReadoutCurrentSeconds * sr / (double) bs));
+    }
+
+    // The oldest entry the max covers: the graph's `first` — never newer than
+    // "now"'s oldest, which binds only on a panel a column wide.
+    static int64_t readoutFirst (int64_t head, double sampleRate, int blockSize, int cols) noexcept
+    {
+        const int64_t drawn = buckets (head, windowEntries (sampleRate, blockSize), cols).first;
+        return juce::jmin (drawn, juce::jmax ((int64_t) 0, head - readoutCurrentEntries (sampleRate, blockSize)));
+    }
+
+    struct Reading
+    {
+        bool     taken     = false;   // false: raced a clear or a lap — keep what is shown
+        int64_t  head      = 0;       // 0: nothing measured on this timeline yet
+        uint32_t epoch     = 0;
+        double   period    = 0.0;     // one entry, in seconds
+        float    currentDb = 0.0f;    // deepest over the last readoutCurrentEntries
+        float    peakDb    = 0.0f;    // deepest over [readoutFirst, head)
+    };
+    // A template only so the suite can hand it a ring that pushes at a chosen
+    // peek (a deterministic lap); production passes the ring.
+    template <typename Ring = anabasis::GrHistoryBuffer>
+    static Reading readingFrom (const Ring& ring, int cols) noexcept
+    {
+        Reading r;
+        const auto epoch0 = ring.resetEpoch();
+        if ((epoch0 & 1u) != 0u)
+            return r;
+        const auto    prepared = ring.prepared();
+        const int64_t head     = ring.available();
+        const int64_t first    = readoutFirst (head, prepared.rate, prepared.block, cols);
+        const int64_t guarded  = juce::jmax (first, head - kReadoutGuardedSpan);
+        const int64_t nowFrom  = head - readoutCurrentEntries (prepared.rate, prepared.block);
+        float current = 0.0f, peak = 0.0f;
+        if (guarded > first)                                // the overhang: (near-)saturated pairs only
+        {
+            for (int64_t e = first; e < guarded; ++e)
+                peak = juce::jmin (peak, ring.peek (e).grDb);
+            const bool    intact1 = ring.batchIntact (epoch0);   // carries the acquire fence
+            const int64_t live1   = ring.available();            // sequenced after it
+            if (! intact1 || first < readFloor (live1))
+                return r;
+        }
+        for (int64_t e = guarded; e < head; ++e)
+        {
+            const float g = ring.peek (e).grDb;
+            peak = juce::jmin (peak, g);
+            if (e >= nowFrom)
+                current = juce::jmin (current, g);
+        }
+        const bool    intact = ring.batchIntact (epoch0);   // carries the acquire fence
+        const int64_t live2  = ring.available();            // sequenced after it
+        if (! intact || guarded < readFloor (live2))
+            return r;
+        r.taken     = true;
+        r.head      = head;
+        r.epoch     = epoch0;
+        r.period    = entryPeriod (prepared.rate, prepared.block);
+        r.currentDb = current;
+        r.peakDb    = peak;
+        return r;
+    }
+
+    // "Now" has no data when nothing was ever pushed on this timeline, or when
+    // the head has not moved for longer than max (500 ms, 4 entry periods) —
+    // the host stopped calling the plug-in. The 500 ms floor rides over bursty
+    // delivery (OQ-017) without flicker. The caller supplies the time since
+    // the head or epoch last moved, from an injectable clock.
+    static bool readoutStale (int64_t head, double msSinceMove, double periodSecs) noexcept
+    {
+        return head <= 0 || msSinceMove > juce::jmax (500.0, 4000.0 * periodSecs);
+    }
+
+    // One decimal, rounded first so a tiny reduction never prints "-0.0".
+    // Negative dB, the lanes' and the history's own sign.
+    static juce::String grText (float db)
+    {
+        const float r = std::round (db * 10.0f) / 10.0f;
+        return juce::String (juce::exactlyEqual (r, 0.0f) ? 0.0f : r, 1);
+    }
+
     // The decimation geometry one frame draws. Public and pure for the reason
     // `windowEntries` is: the arithmetic with a correctness argument must be
     // pinnable without a graphics context, and this arithmetic had two bugs

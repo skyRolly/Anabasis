@@ -250,9 +250,20 @@ open with a fade — see the note below), which forces the duck to idle at unity
 If a duck happened to be in flight at that instant — a factor/model rewire, or
 a wrapper bulk swap requested moments earlier — the processed gain steps from
 its current value (as low as 0.0 at the silent bottom) to 1.0 in one sample,
-and the latch may then clear the lookahead ring at full gain. Bounded to the
-first sample of an offline render, and the alternative (carrying a monitor
-fade into a bounce) is worse; recorded so it is not rediscovered as a defect.
+and the latch may then clear the lookahead ring at full gain. The STEP is
+bounded to the first sample of an offline render, and the alternative
+(carrying a monitor fade into a bounce) is worse; recorded so it is not
+rediscovered as a defect. *(Corrected 2026-09-28, the PR #42 review of 0.2.14:
+this paragraph used to read as if nothing else reached the render.)* What the
+unity gain then plays is whatever the pipeline holds — on this no-re-prepare
+route the engine does not reset: the lookahead ring's realtime content, and,
+when the previous realtime block latched a composition, the Post EQ's ring-out
+from before the latch (the silent bottom would have hidden it). A host that
+re-prepares before a bounce starts from an empty pipeline instead. Until
+0.2.15 a true-peak ENGAGEMENT decay (ADR-0041 decision 5) also survived the
+entry and played the last realtime frame's decay into the head of the render,
+up to +1.46 dB over the ceiling with that ring-out; the entry now drops it,
+since it belongs to the duck (`testOfflineEntryDropsTheEngagementTail`).
 
 The same latch boundary also steps two internal CONSUMERS of the dry leg that
 the duck does not cover: the §2.7 dry loudness measure and the §5.4 adaptive
@@ -548,7 +559,7 @@ They are acquired in **both** orders:
 
 | Order | Path |
 |---|---|
-| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:221`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
+| M0 → M1 | `AnabasisAudioProcessor::audioProcessorParameterChangeGestureBegin` (`src/PluginProcessor.cpp:223`) takes the §7 pre-state with `saveSlotFromLive()` → `copyStateWithRaw()` → `apvts.copyState()`, from **inside** the listener callback that already holds M0. |
 | M1 → M0 | `APVTS::ParameterAdapter::setDenormalisedValue` holds M1 and calls `setValueNotifyingHost` → `sendValueChangedMessageToListeners`, which takes M0. Reached by the macro mapping, by `reassertFromRaw`/`adoptParamsTree`, and so by every restore path. |
 
 One thread cannot deadlock on this. Two can: the message thread starting a drag on parameter P
@@ -605,7 +616,7 @@ observed against this plugin (the same standing caveat as KI-003).
 listener callback.
 
 Evidence [Verified]:
-- Source: `src/PluginProcessor.cpp:221` (the M0 → M1 edge); JUCE
+- Source: `src/PluginProcessor.cpp:223` (the M0 → M1 edge); JUCE
   `juce_AudioProcessorValueTreeState.cpp:176` (the M1 → M0 edge)
 - Test: `AnabasisStateTests` `testTheFrozenLatchNeedsNoThreadCrossing` provides the two-thread
   stimulus; the finding is the **ThreadSanitizer** `lock-order-inversion` report, not a suite
@@ -1563,6 +1574,515 @@ Evidence [Verified]:
   (`writeTo` replaces unconditionally)
 - Test:   none — no behaviour changed this round
 - Commit: this round's PR (documentation only)
+
+### KI-023 — MATCH settles the processed signal slightly below the input's loudness (2026-09-27) — **PARTLY FIXED 2026-09-29 (DSP-005: the compressor and Clip/Sat terms); open for the percussive term**
+
+**Severity:** Low (a conservative listening-aid bias of a fraction of a LU at typical settings; no
+rendered sample is affected)
+**Status:** Confirmed, measured — the next MATCH item after ADR-0044. Audit finding **DSP-005**.
+**Affects:** realtime monitoring with MATCH on, all platforms/formats; offline renders are unaffected
+
+MATCH's gain is `min(measure, predict)`: the measure is the short-term dry − processed loudness, the
+predict floor is the deterministic lift (input gain + limiter gain + the limiter's deepest recent
+reduction). The floor counts only the LIMITER's reduction, so whenever another stage takes level out
+it over-estimates the lift, and `min` keeps the too-deep floor once the measure converges: the
+matched processed signal sits under the input. Since ADR-0044 put BYPASS at unity, this residual is
+the whole of the BYPASS comparison gap. Measured 2026-09-27 on the real engine at the Loudness 70 %
+point, pink noise (short-term / momentary, input − matched):
+
+| Input level (pink, per channel) | Residual | With clip drive 0 | With the compressor idle |
+|---|---|---|---|
+| −17 dBFS RMS (dry −14.3 LUFS) | +0.63 LU S / +0.82 LU M | +0.30 LU M | +0.81 LU M |
+| −12 dBFS RMS (dry −9.3 LUFS) | +1.73 LU M | +0.44 LU M | +1.39 LU M |
+
+At these settings the **clipper's** level loss is the larger term — which contradicts the audit's
+recommendation to add the compressor's reduction and drop the clipper term. The fix has to stay
+inside ADR-0006 decision 7 (stateless, floor-only, attenuation-only) and must not turn MATCH into a
+continuous AGC (DSP_POLICY invariant 10); both terms, and their per-block behaviour on transient
+programme, need prototyping against the audit's acceptance criteria before a change is chosen.
+
+**Workaround:** none needed for most judging — the bias is conservative (the processed signal is never
+flattered). Where it matters, compare at moderate input levels, or read the input's and the output's
+loudness directly.
+**Cause:** the predict floor's "expected GR" term is the limiter's alone (`AnabasisEngine.cpp`, the
+block-top predict; the GR-tap comment there stated the error direction backwards until 2026-09-27).
+
+Evidence [Verified]:
+- Source: `src/dsp/AnabasisEngine.cpp` (measure / predict at the block top; the GR tap comment)
+- Test:   `testMatchedBypassIsLoudnessMatched` bounds the residual at 1 LU at the calibration point
+  (measured +0.63 LU); the level sweep and the clip/compressor isolation are probe measurements in
+  `worklogs/2026-09-27-phase1-match-statistics-observability.md`
+- Commit: PR #42
+
+**Addendum, 2026-09-29 — partly fixed (DSP-005, decided Modify); re-scoped, still open.** The
+words above are kept as the state at 0.2.14–0.2.16. Evidence:
+`worklogs/2026-09-29-pr42-round5-contract-ki028-clock.md` §9.
+
+- **Fixed:** decision 7's "expected GR" (ADR-0006) now counts three stages — the limiter's deepest
+  reduction as before, the compressor's block-end reduction weighted by Comp Mix (a parallel mix m
+  applies 1 − m + m·g, not g; read from the stage on the audio thread, not from the published
+  `compGrDb`, which `clearPublishedStageGr` writes from the message thread), and the Clip/Sat stage's
+  measured level change over the previous block (energy out over in). The figure KI-023 names as the
+  larger term is, at Oversampling Off, mostly the first-order ADAA kernel's cos(πf/fs) droop (KI-005),
+  not peak shaving. Measured, residual input − matched, short-term, pink, 48 kHz / 512, OS Off:
+
+  | Case | 0.2.16 | 0.2.17 |
+  |---|---|---|
+  | −17 dBFS, Loudness 70 % (the calibration point; `matchJump`) | +0.63 LU | **+0.27 LU** |
+  | −17 dBFS, L70 (the new test's dry-meter harness) | +0.67 | +0.31 |
+  | −12 dBFS, Loudness 50 / 70 / 90 % | +0.89 / +1.52 / +2.18 | +0.33 / +0.43 / +0.60 |
+  | −12 dBFS, L70 / L90, OS 4× | +0.71 / +1.42 | +0.09 / +0.24 |
+  | compressor-heavy (threshold −24, ratio 4, limGain +6), −20 dBFS | +3.00 | +0.18 |
+  | the same at Comp Mix 50 % | +1.37 | +0.07 |
+
+  Renders and the invariant-7 null are unchanged (MATCH is inert offline; the full true-peak matrix
+  is bit-identical render for render), and the floor still only attenuates.
+- **Still open — the percussive term:** the limiter term is the deepest reduction of the previous
+  block, so on percussive programme it swings (−4.8 dB on a hit block, −1.1 dB on a tail) and `min`
+  and the 200 ms smoother follow the deep values: **+2.8 LU** under on synthetic drums (peak −1 dBFS,
+  L70), **+0.9 LU** on a music-like bed. A stateless per-block floor cannot remove it; both measured
+  removals — measure only once the short-term exists, or a held GR — conflict with ADR-0006
+  decision 7 and play the matched signal several LU OVER the input for seconds at an onset or a
+  macro jump. Removing it is an owner decision on an amendment to decision 7.
+- **Still open — the uncounted EQ:** an EQ cut is not an expected GR (EQ-pre −6 dB high shelf:
+  +1.07 LU; +1.25 before).
+- **By design, stated:** MATCH never raises the processed leg (decision 7: attenuation only), so a
+  setting whose render is quieter than the input keeps the whole difference (−12 dBFS pink, threshold
+  −24, ratio 4, limGain 0: +8.99 LU, unchanged).
+- Guard: `testMatchPredictCountsEveryLevelTakingStage` (3 failures on 0.2.16; the Clip/Sat term
+  removed, the compressor term removed, and the compressor term unweighted by Comp Mix each fail
+  their own check).
+
+### KI-024 — A reset or an unducked latch cuts the true-peak stream to zero at full gain (2026-09-28) — **route C FIXED 2026-09-28 (fourth round); the rest dispositioned**
+
+> **Fourth-round disposition (2026-09-28, the PR #42 review of 0.2.15), on a reproduction of every
+> route at engine level (44.1 / 48 kHz, 48 boundary positions per configuration, four programmes,
+> EQ flat or a +12 dB shelf in either position, the Freeze states; the round's worklog §3).**
+>
+> **Two statements in the entry below are wrong, and are corrected here rather than erased:**
+>
+> 1. *"a host `reset()` mid-stream"* — **a host reset never reaches the engine.**
+>    `juce::AudioProcessor::reset()` is empty and `AnabasisAudioProcessor` does not override it
+>    (decided at P5: `THREAD_MODEL.md`, `MODE_AND_ADAPTATION_POLICY.md`, ADR-0011); the only caller
+>    of `AnabasisEngine::reset()` is `prepare()`. The reviewer's harness called `engine.reset()`
+>    directly, so the "reset" route is a host RE-PREPARE (route B below).
+> 2. *"on the no-re-prepare route the render's first samples are the emptied pipeline's zeros"* —
+>    **false whenever the EQ was in use**: the latch cleared the wet ring, limiter, clip, clamp and
+>    oversampler but not the EQ, so the EQ's ring-out of the realtime audio reached the render —
+>    Post position: ~13 samples at up to −1.0 dBFS inside the latency window; Pre position: up to
+>    −1.2 dBFS in the head of the new audio, 637 samples after the cut at 44.1 kHz (676 at 48 kHz),
+>    after the latency window, so in a host-trimmed file too. And the output dBTP tap read the step
+>    into the emptied pipeline, so the session dBTP hold showed **+0.88 dB** over the ceiling for a
+>    render whose file has no over. The reviewer's +0.96 / +0.98 dB was not reproduced; the worst
+>    here is +0.884 / +0.918 dB (product meter / Annex 2), EQ flat.
+>
+> | Route | What happens | Disposition |
+> |---|---|---|
+> | **A** host `reset()` | nothing — a no-op by design; the pipeline continues | **Preserve** (overriding `reset()` would be a threading-model change, a hard stop) |
+> | **B** host re-prepare | `prepare()` empties the pipeline and restarts every meter; the last 2–4 segments before the zeros read up to +0.884 / +0.918 dB — the same magnitude as any stream that simply ends on loud programme (+0.87 to +0.93 dB measured at the end of an uninterrupted run, up to +1.06 dB on Annex 2 in one). Nothing after the boundary is over, no pre-cut audio follows | **Preserve**. A checked decay at the cut was prototyped and **rejected**: it still reads +0.81 / +0.69 dB across the cut (the decay's check covers only the segments after the junction), and it puts ~6 ms of pre-cut audio into the render, whose file then reads +0.88 dB over at its first sample |
+> | **C** offline entry that latches without a re-prepare (Force Max's factor; a TP / factor change on the entry block) | the EQ's ring-out of the realtime audio and the tap's step reading, above; and, found by the round's independent review, with **BYPASS** on the realtime input itself: the bypass leg's delay ring was not emptied, so the render carried the realtime input at −2.0 dBFS until sample 446 (44.1 kHz) / 485 (48 kHz) — the render latency − 1 (identical in 0.2.15) | **FIXED** — the latch now also restarts the EQ and the output dBTP tap (`a43094b`) and empties the bypass leg's ring (`f03d673`), as `prepare()` does (`AnabasisEngine.cpp`, the `! smoothersPrimed \|\| enteringOffline` branch). Measured: tap and hold ≤ +0.003 dB, no pre-cut audio in either EQ position or through the bypass leg, the file from the boundary unchanged (≤ +0.004 dB). **Not changed, and dispositioned with B:** the continuous stream's own step from the last realtime sample to the emptied pipeline's zeros, which reads what B's does (+0.884 / +0.918 dB on the last 2–4 segments before the zeros) — the render's file starts after it. Guard: `testAForceMaxEntryStartsTheRenderClean` (fails 3 checks unfixed — tap and hold +0.827 dB, old audio; the EQ reset alone or the tap reset alone each fails its half; its bypass case fails without the ring clear) |
+> | **D** offline entry with no composition change; **Dd** the same with a forced duck in flight | the pipeline continues at unity (KI-004); read as a file the render's latency window carries pre-entry audio at the ceiling (+0.97 / +0.96 dB at its head, Annex 2); Dd's duck jumps to unity (+0.92 dB tap) | **Defer** to KI-004's owner decision: emptying the pipeline on every offline entry would change rendered samples on the no-re-prepare route and break `testOfflineEntryDropsTheEngagementTail` part (4), which pins the documented behaviour |
+> | **E** offline → realtime with a composition change; **E0** without | E goes through the §2.8 duck; E0 is continuous | **Preserve** |
+> | **Freeze** (ADR-0042) | acts only through `prepare()`'s stash and `resumeAfterReset`; none of the mechanisms above reads the trims — B and C measured with Freeze off, on for the whole run and engaged halfway: the same readings | no interaction |
+>
+> **Investigate further (outside this entry):** a clean, re-prepared Force Max render that starts on
+> loud programme, trimmed by the reported latency, reads +0.40 / +0.50 dB over at its head in a
+> fresh meter — the 16× oversampler's linear-phase response puts energy ahead of its nominal
+> integer latency, so the trimmed file starts mid-waveform. The emitted stream is not over; the
+> reading is the host's trim. Not investigated further in this round. **Open for ADR-0020:** whether
+> an offline entry without a re-prepare should start a fresh statistics session (today the render's
+> integrated reading, LRA and holds include the realtime playback before it).
+>
+> *The entry as recorded in the third round follows, unedited.*
+
+**Severity:** Low (inter-sample readings straddling a host-drawn stream boundary; the render read as
+a file starts from silence)
+**Status:** Confirmed, measured, pre-existing (identical before and after 0.2.15), found by the
+adversarial review of ADR-0045; not changed in the round that found it — the next true-peak item.
+**Affects:** true-peak mode, a host `reset()` mid-stream, and entering offline with a composition
+change (e.g. Force Max changing the factor) without a re-prepare
+
+Two routes clear the pipeline without the §2.8 duck: `reset()`, and the offline-entry direct adopt
+when the entry itself wants a latch (`latchOsConfig` at full gain — KI-004). The output steps from the
+last emitted value to the emptied pipeline's zeros in one sample, and the true-peak readings whose
+windows straddle that step read up to **+0.96 dB (product meter) / +0.98 dB (Annex 2)** over the
+ceiling (44.1 kHz, a +12 dB Post shelf, hot programme; the reviewer's harness, the 2026-09-28
+worklog) — the segments 2–4 samples before the zero run. The same step exists with TP off; true-peak
+mode is where it is measured against a promise.
+
+**Workaround:** none needed for a bounce — a host that re-prepares before rendering (most do) starts
+from an empty pipeline, and on the no-re-prepare route the render's first samples are the emptied
+pipeline's zeros, so the render read as a file carries no reading of the step (by construction; not
+separately measured). The readings are in the stream the host itself ended.
+**Cause:** neither route has a transition to fade — `reset()` is the host's, and the offline-entry
+latch deliberately does not duck the head of a bounce (KI-004). Closing it means a checked decay at
+the cut, as `EngagementTail` does for a TP engagement.
+
+Evidence [Verified — the reviewer's harness]:
+- Source: `src/dsp/AnabasisEngine.cpp` (`reset()`; the `! smoothersPrimed || enteringOffline` branch)
+- Test:   none asserts it (a stream spanning a reset is not a render)
+- Commit: PR #42 (recorded)
+
+### KI-025 — Below 44.1 kHz a worst-case burst can read over the true-peak ceiling (2026-09-28) — **CLOSED 2026-09-28 (fourth round, ADR-0046)**
+
+> **✅ CLOSED — fixed at every rate the true-peak path engages (12 kHz and up), the tolerance
+> unchanged; below 12 kHz the path no longer engages.** Closed by
+> [ADR-0046](architecture/design-decisions/ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md)
+> (on the owner's direction, ⊕ for review; ratified at the Architecture Review Gate on
+> 2026-09-29), which replaces the clamp's boxcar attack ramp with one
+> that eases in (geometric weights, a 16-sample floor), caps the release's rise at 1 % per sample,
+> narrows what a revision reaches, stamps each frame with min(entry, predicted emission ceiling), and
+> engages true-peak mode from 12 kHz through one predicate the Ceiling's unit shares.
+>
+> **The entry below under-stated the issue, and the correction is kept:** a longer search on 0.2.15
+> (~350 hill-climbs, 656k engine evaluations, 64-sample bursts) found **every rate from 4 to 32 kHz
+> over on a STATIC ceiling** — +0.214 dB at 8 kHz, +0.232 at 11.025, +0.197 at 16, +0.189 at 22.05,
+> +0.188 at 24, +0.185 at 32 kHz (Annex 2) — where the table below lists +0.056 / +0.020 dB static
+> at 22.05 / 32 kHz; 44.1 kHz read +0.095 dB, inside the tolerance with little to spare. And a
+> Ceiling REVERSAL mid-ascent read +0.30 dB at 48 kHz at clamp level (ADR-0045's stamping), which
+> the same record closes.
+>
+> **What holds now (measured and derived on the integrated tree; the fourth-round worklog §5):**
+> over a 24 167-render engine matrix (12 kHz–768 kHz engaged, OS off–16× and Force Max, 13 Ceiling
+> automation shapes, a lifecycle tier) the worst reading at every engaged rate is +0.0426 dB
+> (product meter) / +0.0380 dB (Annex 2) — 0.2.15 read over 0.1 dB in 378 of the same renders, all at
+> 32 kHz and below; engine climbs reach +0.0308 dB at 12 kHz; a derived bound on the retarget step is
+> +0.0672 dB at 12 kHz (+0.1008 at 8 kHz, which is why the rail is at 12). The regression guard `testTruePeakModeHoldsTheCeilingBelow44k` fails 12 checks on
+> 0.2.15 (the 22.05 / 32 kHz cut bursts +0.1566 / +0.1250 dB, the 16 kHz static burst +0.1157 dB, a
+> 360-render matrix +0.1179 dB, the reversal premise, the rail) and passes.
+>
+> **The round's independent review found a defect in the fix, closed before this entry was
+> pushed further (`f03d673`; ADR-0046's implementation note):** at attack lengths whose float
+> weights summed to 1 + 1–3 ulp (88.2 / 384 / 768 kHz) an astronomical input (a forward minimum at
+> 0, 1e30) drove the clamp gain to −1.19e-7 and the backstop clipped it to the ceiling — +1.85 dB
+> over on the product meter where 0.2.15 was silent. The eased sum is now normalised by the float
+> weights' own total and capped at 1 (`testTheClampSilencesAnAstronomicalInput`); the release cap
+> and the entry-time stamp, which no check had caught reverted, are now pinned
+> (`testTheClampReleaseRiseIsCapped`, `testTruePeakModeLagsAnAscentByTheEntryCeiling`). The engine
+> matrix re-run on the fixed tree (14 200 renders, 12–192 kHz) is unchanged at its worst.
+>
+> **What remains, recorded:** (1) no all-input derived bound was obtained at any rate — the promise
+> rests on a derived bound for inputs not already under reduction when a cut arrives, a search over
+> requirement sequences with an exact inner maximiser for the rest, and clamp and engine searches;
+> (2) at 3901–11999 Hz, 8 and 11.025 kHz included, true-peak mode is not available (the sample clip;
+> the Ceiling reads dB) *(2026-09-29: what is not available is the dBTP ceiling; with TP on at
+> Oversampling Off or 2× the limiter still detects on its true-peak estimate, a best effort with no
+> dBTP guarantee — ADR-0046's ratification note (b))* — a behaviour change from 0.2.15, where the
+> path ran there with this entry's residual (`COMPATIBILITY_MATRIX.md` §Sample rates; OQ-020 for
+> any wording beyond the unit (resolved 2026-09-29: the TP and Ceiling tooltips name the 12 kHz
+> boundary instead of claiming dBTP; wording ⊕));
+> (3) a finite input around +180 dBFS is outside what the clamp's float gain can resolve (KI-027,
+> older than this entry).
+>
+> *The entry as recorded in the third round follows, unedited.*
+
+**Severity:** Low (constructed bursts at sample rates below 44.1 kHz; every programme matrix holds)
+**Status:** Confirmed, measured; found by an adversarial search against the 0.2.15 engine; the static
+half pre-existing (bit-identical in 0.2.14), the automation half larger before 0.2.15. Not changed in
+the round that found it — a true-peak item before Phase 1 resumes, with KI-024.
+**Affects:** true-peak mode at host sample rates below 44.1 kHz — 22.05 and 32 kHz under a falling
+Ceiling, and below 22.05 kHz with a static one
+
+The clamp's gain law bounds each segment's interpolated peak on the assumption that the gain is the
+same across the samples the interpolation reads. An attack ramp that starts a few samples after a
+segment sitting just under the ceiling lowers some of those samples and, through the interpolation
+kernel's negative lobes, RAISES that segment's peak. The effect scales with the ramp's slope — the
+depth of the reduction over the attack length, which is 8 samples at 32 kHz and below — so it grows
+as the sample rate falls. A search for worst-case bursts (a 32-sample pattern and its position,
+hill-climbed on the real engine against both defining meters; the 2026-09-28 worklog) found, over the
+live smoothed ceiling:
+
+| Rate | Static ceiling | Under a 0 → −20 dB cut (the burst at the bottom of the glide) |
+|---|---|---|
+| 4 kHz | **+0.23 dB** (Annex 2) | the static figure |
+| 8 kHz | **+0.11 dB** | the static figure |
+| 16 kHz | **+0.12 dB** | the static figure |
+| 22.05 kHz | +0.056 dB | **+0.157 dB** (Annex 2; product meter +0.033; 0.2.14 on the same burst +3.6 dB) |
+| 32 kHz | +0.020 dB | **+0.125 dB** (Annex 2; product meter −0.004; 0.2.14 on the same burst +3.07 dB) |
+| 44.1 / 48 kHz | +0.058 / +0.026 dB — inside the tolerance | nothing beyond the static figure |
+
+The design ADR-0045 chose over its alternative (a clamp-only prediction without the limiter half) is
+the smaller of the two here: that alternative reads +0.31 dB under its own search at 22.05 kHz, where
+the shipped engine reads −0.76 dB on the same burst. At the bottom of a fast glide at 22.05 kHz the
+ceiling falls ~1.5 % per sample, the limiter leaves the clamp overs of up to ~2.4 dB, and the clamp's
+ramp is correspondingly steep.
+
+**Workaround:** run the session at 44.1 kHz or above, or avoid fast full-range Ceiling cuts in
+true-peak mode at 22.05 / 32 kHz.
+**Cause:** the requirement `r[j]` and the windows built on it (`q`, `m`, the attack mean) keep every
+gain a segment reads at or under that segment's requirement, which bounds the interpolated peak only
+while those gains are equal. Closing it means either a longer attack at low rates (a clamp voicing
+constant, ⊕, and a change to the true-peak path's delay composition — an ADR) or a requirement that
+bounds the ramp's effect on its neighbours.
+
+Evidence [Verified — adversarial search on the real engine; the reproducing bursts are kept with the worklog's scratch record]:
+- Source: `src/dsp/CeilingClamp.h` (`processFrameTruePeak`: `r`, `q`, `m`, the attack mean)
+- Test:   none asserts it (the regression tests run 44.1–192 kHz)
+- Commit: PR #42 (recorded)
+
+### KI-026 — At high rate × oversampling the limiter's release stops short of unity (2026-09-28)
+
+**Severity:** Low (a level error under the ceiling, never over it; audible only as a small
+permanent gain reduction after a limited passage)
+**Status:** Confirmed, measured, pre-existing; found by the fourth PR #42 review round's sample-rate
+audit. Not changed in that round — the limiter's numerics are a DSP change of their own.
+**Affects:** the limiter at a high REGION rate (host rate × oversampling factor): 16× at 48 kHz and
+up, any factor above 192 kHz, and every Force Max bounce (16× at any host rate)
+
+After the limiter has reduced gain, its release should return the gain to unity once the programme
+drops. At a high region rate it stops short and stays there: after a −6 dB hold followed by quiet
+programme, measured on the whole engine (a −30 dBFS sine after a burst, trims frozen), the
+residual reduction is **−0.012 dB at 48 kHz × 1, −0.20 dB at 48 kHz × 16, −0.92 dB at 192 kHz × 16
+and −6.02 dB at 768 kHz × 16** with a 1000 ms manual release (−0.065 / −0.26 / −1.24 dB on AUTO).
+The GR meters show the residual; the output is quieter than it should be, and the ceiling is
+unaffected.
+
+**Workaround:** a shorter release, or a lower oversampling factor for the realtime pass (Force Max
+bounces always run 16×).
+**Cause:** the release is a float one-pole on the ENVELOPE, `env += (needed − env) · aRel`
+(`src/dsp/LookaheadLimiter.h`, `stepEnv`), and the per-sample step falls below half an ulp of `env`
+once `(needed − env) · aRel` is small enough — so the envelope stops moving before it reaches
+`needed`. The stall depends only on the region rate R = sr × OS (the coefficient shrinks as R
+grows). Measured on the class alone, 20 s after a −6 dB hold: −0.011 dB at R = 44.1 kHz, −0.20 dB at
+768 kHz, −0.92 dB at 3.072 MHz, −6.02 dB at 12.288 MHz (never releases) with a 1000 ms release. The
+clamp's release had the same shape of problem and runs on the REDUCTION (1 − g) for that reason
+(`CeilingClamp.h`, "The release runs on the REDUCTION"); doing the same here would change the
+limiter's numerics everywhere, so it is its own decision.
+
+Evidence [Verified — measured on the class and on the engine; the fourth-round worklog §4]:
+- Source: `src/dsp/LookaheadLimiter.h` (`stepEnv`)
+- Test:   none asserts it (no test runs 16× above 48 kHz with a long release)
+- Commit: PR #42 (recorded)
+
+### KI-027 — A finite input near +180 dBFS reads over the true-peak ceiling (2026-09-28)
+
+**Severity:** Low (needs a finite sample around 1e9 — +180 dBFS — reaching the ceiling stage; no
+converter, plug-in chain or file format a host passes produces that from programme)
+**Status:** Confirmed, measured, pre-existing (0.2.15 reads the same class); found by the fourth PR
+#42 review round's independent review of ADR-0046. Not changed in that round.
+**Affects:** true-peak mode, a finite input so large that the clamp's required gain is below float's
+resolution just under 1
+
+The clamp's gain is `1 − reduction` in float. Just below 1 a float's step is 5.96e-8, so the smallest
+gain above 0 the clamp can produce is 5.96e-8 (−144.5 dB); a required gain between 0 and that rounds
+either to exactly 0 (silence) or to 5.96e-8 and above, which leaves an input of 1e9 at ~+35 dB over
+the ceiling for the sample backstop to clip. The clipped waveform's inter-sample peaks then read over
+the ceiling (derived from the float format; the readings below are measured). An input of 1e30 is
+far enough past the resolution that the reduction rounds to exactly 1 — silence, at every rate
+(`testTheClampSilencesAnAstronomicalInput` pins that, and pins the gain in [0, 1]).
+
+Measured on the whole engine, TP on, −1 dBTP, default settings, a ±1e9 burst of 256 samples (the
+product meter over the ceiling): **48 kHz +0.78 dB in 0.2.15, −5.25 dB since `f03d673`; 88.2 kHz
++0.89 dB in both; 384 kHz +1.81 dB in 0.2.15, +1.96 dB since; 768 kHz +1.85 dB in both.** With
+Punchy and Transients 100 %, 0.2.15 read +1.64 dB at 48 kHz and was silent at 88.2 / 384 / 768 kHz;
+the fixed tree is −8.53 dB at 48 kHz and silent at the others.
+
+**Workaround:** none needed — keep programme in the ordinary range; a stage that emits +180 dBFS
+upstream of the plug-in is itself the fault.
+**Cause:** float gain resolution (above). Closing it means a gain domain with resolution at the
+bottom — e.g. carrying the gain, not the reduction, near 0 — a clamp numerics change of its own.
+
+Evidence [Verified — measured on the whole engine, 0.2.15 and the fixed tree; the fourth-round worklog §5.5]:
+- Source: `src/dsp/CeilingClamp.h` (`processFrameTruePeak`: `gain = 1 − reduction`)
+- Test:   `testTheClampSilencesAnAstronomicalInput` covers 1e30 (silenced) and the gain range at 1e9, not the 1e9 reading
+- Commit: PR #42 (recorded)
+
+### KI-028 — pluginval sometimes crashes after its `SUCCESS` line, at validator teardown (2026-09-28) — **DISPOSITIONED 2026-09-29: pre-existing / external**
+
+**Severity:** Medium (a release-gate failure on a platform without a crash-retry; whether a real
+host is affected is unknown)
+**Status:** Confirmed (observed in CI and locally), intermittent, not reproduced on demand, cause not
+established. Recorded by the fourth PR #42 review round; not changed.
+**Affects:** pluginval validation — observed on Linux (VST3, the `linux` job and local runs) and, once,
+on macOS Intel (AU, the `macos-intel` job); every observation is after every test has passed
+
+A pluginval pass prints `SUCCESS` for every test and then the validator process dies while it shuts
+down:
+
+- **Linux, VST3:** a segmentation fault at validator exit — seed `0xcb2cae` on `dd983ec` (the third
+  review round's records), seed `0x37bc7e` on the fourth round's first build (1 of 29 replays with
+  the editor tests, 0 of 3 without them, 0 of 8 under gdb). The Linux crash-retry in
+  `scripts/run-pluginval.sh` (written for the X11 / XEmbed editor flake) passed each of these on
+  retry, so CI stayed green.
+- **macOS Intel, AU, randomise pass 3 / 3, seed `0x5161f59`** (push run 36495741278 on `fe29bda`):
+  `libc++abi: terminating due to uncaught exception of type std::__1::bad_function_call` —
+  an EMPTY `std::function` was invoked — and pluginval's own handler turned the abort into exit 9.
+  macOS has no crash-retry by design, so the job failed. The plug-in's source at `fe29bda` is
+  byte-identical to `f03d673`, whose `macos-intel` job passed all twelve passes (VST3 and AU, both
+  modes ×3, other seeds); it is the first such failure on either macOS job in the last 100 push
+  runs of `build.yml` (the others there: the `58107a4` build error, and three Rosetta self-test
+  failures on 2026-09-07). A re-run of the failed job (attempt 2, job 109189497584) passed every lane —
+  AU randomise ×3 on seeds `0x92afc7` / `0x3cc398d` / `0x7808ca6` — which shows the failure is
+  intermittent, not that it is gone.
+- **Local, Linux, VST3, the same seed** (`--randomise --random-seed 0x5161f59`, strictness 10, editor
+  under Xvfb, the `fe29bda` build): 5 of 6 runs clean; 1 segfault INSIDE the Editor test (before
+  `SUCCESS`) — the XEmbed flake the Linux retry exists for, not the exit crash.
+
+What is known about the cause: every `std::function` the plug-in's own code invokes is either
+null-checked at the call (`src/MacroEngine.cpp`, `src/InternalState.h`, the editor's controls,
+`FrameClock`) or always initialised (`tickClockMs`); the processor's destructor stops the macro
+drain before any member is destroyed; the two `SafePointer` lambdas are a menu's and a file
+chooser's, which pluginval never opens. None of this rules the plug-in out: an empty `std::function`
+invoked at teardown is also what a call through a destroyed object whose storage reads as zero looks
+like, in the plug-in or in the validator's host code. Not investigated on macOS (no macOS here).
+
+**Workaround:** none needed by a user as far as is known; for CI, a re-run.
+**Cause:** not established — the validator's host code at shutdown, or the plug-in's teardown.
+Establishing it needs a macOS reproduction with a symbolised crash report (the AU randomise lane, the
+seed above) or the Linux exit crash under a debugger that catches it.
+
+Evidence [Partially Verified — observed; not reproduced on demand]:
+- Source: not identified (the candidates above were read and found guarded)
+- Test:   none — pluginval's own teardown, not reproducible headlessly on demand
+- Commit: PR #42 (recorded)
+
+**Addendum, 2026-09-29 — the exit-9 label fixed, a diagnostic workflow added, the Linux crashes
+captured. This entry stays OPEN and the words above are unchanged; its disposition will be recorded
+after the diagnostic workflow has run.**
+
+- **(a) The exit-9 mislabel is fixed in the script; the step still fails.** On macOS pluginval's
+  command-line mode installs its own handler for SIGFPE, SIGILL, SIGSEGV, SIGBUS and SIGABRT
+  (`Source/CommandLine.cpp`, `kill9WithSomeMercy`) that ends the process with
+  `std::_Exit (SIGKILL)`, so a crash there exits **9** — below 128, which `scripts/run-pluginval.sh`
+  read as a real validation failure (the failing job printed `FAILED … (exit 9) -- real validation
+  failure, not a crash`). The script now reports exit 9 on macOS as `CRASHED`, and still fails the
+  pass immediately — macOS has no crash-retry — so the gate's behaviour is unchanged, only the
+  label. `TESTING_POLICY.md` rule 3 records the exception.
+- **(b) A diagnostic workflow exists, `.github/workflows/ki028-diag.yml`** — never a gate and never
+  a required check (`procedures/CI_CD.md`). On `macos-15-intel` and `macos-latest`, for the commit
+  under test and for `main` (`ed06ad0`), it builds pluginval v1.0.4 from source without the
+  hardened runtime (so `DYLD_INSERT_LIBRARIES` is honoured) and the AU with the mirrored
+  `build.yml` configure line, each with a dSYM, and injects `.github/ki028/throwtrace.cpp`. That
+  interposer records, for every `std::bad_function_call` thrown, the throwing thread, every frame
+  with its image base, and the image that owns the thrown `type_info` and its base; it adds a
+  `std::terminate` handler and, in two of three variants, refuses pluginval's exit-9 handler so a
+  fault handler prints the faulting stack and ReportCrash writes an `.ips` with every thread (the
+  third variant adds `MallocScribble=1`, which separates an empty `std::function` from a freed one).
+  The AU randomise lane runs on seed `0x5161f59`, on fresh seeds, and on that seed without
+  `Editor Automation`; every frame is symbolicated with `atos`, and the logs, traces and crash
+  reports are uploaded. It had not run when this was written.
+- **(c) Linux, this round** [Verified — measured: stacks symbolised by gdb, freed state read from the
+  cores; local, not CI]. 177 runs of `--strictness-level 10 --randomise` under gdb and Xvfb, with
+  pluginval v1.0.4 built from source (RelWithDebInfo; its JUCE 8.0.3) and the VST3 built
+  RelWithDebInfo with `ANABASIS_NO_LTO=ON` — not the shipping configuration — at `6ee9f29`
+  ("head") and `ed06ad0` ("main"). 5 crashes, every one a SIGSEGV on pluginval's message thread and
+  a use-after-free **in pluginval 1.0.4's own JUCE 8.0.3 host code, with 0 frames from Anabasis
+  source on any thread** (read from one core of each signature: the object's first word is a glibc
+  safe-linked free-list pointer, in a chunk sized for the 80-byte object). Two signatures:
+  - **A — in-test, 3 of 5.** `juce_XEmbedComponent_linux.cpp:570` (JUCE 8.0.3), the
+    `MessageManager::callAsync ([this] { componentMovedOrResized (owner, true, true); })` that a
+    ConfigureNotify on the plug-in's window posts, delivered after the editor that owned `this` was
+    deleted — each time in the first test after `Editor Automation`, with no `SUCCESS` printed. This
+    is the X11/XEmbed class the Linux crash-retry exists for. The plug-in's part is indirect: its editor
+    resizes on every `advanced` change (in one measured run, 337 of 347 `applyUiScale` calls fell in
+    `Editor Automation`), which widens the host's race.
+  - **B — after `SUCCESS`, 2 of 5: the KI-028 exit crash on Linux.**
+    `juce_VST3PluginFormat.cpp:477` (JUCE 8.0.3), the fd callback `RunLoop::Impl::registerEventHandler`
+    registers with `[this]`, invoked from a batch of ready-fd callbacks snapshotted before
+    `deletePluginAsync` destroyed the plug-in — and with it the `Impl` — earlier in the same batch.
+    Fixed upstream by JUCE `04e167d64` (2026-09-03, "VST3 Host: Fix an occasional crash when removing
+    callbacks from the message loop during shutdown"; 9.0.2 and later), which is in neither
+    pluginval 1.0.4 (JUCE 8.0.3) nor the plug-in's JUCE 9.0.1.
+  - **Head vs main:** head 0 of 89 runs, main 5 of 88 (2 of them after `SUCCESS`). On the planned
+    matrix alone (head 0 of 77, main 4 of 76) Fisher's exact one-sided p ≈ 0.058 — not significant;
+    the 24-run replay was seeded from main's crashes and is not counted in that test. No mechanism for a
+    difference between the trees was found. Neither signature reproduces from its seed (a seed
+    fixes the test order, not the timing): the four earlier seeds, `0x5161f59` among them, gave 0 of
+    72; the four new crash seeds, replayed three times per tree, recurred once (main, 1 of 3). gdb
+    does not suppress the crash — 5 of 177 here — so the entry's earlier 0 of 8 under gdb does not
+    show that it does.
+  - Both signatures end in SIGSEGV (exit ≥ 128), which the Linux crash-retry covers. Nothing here
+    was run on macOS, whose event loop is different code; the macOS `std::bad_function_call` is what
+    the diagnostic workflow is for.
+
+**Disposition, 2026-09-29 — PRE-EXISTING / EXTERNAL.** The words above and the first addendum are
+unchanged; this is the disposition they waited for. Evidence: `worklogs/2026-09-29-pr42-round5-contract-ki028-clock.md` §6.
+
+- **The macOS abort's throw site is in Apple's AudioToolboxCore, under the host's listener**
+  [Verified — `.github/workflows/ki028-diag.yml` run 36533479226 on `839685d`, pr-head job
+  109292164478: the interposer's trace of the throw and the terminate, `atos` against the dSYMs,
+  three ReportCrash `.ips` with every thread]. Four failing passes of fourteen (seed `0x5161f59`,
+  macOS 15.7.9 24G830, Intel), all after `SUCCESS`, all the same stack on pluginval's message
+  thread: a block on the main CFRunLoop (`__CFRUNLOOP_IS_CALLING_OUT_TO_A_BLOCK__`) runs
+  AudioToolboxCore's `AUParameterListener` lambda, which invokes an EMPTY `std::function` —
+  `std::bad_function_call`, the thrown `type_info` AudioToolboxCore's own — and the exception escapes
+  `-[NSApplication run]`. **No thread holds an Anabasis frame** at the throw or at the abort; the
+  validator thread is already in `PluginsUnitTestRunner::~PluginsUnitTestRunner` (the plug-in
+  instance deleted). The listener is the HOST's: pluginval 1.0.4's JUCE 8.0.3
+  `AudioUnitPluginInstance::createEventListener` creates it with `AUEventListenerCreate` on the
+  main run loop, and its teardown (`cleanup()`) disposes it FIRST (`AUListenerDispose`), then
+  `releaseResources`, then `AudioComponentInstanceDispose` — the same order in JUCE 9.0.1
+  (`juce_AudioUnitPluginFormatImpl.h`), so a pluginval on a newer JUCE is not known to differ. An
+  event notification still queued for that listener when it is disposed is then run against its
+  emptied callback [inferred: Apple's code is not readable; the order and the stack are].
+- **The plug-in's part is the event traffic, and that traffic is legitimate.** A control — JUCE's
+  own `examples/CMake/AudioPlugin` AU (no parameters), built from the JUCE commit Anabasis pins, run
+  by the same pluginval on the same seed and test order ("Plugin programs" last) — **never aborted:
+  0 of 14** (run 36537705309, job 109305735516), against Anabasis's **4 of 14** (the job above) and
+  15 of 20 seeded passes in the first run. Anabasis's AU sends parameter-change events through JUCE
+  9.0.1's wrapper (`AUEventListenerNotify`) when a parameter really moves — the macro layer writes
+  its managed parameters with host notification and stays silent on a no-op write
+  (`MacroEngine::setParam`); `setCurrentProgram` is a no-op (one program); `releaseResources` and the
+  destructor notify nothing. A plug-in with parameters that notifies its host is the AU contract,
+  not a defect; the fault is invoking a disposed listener's callback.
+- **Not introduced by this branch:** `main` (`ed06ad0`) aborts as often as the head (seeded passes
+  8 / 10 vs 7 / 10, run 36520602892, `macos-15-intel`). **Intel only:** 0 of 100 passes on
+  `macos-latest` (arm64). **Seed-dependent:** 0 of 20 fresh seeds.
+- **The Linux crashes are external too** [Verified — local cores and a causal test]: signature B (after
+  `SUCCESS`, `juce_VST3PluginFormat.cpp:477`, pluginval's JUCE 8.0.3 VST3 host `RunLoop::Impl`) is
+  removed by JUCE `04e167d64` alone — 5 of 567 runs with pluginval as released vs 0 of 567 with that
+  one upstream fix ported, against the same Anabasis binaries (Fisher one-sided p = 0.031);
+  signature A (in-test, XEmbed `callAsync ([this] …)`) is pluginval's JUCE 8.0.3 X11 host, the class
+  the Linux crash-retry exists for. 0 Anabasis frames in every core.
+- **What changes:** nothing in the product (no Anabasis defect found), and nothing in the gate:
+  macOS keeps no crash-retry, no retry count is raised, nothing is suppressed —
+  `scripts/run-pluginval.sh` labels the abort `CRASHED` (the first addendum) and the step still fails.
+  **A red macOS AU pluginval pass whose log ends `SUCCESS` then `libc++abi: terminating due to
+  uncaught exception of type std::__1::bad_function_call` is this issue**: re-run the job and record
+  the run; any other signature is a new failure and is investigated as one. Whether this signature
+  may be re-run past at a release gate, or blocks until pluginval ships a host that does not dispose
+  a listener with events queued, is the owner's decision (`docs/reports/2026-09-29-pr42-round5-closure.md` §6).
+- **The diagnostic stays** (`ki028-diag.yml`, never a gate): it re-runs on a push that touches it and
+  reproduces the abort on demand, which is what a pluginval or macOS upgrade has to be checked against.
+  Its last run's pr-head job (36537705309, finished after this addendum was first written) aborted in
+  13 of 14 passes with the same stack and 0 Anabasis frames in all 8 crash reports.
+- **A diagnostic-only hang, recorded:** three passes across the diagnostic's runs never exited after
+  `SUCCESS` — pluginval's main thread idle in its run loop, the validator thread gone, no Anabasis code
+  running (the watchdog's `sample`) — all three in variant B, where pluginval's crash handler is refused
+  and the interposer's own is installed; none in variant A or in any CI stock lane. Not investigated
+  further; if a stock CI lane ever times out after `SUCCESS`, this is where to start.
+- **Not established:** which event was queued (a parameter change or a property change) and Apple's
+  internal ordering; whether any real host disposes its listener the same way (none was run); why
+  arm64 does not reproduce.
+
+### KI-029 — MATCH can play the processed signal above the input for a moment: after a prepare, and after a macro jump (2026-09-29)
+
+**Severity:** Low (a monitoring-only transient; no rendered sample is affected)
+**Status:** Confirmed, measured; recorded, not changed. Found by the DSP-005 investigation.
+**Affects:** realtime monitoring with MATCH on, all platforms/formats; offline renders are unaffected
+
+MATCH is meant to err low. Two transients play the matched processed signal ABOVE the input:
+
+- **After a prepare, with audio in the first block:** the monitor gain is the one smoother the
+  engine does not prime on the first block after a prepare — it starts at unity and ramps to its
+  target over 200 ms — so the processed signal (louder than the input by the macro's lift) plays
+  unmatched for that ramp: up to **+9.8 LU momentary over the input for ~0.2 s** (synthetic drums from
+  t = 0, peak −6 dBFS, Loudness 70 %). A host that prepares and plays at once meets it on every start.
+  A prototype that primes it leaves +0.3 LU; the first 10 ms of output are the empty lookahead line's
+  zeros, so the step it would introduce is inaudible.
+- **After a macro jump:** the monitor gain's 200 ms ramp against the limiter gain's 20 ms ramp lets
+  the matched signal exceed the input by up to **+1.9 LU momentary for up to 0.41 s** (Loudness 20 →
+  80 % on −17 dBFS pink); +2.1 LU for up to 0.50 s with 0.2.17's predict floor (KI-023), because
+  that floor is shallower once it is right.
+
+**Workaround:** start playback, or move a macro, and judge after half a second.
+**Cause:** the smoother priming in `AnabasisEngine::process` (the monitor gain is left at unity when
+the other smoothers are primed) and the two ramp lengths.
+Evidence [Verified — measured by the DSP-005 probe on the real engine, 48 kHz / 512, OS Off; the
+prototype not applied]:
+- Source: `src/dsp/AnabasisEngine.cpp` (the block top: priming, the monitor gain's target)
+- Test: none yet — a guard belongs with the fix
+- Record: `worklogs/2026-09-29-pr42-round5-contract-ki028-clock.md` §9.5
 
 ## Standing note for P1 onward
 

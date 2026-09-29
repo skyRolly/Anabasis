@@ -5,8 +5,18 @@ using namespace abgui;
 
 juce::String LoudnessMeterView::tooltipText()
 {
-    return "Waveform statistics off the output. Click to reset the integrated "
-           "measurement, the loudness range and both peak holds.";
+    // The 0.1.1 wording (ADR-0020), verbatim; its "Click to reset" sentence
+    // is RESET's tooltip now (amendment 4). It does not announce the realtime
+    // bypass pause: OQ-018, resolved 2026-09-28 (C8, no new copy).
+    return "Waveform statistics off the output";
+}
+
+juce::String LoudnessMeterView::sessionTimeText (float seconds)
+{
+    const int total = seconds > 0.0f ? (int) std::floor (seconds) : 0;
+    const int h = total / 3600, m = (total / 60) % 60, s = total % 60;
+    return h > 0 ? juce::String::formatted ("%d:%02d:%02d", h, m, s)
+                 : juce::String::formatted ("%d:%02d", m, s);
 }
 
 float LoudnessMeterView::plrFromShown (float tpDb, float integratedLufs) noexcept
@@ -52,8 +62,28 @@ float LoudnessMeterView::rmsWithReference (float rawDb, bool aes17) noexcept
 
 LoudnessMeterView::LoudnessMeterView (AnabasisAudioProcessor& p) : processor (p)
 {
-    setInterceptsMouseClicks (true, false);
+    // The body keeps intercepting (so the panel's tooltip still shows) and
+    // does nothing with a click; the one control is the child below. (In the
+    // pinned JUCE the second flag only matters when the first is false —
+    // `Component::hitTest` — so it states the intent rather than enabling it.)
+    setInterceptsMouseClicks (true, true);
     setTooltip (tooltipText());
+
+    // The family's uppercase action-label convention (LEARN, LOCK, MATCH,
+    // BYPASS); the accessible title follows the panel's own header, as the
+    // LOCK switch's "Ceiling lock" follows its control.
+    resetButton.setTitle ("Reset statistics");
+    resetButton.setTooltip ("Reset the integrated measurement, the loudness range and both peak holds");
+    resetButton.setWantsKeyboardFocus (true);
+    resetButton.onClick = [this] { processor.requestMeterReset(); };   // §2.9 momentary-request row
+    addAndMakeVisible (resetButton);
+}
+
+void LoudnessMeterView::resized()
+{
+    // On the header line and inside the 28 px above the first row
+    // (top pad 10 + header 16 + gap 2), so no reading moves (ADR-0020 D6).
+    resetButton.setBounds (getWidth() - 12 - 54, 8, 54, 20);
 }
 
 void LoudnessMeterView::visibilityChanged()
@@ -62,11 +92,6 @@ void LoudnessMeterView::visibilityChanged()
         clock.start (*this, [this] (double dt) { tick (dt); });
     else
         clock.stop();
-}
-
-void LoudnessMeterView::mouseDown (const juce::MouseEvent&)
-{
-    processor.requestMeterReset();   // §2.9 momentary-request row
 }
 
 void LoudnessMeterView::tick (double dt)
@@ -131,6 +156,7 @@ void LoudnessMeterView::tick (double dt)
     }
     const float rms = rmsWithReference (heldRawRms, aes17);
     const float ceil = processor.apvts.getRawParameterValue (pid::ceiling)->load();
+    const float sessionSecs = std::floor (juce::jmax (0.0f, processor.meterSessionSeconds()));
 
     // Bitwise compares, so even a NaN transition still repaints once.
     const bool changed = std::memcmp (&m, &shownM, 4) != 0
@@ -141,12 +167,14 @@ void LoudnessMeterView::tick (double dt)
                       || std::memcmp (&ceil, &shownCeiling, 4) != 0
                       || std::memcmp (&pk, &shownPeak, 4) != 0
                       || std::memcmp (&rms, &shownRms, 4) != 0
-                      || std::memcmp (&lra, &shownLra, 4) != 0;
+                      || std::memcmp (&lra, &shownLra, 4) != 0
+                      || std::memcmp (&sessionSecs, &shownSessionSecs, 4) != 0;
     if (! changed)
         return;
     shownM = m; shownS = s; shownI = i; shownTp = tp; shownPlr = plr;
     shownCeiling = ceil;
     shownPeak = pk; shownRms = rms; shownLra = lra;
+    shownSessionSecs = sessionSecs;
     repaint();
 }
 
@@ -160,7 +188,13 @@ void LoudnessMeterView::paint (juce::Graphics& g)
     // Header
     g.setColour (colours::textDim);
     g.setFont (juce::Font (juce::FontOptions (11.0f)).withExtraKerningFactor (0.22f));
-    g.drawText ("STATISTICS", area.removeFromTop (16), juce::Justification::centredLeft);
+    auto header = area.removeFromTop (16);
+    g.drawText ("STATISTICS", header, juce::Justification::centredLeft);
+    // The session duration, right after the title and left of RESET.
+    header.removeFromRight (resetButton.getWidth() + 6);
+    header.removeFromLeft (92);
+    g.setFont (juce::Font (juce::FontOptions (11.0f)));
+    g.drawText (sessionTimeText (shownSessionSecs), header, juce::Justification::centredLeft);
     area.removeFromTop (2);
 
     // M / S / I rows: tag, numeric, bar (−36..0 LUFS).

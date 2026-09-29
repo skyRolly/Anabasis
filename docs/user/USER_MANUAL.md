@@ -50,7 +50,7 @@ factor, spectral tilt, transient density) and continuously, *slowly* trims how t
 share the work: light compression and transparent limiting low on the dial, the clipper
 absorbing transients in the middle, saturation color and a dynamic high-frequency tame at
 the top. The **Ceiling** is a limit the output never exceeds — a sample-peak limit as shipped,
-and a *true-peak* one once you engage **TP** (§3.2). **MATCH**
+and a *true-peak* one once you engage **TP**, at sample rates of 12 kHz or more (§3.2). **MATCH**
 plays the processed signal back at matched loudness so the level increase cannot flatter
 you, and **Delta** lets you listen to exactly what the processing is removing.
 
@@ -108,9 +108,22 @@ toggle row, and the metering strip.
    dry ticks are healthy; tone or vocal body in the delta means you are pushing too hard.
 5. Check the **Ceiling** (default −0.1 dB) against your delivery spec — and if that spec is
    written in **dBTP**, engage **TP** beside it, which is what makes the number mean dBTP
-   (§3.2). The readout's unit follows the switch, so it always says which one you have.
+   at 12 kHz and up (§3.2). The readout's unit follows the switch and the sample rate, so it
+   always says which one you have: `dBTP` only where TP holds the Ceiling in dBTP, `dB`
+   otherwise — below 12 kHz even with **TP** on.
 6. **Bypass** in the top bar A/Bs against the untouched signal — with MATCH on, that
-   comparison is loudness-matched too.
+   comparison is loudness-matched too: MATCH brings the processed signal down to the
+   input's loudness and Bypass plays the input as it is (since 0.2.14 — before that, MATCH
+   turned the bypassed signal down by the same amount, so the jump stayed). MATCH errs low
+   once it has settled. On steady material the matched signal settles within about half a
+   LU under the input — about 0.3 LU at the default settings, since 0.2.17 counting what
+   the compressor and the Clip/Sat stage take out as well as the limiter — but on
+   percussive or sparse material it can still sit 1–3 LU under, and MATCH never turns the
+   processed signal up, so a setting that makes it quieter than the input keeps that
+   difference ([`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) KI-023). For about 0.2 s after
+   playback starts, and for up to half a second after a large Loudness move, the matched
+   signal can play louder than the input (KI-029). MATCH and DELTA are listening aids
+   only — an offline bounce or export never includes them.
 
 ### 2.5 The Standalone application
 
@@ -161,14 +174,14 @@ Universal gestures:
 | **↶ / ↷** | Undo / Redo — kept **per A/B slot**. Covers sound parameters, preset loads, Copy (on the destination slot) and the ADV view switch; bypass and the monitor toggles are never recorded. |
 | **Settings (gear)** | Opens the Settings overlay (§3.5). |
 | **ADV** | Switches Simple ↔ Advanced view (§5). |
-| **BYPASS** | Click-free bypass; with **MATCH** on, the comparison is loudness-matched. Hosts also see this as the standard bypass parameter. |
+| **BYPASS** | Click-free bypass: plays your input untouched, at its own level. With **MATCH** on, the comparison is loudness-matched, because MATCH brings the processed signal to the input's loudness (since 0.2.14). Hosts also see this as the standard bypass parameter. |
 
 ### 3.2 Simple view
 
 | Control | Range | What it does |
 |---|---|---|
 | **Loudness** | 0 … 100 | The big knob: how hard the adaptive chain pushes (§4). At 0 it applies no push — but the Ceiling still holds, so anything already hotter than it is still limited. |
-| **Ceiling** | −20 … 0 dB, default −0.1 | The output limit — nothing leaves the plugin above it. Two toggles sit beside it. **TP** decides what the number *means*: off (the default) the limit is on **sample peaks** and the readout says `dB`; on, the limiter detects true peaks and the final ceiling clamp holds the waveform *between* the samples too, at every Oversampling setting — inter-sample peaks are caught and the readout says `dBTP`. It is the same parameter as the Advanced limiter zone's TP switch (§3.3). **LOCK** keeps the ceiling's *value* fixed while you browse presets — the value only: a factory preset still turns TP (and Dither) off (§7.3). |
+| **Ceiling** | −20 … 0 dB, default −0.1 | The output limit — nothing leaves the plugin above it. Two toggles sit beside it. **TP** decides what the number *means*: off (the default) the limit is on **sample peaks** and the readout says `dB`; on, the limiter detects true peaks and the final ceiling clamp holds the waveform *between* the samples too, at every Oversampling setting — inter-sample peaks are caught and the readout says `dBTP`. A Ceiling move glides over 20 ms, and every sample is held to the value in force at the moment it leaves the plugin, with TP on as with TP off (since 0.2.15; before, TP mode lagged a lowered Ceiling by under a millisecond and could overshoot it by up to ~3 dB during the glide). TP holds at every sample rate from 12 kHz up (since 0.2.16; before, a constructed worst case could read up to about 0.2 dB over below 44.1 kHz). The dBTP ceiling needs 12 kHz or more. Below that — 8 and 11.025 kHz included — the Ceiling holds sample peak, not dBTP, whatever the **TP** switch says, and its readout says `dB` even with **TP** on (the **TP** and Ceiling tooltips name the 12 kHz boundary there instead of promising dBTP); inter-sample peaks can then exceed it, and the STATISTICS **TP** row (§3.4) shows by how much. With **TP** on at Oversampling Off or 2× the limiter still reacts to inter-sample peaks there — a best effort, not a guarantee. It is the same parameter as the Advanced limiter zone's TP switch (§3.3). **LOCK** keeps the ceiling's *value* fixed while you browse presets — the value only: a factory preset still turns TP (and Dither) off (§7.3). |
 | **Character** | 0 … 1 | Clean ↔ Color: how much of the push is done with saturation character rather than clean limiting. |
 | **Tone** | −1 … +1 | Dark ↔ bright tilt of the overall result. |
 
@@ -202,12 +215,13 @@ the automation lane keeps the full name, so "Ratio" here is "Comp Ratio" to your
   Tone, Color Depth, and **Dynamic Tame** — a programme-dependent high-frequency softener.
 - **LIMITER** — the true-peak lookahead limiter: Gain ("Limiter Gain" in automation — the
   push into it), Lookahead (0.5–10 ms; with **TP** on, the longest settings engage a little less —
-  9.1 ms at the top at 48 kHz — because the ceiling's true-peak detection takes its share of the
-  fixed 10 ms, so the reported latency never changes; §6), Release ("Lim Release") with **AUTO**, **Style**
+  9.0 ms at the top at 48 kHz, less at lower rates, down to 6.2 ms at 12 kHz — because the ceiling's true-peak detection takes its share of the
+  fixed 10 ms, so the reported latency never changes; below 12 kHz the whole 10 ms goes to the limiter, **TP** on or off; §6), Release ("Lim Release") with **AUTO**, **Style**
   (Transparent / Punchy / Loud), Stereo Link ("Limiter Stereo Link"), Transients (transient
   preservation), **TP** (true-peak mode — **off by default**; on, the limiter detects true peaks
-  and the final ceiling clamp holds inter-sample peaks at every Oversampling setting, so the
-  Ceiling becomes a dBTP limit),
+  and, at sample rates of 12 kHz or more, the final ceiling clamp holds inter-sample peaks at
+  every Oversampling setting, so the Ceiling becomes a dBTP limit; below 12 kHz the Ceiling holds
+  sample peak, not dBTP, §3.2),
   and its two-lane L/R gain-reduction meter. The **SC HPF** (20–300 Hz) keeps low-frequency
   energy from pumping the **compressor's** detector; since 0.1.2 the limiter's detector is
   deliberately unfiltered — its job is the Ceiling, so it always sees the true peak, and a
@@ -229,7 +243,7 @@ The **STATISTICS** panel — the same eight readings in both Simple and Advanced
 | **M** | Momentary loudness, the newest 400 ms (BS.1770). |
 | **S** | Short-term loudness, the last 3 s. |
 | **I** | Integrated loudness over the whole measurement. Which revision it follows is a Settings choice (§3.5). |
-| **TP** | True peak in dBTP, max hold. It always measures true peak, whether or not the limiter's TP mode is engaged — so it is the honest check on a sample-peak ceiling, and it turns red above your Ceiling. With **TP** on it can turn red while it reads the Ceiling itself: the hold is then a few thousandths of a dB above it, well inside the 0.1 dB tolerance ([`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) KI-020). |
+| **TP** | True peak in dBTP, max hold. It always measures true peak, whether or not the limiter's TP mode is engaged — so it is the honest check on a sample-peak ceiling, and it turns red above your Ceiling. With **TP** on, at 12 kHz and up, it can turn red while it reads the Ceiling itself: the hold is then a few thousandths of a dB above it, well inside the 0.1 dB tolerance ([`KNOWN_ISSUES.md`](../KNOWN_ISSUES.md) KI-020). Below 12 kHz the Ceiling holds sample peak, not dBTP (§3.2), so there a red **TP** reading means inter-sample peaks really are over the Ceiling, **TP** on or off. |
 | **SP** | Sample peak in dBFS, max hold. Read it against TP: the gap between them **is** the inter-sample overshoot. |
 | **RMS** | RMS level over a 50 ms Hann window. The reference is a Settings choice (§3.5). |
 | **LRA** | Loudness Range in LU (EBU R128 / Tech 3342) — how much the loudness moves across the programme. A steady master reads near 0; a dynamic one reads 8–15. |
@@ -270,11 +284,48 @@ The **STATISTICS** panel — the same eight readings in both Simple and Advanced
   sample rate or block size changes. Vertically the trace hangs from the top of the graph
   and reaches the bottom at **24 dB** of reduction — the same span the COMP and LIMITER
   panels' own GR meters use, so the two read against each other directly.
+- **The limiter's reduction as a number** (since 0.2.14) — under **out LUFS** in Simple, and in
+  the foot of the LIMITER panel in Advanced: **lim GR** is the limiter's gain reduction now, in
+  dB (the deepest over the last 0.3 s), and **GR max** the deepest the GR history graph shows —
+  every point of it, the oldest at its left edge included (since 0.2.15; it used to stop up to
+  ~0.2 s short of the graph's left edge).
+  It is the same figure the GR history draws — the **limiter's** reduction only; the
+  compressor's shows on its own COMP meter, and the clipper's is not measured. It works in
+  either graph view. **lim GR** reads "-" when nothing has been processed yet or when your
+  host has stopped sending audio for more than half a second (the max stays, with the history
+  it describes); "0.0" means the limiter is doing nothing. While **BYPASS** is on it keeps
+  showing the limiter's work on the processed signal, which you are not hearing.
 
-**Click the STATISTICS panel to reset** the integrated measurement, the loudness range and
-both peak holds — do it after changing the section you are judging. The rolling windows (M,
-S, RMS) are not reset: they measure the last few seconds and have nothing session-scoped in
-them.
+**RESET**, on the STATISTICS header line, clears the session figures: the integrated
+measurement (**I**), the loudness range (**LRA**), both peak holds (**TP**, **SP**) — and **PLR**
+with them — plus the session length beside the header. Do it after changing the section you
+are judging. Nothing else resets them except loading a project and the host re-preparing the
+plug-in (a sample-rate or buffer-size change); an A/B switch, a preset and BYPASS do not.
+Clicking anywhere else on the panel does nothing (since 0.2.14 — until then the whole panel was
+the reset, so a stray click, right-click or drag discarded the session). The rolling windows (M,
+S, RMS) are not reset — they measure the last few seconds and have nothing session-scoped in
+them — but every reading blanks for an instant at a reset and returns with the next audio; with
+the transport stopped they stay blank until audio flows. The new session starts at the moment
+of the reset: nothing played before it reaches the new figures — not even a peak that was still
+on its way through the meter when you pressed RESET (since 0.2.16; before, a reset straight after
+a loud passage could bring its last peak back into the new TP hold, and the first moments of
+silence after it could show a loudness carried over from before). Up to the first 0.2 s after
+a reset is left out of **I**, for the same reason.
+
+**What the session covers.** The time beside the header (`m:ss`, whole seconds) is how much
+programme the session figures describe. It stops while you listen to **BYPASS** during
+playback: an audition of your input is not part of the master you are measuring, so it is left
+out of I, LRA and the peak holds (since 0.2.14 — before, a bypass comparison could raise the
+peak holds above your Ceiling and pull I toward the input). The time and the peak holds pick up
+again with the first moment after the audition, keeping what they held before it; **I** and
+**LRA** leave a little more out. As
+after a reset, up to the first 0.2 s after the audition is not in **I**, and nor is up to 0.1 s
+before it — so less than half a second between two auditions adds to the time but nothing to
+**I** — and **LRA** moves again about 3 s after it. The rolling readings still follow what you
+hear, bypass included. In an **offline bounce** the bypassed sections are part of the file, so
+they are measured. If your host stops sending audio to the plug-in (some hosts do when
+a track is disabled, frozen or bypassed by the host itself), nothing is measured, the time stops,
+and the rolling readings hold their last values.
 
 ### 3.5 Settings (gear)
 
@@ -361,8 +412,9 @@ Input Gain → EQ (Pre position) → Compressor → Clipper + Color
 
 - The **ceiling clamp is always last before dither** — whatever you do upstream
   (including a boosted Post EQ), the output does not exceed the ceiling: its sample peaks with
-  **TP** off, its true peaks with **TP** on, to within 0.1 dB on the plug-in's own dBTP meter and
-  on the BS.1770 reference filter — the two meters the promise is defined on. True-peak meters
+  **TP** off, and at any sample rate below 12 kHz; its true peaks with **TP** on at 12 kHz and up,
+  to within 0.1 dB on the plug-in's own dBTP meter and on the BS.1770 reference filter — the two
+  meters the promise is defined on. True-peak meters
   differ in the top few percent below Nyquist, so another meter can read a little more on very
   bright, heavily clipped material: up to ~0.2 dB on libebur128-based meters and up to ~1 dB on a
   long-kernel reference in the tests. For a delivery checked on such a meter, set the ceiling about
@@ -375,8 +427,9 @@ Input Gain → EQ (Pre position) → Compressor → Clipper + Color
   change it, and take effect at a click-free moment.
 - **Click-free by construction**: preset loads, A/B switches, undo/redo and engine
   rewires (EQ position, color model, oversampling changes, the **TP** switch) duck the output
-  briefly instead of clicking. The short dip *is* the mechanism working. Switching **TP on** while
-  audio plays is the one that starts differently: the programme stops at once and its last value
+  briefly instead of clicking. The short dip *is* the mechanism working. (Below 12 kHz the **TP**
+  switch changes only what the limiter listens to, so it does not dip.) Switching **TP on** while
+  audio plays at 12 kHz or more is the one that starts differently: the programme stops at once and its last value
   fades away over a few milliseconds, so the true-peak ceiling already holds from the moment you
   press it (a fade of the audio itself would still carry inter-sample peaks); the sound then comes
   back in TP mode as usual.
@@ -451,7 +504,8 @@ travel with your DAW session.
 
 1. Start from *Transparent Master* (or defaults). Ceiling to your delivery spec (the −0.1
    default suits most deliveries; lock it). If the spec is written in dBTP, engage **TP**
-   as well — that is what makes the ceiling hold inter-sample peaks — and engage it *after*
+   as well — that is what makes the ceiling hold inter-sample peaks, at sample rates of 12 kHz
+   or more — and engage it *after*
    choosing the preset, because a preset turns it off (§7.3). On bright material, once
    Loudness passes 30 %, set Oversampling to 4× so the clipper does not soften the top octave
    (§3.5).
@@ -479,7 +533,7 @@ travel with your DAW session.
 2. **LEARN** on a representative minute of the actual voice, then let it settle and
    **FREEZE** — one consistent sound for the whole episode, saved with the session.
 3. Aim for your distributor's integrated-loudness spec rather than maximum loudness;
-   reset the integrated meter (click the panel), play the episode through, and read **I**.
+   press **RESET** on the STATISTICS panel, play the episode through, and read **I**.
 
 ---
 

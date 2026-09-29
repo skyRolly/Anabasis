@@ -26,7 +26,8 @@ Anabasis/
 ├── .github/                CI + security tooling: workflows/ (build + validate on 3 OSes with
 │                           retain-then-strip symbol pipeline; CodeQL; MSVC /analyze;
 │                           Dependency Review; the weekly non-blocking C++23 canary) and
-│                           dependabot.yml (github-actions ecosystem only).
+│                           dependabot.yml (github-actions ecosystem only); ki028/ + the
+│                           KI-028 diagnostic workflow (macOS, never a gate).
 └── docs/                   This documentation library.
 ```
 
@@ -86,7 +87,7 @@ never occupied, and omitted `MacroEngine` entirely.)*
 | `setup-linux.sh` | Ubuntu build dependencies (+ xvfb). |
 | `build.sh` | CMake + Ninja build; prints artifact paths. |
 | `run-tests.sh` | Runs `AnabasisTests` + `AnabasisStateTests` (fail-closed: a missing binary fails the gate). |
-| `run-pluginval.sh` | pluginval on Linux/macOS (strictness + mode args — `deterministic` \| `randomise`, each ×3; signal-only crash retry). |
+| `run-pluginval.sh` | pluginval on Linux/macOS (strictness + mode args — `deterministic` \| `randomise`, each ×3; signal-only crash retry, Linux only; on macOS exit 9 — pluginval's own signal handler — is reported as a crash, KI-028). |
 | `run-pluginval.ps1` | pluginval on Windows (same strictness/mode/×3 structure; waits on the GUI-subsystem process for a trustworthy exit code). |
 | `check-portability.py` | Source lint for the JUCE SIMD-overload hazard (INC-003): an explicit template argument on `{jmin, jmax, snapToZero}` resolves to the `dsp::SIMDRegister` overload on macOS and not on Linux. Carries a `--compile-canary`. Also requires the Linux installer's scratch names to match the uninstaller's removal list — two files in a zip with no shared library, which have already diverged once. Both halves mutation-verified. Run by **source-lint**. |
 | `check-clang-warnings.py` | Gate over a Clang build log: fails on any warning whose RESOLVED path is under `src/`, `tests/` or `tools/`, so vendored noise cannot mask first-party warnings. `--self-test` runs first, so the gate's silence is evidence rather than an assumption. Compiler-agnostic in fact — it matches the `path:line:col: warning:` shape GCC and Clang both emit — so it gates **linux** (the shipped Clang build) and both arms of **linux-lto-tests**. |
@@ -107,6 +108,8 @@ never occupied, and omitted `MacroEngine` entirely.)*
 | `workflows/codeql.yml` | CodeQL (`c-cpp` manual build + `actions`); alerts scoped to repo-own code (`paths-ignore: build`). |
 | `workflows/msvc.yml` | MSVC `/analyze` → SARIF; JUCE treated as external; path-filtered triggers. |
 | `workflows/dependency-review.yml` | Dependency Review on PRs to `main` (GitHub Actions deps; comment on failure only). |
+| `workflows/ki028-diag.yml` | **Diagnostic, not a gate; never a required check** (KI-028, 2026-09-29). macOS Intel: builds pluginval v1.0.4 from source without the hardened runtime, injects `ki028/throwtrace.cpp`, runs the AU randomise lane repeatedly under a per-pass watchdog — on the Anabasis AU and on a control AU (JUCE's own AudioPlugin example, same JUCE commit) — and uploads symbolicated stacks, hang samples and crash reports. Push to the PR branch touching its own files, only (`procedures/CI_CD.md`). |
+| `ki028/throwtrace.cpp` | The KI-028 diagnostic's `__cxa_throw` / `std::terminate` / fault-handler interposer (macOS only, loaded with `DYLD_INSERT_LIBRARIES`); built and used only by `workflows/ki028-diag.yml`, never linked into a product. |
 | ~~`workflows/cxx23-canary.yml`~~ | **Removed at 0.2.0 (ADR-0030).** C++23 is the baseline, so the canary's question is answered by every job in `build.yml` on all three platforms as a blocking check; the weekly non-blocking copy was a duplicate build of the baseline. |
 | `workflows/release.yml` | Annotated `vX.Y.Z` tag → fail-closed metadata validation → reused `build.yml` gates → **draft** GitHub Release. Deferred to the first commercial release (**OQ-007**); not present. |
 | `dependabot.yml` | Weekly grouped `github-actions` bumps; JUCE stays manually pinned (`DEPENDENCY_POLICY.md`). |
@@ -164,7 +167,15 @@ docs/
 │                   deferred findings and Phase 1 readiness — options laid out, none chosen) and
 │                   2026-09-27-phase0-closure.md (the decisions taken on that material — ADR-0041,
 │                   ADR-0042 and ADR-0043 accepted — the PR #42 review closed item by item, and the
-│                   Phase 0 status matrix)
+│                   Phase 0 status matrix) and 2026-09-27-phase1-roadmap.md (Phase 1's first
+│                   round per finding, the recommended next order and the open owner decisions)
+│                   and 2026-09-28-pr42-review-closure.md (the third PR #42 review closed item by
+│                   item: two true-peak paths, KI-025, GR max's contract, the copy decisions, CI)
+│                   and 2026-09-28-pr42-round4-closure.md (the fourth: the true-peak contract at
+│                   every engaged rate — ADR-0046, the 12 kHz rail — KI-024, the RESET stale peak,
+│                   the TP matrix, CI, the roadmap) and 2026-09-29-pr42-round5-closure.md (the
+│                   fifth: ADR-0046 ratified, the low-rate contract, OQ-020, KI-028 dispositioned,
+│                   the session clock, DSP-005, the roadmap)
 ├── procedures/     BUILD, DEVELOPMENT, CI_CD, TESTING, RELEASE_PROCESS,
 │                   RELEASE_COMPATIBILITY_CHECKLIST, TROUBLESHOOTING. PACKAGING arrives
 │                   with the OQ-007 installer set (first commercial release)

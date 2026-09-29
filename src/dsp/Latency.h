@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EngineParameters.h"
+#include "CeilingClamp.h"
 #include <cmath>
 
 // ============================================================================
@@ -28,6 +29,25 @@ inline constexpr double kMinLookaheadMs = 0.5;    // no zero/off position (ADR-0
 inline int maxLookaheadSamples (double sampleRate) noexcept
 {
     return (int) std::ceil (kMaxLookaheadMs * 0.001 * sampleRate);
+}
+
+// WHETHER TRUE-PEAK MODE ENGAGES AT THIS SAMPLE RATE — the one predicate, read
+// by the engine's rail (`AnabasisEngine::prepare`) and by the Ceiling's unit
+// (`CeilingUnitSource`), so the readout can never claim dBTP where the path
+// does not run. Two conditions (ADR-0041 decision 4, ADR-0046):
+//   • the rate is at least CeilingClamp::kMinTruePeakRate (12 kHz), the lowest
+//     common rate at which the 0.1 dB promise through a full-range Ceiling cut
+//     is supported by a derived bound and the searches (KNOWN_ISSUES KI-025;
+//     the table at the constant) — which also refuses zero and negative rates;
+//   • the path fits inside the constant allowance with the limiter's minimum
+//     0.5 ms window left over (true from 4801 Hz with the 46-sample path).
+// Below it the clamp's TP path is off — sample peaks, the readout says dB, the
+// latency unchanged; the limiter's TP detection below 4x OS still follows the switch.
+inline bool truePeakPathEngages (double sampleRate) noexcept
+{
+    return sampleRate >= CeilingClamp::kMinTruePeakRate
+        && maxLookaheadSamples (sampleRate) - CeilingClamp::truePeakDelayFor (sampleRate)
+               >= (int) std::ceil (kMinLookaheadMs * 0.001 * sampleRate);
 }
 
 // The oversampler's contribution, in BASE samples — a pure function of

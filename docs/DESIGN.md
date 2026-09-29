@@ -76,6 +76,15 @@ in ─ InputGain ─ EQ(pre) ─ Comp ─┤OS region: Clip/Sat ─ Limiter├�
                                                 delta monitor (dry − wet) ─────────────────────┘
 ```
 
+*(Reconciled 2026-09-27, ADR-0044 and ADR-0020 amendment 4 — the ADRs outrank this diagram.) The
+code differs from the drawing in two ways that are now recorded rather than implied: the bypass
+crossfade is NOT monitor-only — it runs in a render when a host automates it, so the meters' tap
+sits after it (the "render tap"), and the loudness-compensated gain multiplies the processed leg
+BEFORE the bypass crossfade, not after it. What the drawing's placement of the meter tap above the
+bypass intended is kept for the SESSION figures only: a realtime bypass audition is left out of the
+integrated reading, LRA and the peak holds, while an offline render measures its bypassed sections
+as part of the file.*
+
 - The **EQ position switch** moves the EQ block between exactly two defined points: pre-comp
   (default) or post-limiter — and in the Post position the EQ sits **before the ceiling clamp**,
   which is *always* the last stage before dither. This is what makes DSP_POLICY invariant 4
@@ -261,6 +270,9 @@ essentially always louder, so compensation is essentially always attenuation:
 - Applied **only** to the monitoring path (DSP_POLICY inv 10); the render is untouched.
   Loudness-matched bypass = the bypass crossfade target is the dry ring scaled by the same
   compensation. Delta = (delay-aligned dry − wet) on the monitor path, own crossfade.
+  *(Superseded 2026-09-27 by ADR-0044: the compensation multiplies the WET leg before the bypass
+  crossfade, and the bypass target is the dry ring at unity — scaling both legs kept the level
+  difference. The ADR outranks this section.)*
 
 ### 2.8 Click-free transition layer
 Inherit Anamorph's three-mechanism taxonomy (its ADR-0004 [Verified]): asymmetric raised-cosine

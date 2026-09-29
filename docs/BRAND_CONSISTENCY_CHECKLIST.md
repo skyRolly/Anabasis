@@ -16,6 +16,10 @@ Two known candidates for the "deliberate deviation" clause, so the human pass do
 rediscover them (a third — Undo/Redo absent from the top bar — resolved on 2026-08-02 when the
 §7 undo machinery landed): **the platform default sans is used** (no licence-clean variable font was approved by P5 — the DESIGN-authorised
 fallback path, RISK-009); **the accent swatch (gold/amber ⊕)** awaits owner ratification.
+**A third, taken deliberately on 2026-09-27 (ADR-0020 amendment 4, on the owner's direction, ⊕ for
+review): the STATISTICS reset is a named RESET button, not a click on the readings.** Anamorph resets
+its holds on a click on any readout; here that click discarded an integrated measurement of a whole
+programme, so the Level-5 pass should record the difference, not restore the sibling's behaviour.
 
 ## v0.1.0 status (2026-08-02) — PROVISIONALLY PASSED under the owner's blanket approval
 

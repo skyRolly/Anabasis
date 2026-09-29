@@ -32,11 +32,15 @@ offset, not a PDC input (`PARAMETER_REGISTRY.md` §non-automatable rows).
 
 **In true-peak mode the allowance is shared** (ADR-0041, Accepted 2026-09-27). The ceiling
 clamp's true-peak path needs a short delay of its own — `D = attack + 30` samples,
-`CeilingClamp::truePeakDelayFor` (41 at 44.1 kHz, 42 at 48 kHz, 54 at 96 kHz, 78 at
-192 kHz) — and takes it OUT of the allowance rather than adding it: the region's lookahead
-line becomes `maxLookaheadSamples − D`, the clamp delays by `D`, and the sum is the same
-allowance. The reported figure is therefore identical in both modes; what TP mode costs is
-the top of the engaged range, capped at `10 ms − D` (9.125 ms at 48 kHz). Toggling the mode
+`CeilingClamp::truePeakDelayFor`, with `attack = max(16, round(0.25 ms · sr))` since ADR-0046
+(0.2.16): **46 at every rate below 66 kHz**, 52 at 88.2 kHz, 54 at 96 kHz, 78 at 192 kHz (41 /
+42 at 44.1 / 48 kHz before it) — and takes it OUT of the allowance rather than adding it: the
+region's lookahead line becomes `maxLookaheadSamples − D`, the clamp delays by `D`, and the sum is
+the same allowance. The reported figure is therefore identical in both modes; what TP mode costs
+is the top of the engaged range, capped at `10 ms − D` (9.04 ms at 48 kHz, 8.96 ms at 44.1 kHz,
+6.17 ms at 12 kHz). The path engages only where `truePeakPathEngages` holds — 12 kHz and up, and
+the line left for the limiter still holds the 0.5 ms minimum window (ADR-0046); below that the
+mode's rail runs the sample clip, and the composition is the TP-off one. Toggling the mode
 changes the line's length, so it is latched at the §2.8 duck's silent bottom exactly like an
 oversampling change (`AnabasisEngine::latchOsConfig`), never mid-block. Engaging it while audio
 plays enters that bottom at the toggle block rather than after the duck's out-leg (ADR-0041
@@ -81,7 +85,7 @@ latency.
 
 ## When the figure recomputes
 
-**One call site** — `updateLatency()` (`src/PluginProcessor.cpp:896-914` — the definition through its
+**One call site** — `updateLatency()` (`src/PluginProcessor.cpp:899-917` — the definition through its
 `setLatencySamples` call, the only
 `setLatencySamples` caller; it no-ops when the figure is unchanged). Reached from five
 triggers (ADR-0004 item 5):
@@ -91,14 +95,14 @@ triggers (ADR-0004 item 5):
 | `int_oversample` change | `InternalState::onLatencyInputChanged` |
 | `int_osPhase` change | same callback |
 | `int_offlineQuality` change | same callback |
-| `prepareToPlay` | `src/PluginProcessor.cpp:813` (`prepareToPlay`, its `updateLatency()` call) |
-| `setNonRealtime` | `src/PluginProcessor.cpp:886-894` (`setNonRealtime`) |
+| `prepareToPlay` | `src/PluginProcessor.cpp:815` (`prepareToPlay`, its `updateLatency()` call) |
+| `setNonRealtime` | `src/PluginProcessor.cpp:889-897` (`setNonRealtime`) |
 
 A **session load is one latency event, not six**: `InternalState::replaceFrom` batches the
 whole read behind `ScopedLatencyBatch`, so the reported figure never walks through the
 default (Off) value mid-load (`src/InternalState.h` — the batch's own comment; pinned by
 `testLatencyNotifyIsBatchedAcrossARead`). `setStateInformation` ends with one further,
-deliberately redundant `updateLatency()` (`src/PluginProcessor.cpp:2018`, the last statement of
+deliberately redundant `updateLatency()` (`src/PluginProcessor.cpp:2030`, the last statement of
 `setStateInformation`) — belt-and-braces
 for the rest of the restore body, a no-op because `setLatencySamples` skips an unchanged
 figure, and documented at the site as exactly that: the host still sees at most one PDC

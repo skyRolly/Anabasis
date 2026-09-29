@@ -50,6 +50,7 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     dryRing.setSize (numChans, dryRingSize);
     staging.setSize (numChans, maxBlock);
     ceilArr.resize ((size_t) maxBlock);
+    ceilEmitArr.resize ((size_t) maxBlock);
     wArr.resize ((size_t) maxBlock);
     pushArr.resize ((size_t) maxBlock);
     specInL.resize ((size_t) maxBlock);
@@ -115,7 +116,9 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     // enough to feel immediate on a gain control.
     inputGain.reset (sampleRate, 0.020);
     pushGain.reset (sampleRate, 0.020);
-    ceilingLinear.reset (sampleRate, 0.020);
+    // A glide, never a snap: ADR-0045's in-flight revision relies on every
+    // retarget starting a ramp (see the block top) and on its bounded slope.
+    ceilingLinear.reset (sampleRate, kCeilingGlideSeconds);
     windowSamples.reset (sampleRate, 0.020);
 
     // The bypass fade length is derived from the sample rate, so it belongs
@@ -128,13 +131,20 @@ void AnabasisEngine::prepare (double sampleRate, int maxBlockSize, int numChanne
     limiter.prepare (sampleRate, delaySamples * maxN);   // wedge sized for 16x
     // ADR-0041: the true-peak path's rings are sized here, and whether it fits
     // inside the allowance at all is decided here — the line it leaves behind
-    // must still hold the minimum 0.5 ms window. Every conforming rate fits
-    // with room to spare (42 of 480 samples at 48 kHz); the rail is for the
-    // host-supplied rate the comment at the top of this function describes.
+    // must still hold the minimum 0.5 ms window. It takes 46 of 480 samples
+    // at 48 kHz and a constant 46 at every rate below 66 kHz (KI-025: the
+    // attack's 16-sample floor), so it would fit at integer rates from
+    // 4801 Hz; it is ENGAGED from CeilingClamp::kMinTruePeakRate (12 kHz), the
+    // lowest common rate at which a full-range Ceiling cut's revision step is
+    // kept under the 0.1 dB tolerance by a derived bound as well as by search
+    // (the glide step 0.9 / (0.02·sr) grows as the rate falls; the table is at
+    // the constant). Below either, the rail runs the sample clip, as the comment
+    // at the top of this function describes for any host-supplied rate that
+    // leaves no room.
     clamp.prepare (sampleRate);
+    ceilInFlight.assign ((size_t) clamp.truePeakDelay(), 0.0f);
     engageTail.prepare (sampleRate);
-    tpClampFits = delaySamples - clamp.truePeakDelay()
-                  >= (int) std::ceil (kMinLookaheadMs * 0.001 * sampleRate);
+    tpClampFits = truePeakPathEngages (sampleRate);
     dryMeter.prepare (sampleRate);
     wetMeter.prepare (sampleRate);
     outMeter.prepare (sampleRate);
@@ -281,6 +291,10 @@ void AnabasisEngine::reset() noexcept
     outTp.reset();
     renderTpMaxCall = renderPeakCall = 0.0f;
     renderTpMaxChunk = renderPeakChunk = 0.0f;
+    sessionTpMaxCall = sessionPeakCall = 0.0f;
+    sessionTpMaxChunk = sessionPeakChunk = 0.0f;
+    sessionSamples = 0;
+    sessionTpSkip = 0;
     grMinChunk = 1.0f;
     grMinChunkCh[0] = grMinChunkCh[1] = 1.0f;
     // THE HISTORY ACCUMULATOR IS DELIBERATELY NOT IN THIS LIST, and round 16
@@ -301,6 +315,8 @@ void AnabasisEngine::reset() noexcept
     // ring clear therefore drops the partial before any new audio is folded.
     adaptiveEngine.reset();
     compMeasureDb = 0.0f;
+    clipLevelDb   = 0.0f;
+    clipInSqCall  = clipOutSqCall = 0.0;
     monitorGain.setCurrentAndTargetValue (1.0f);
     deltaMix = deltaTarget ? 1.0f : 0.0f;
     smoothersPrimed = false;          // the next block adopts ALL FOUR values without a glide
@@ -457,8 +473,12 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     // an ADR-0004 recompute trigger) and, at Force Max, effectiveFactor
     // changes with it. Ducking would fade the HEAD OF A BOUNCE — ~45 ms of
     // envelope written into the rendered file — for a transition no one is
-    // listening to. Adopting directly makes the no-re-prepare path behave
-    // exactly like the re-prepare path most hosts take.
+    // listening to. Adopting directly makes the no-re-prepare path adopt the
+    // configuration the way the re-prepare path most hosts take does — though
+    // NOT the pipeline: without a reset() the lookahead ring, the upstream
+    // stages' state and the dither RNG carry on from the realtime stream
+    // (KNOWN_ISSUES KI-004). What this branch does clear is every TRANSITION
+    // in flight — the duck, and a TP engagement's decay (below).
     //
     // The RETURN edge is the opposite case and must NOT share this branch:
     // offline→realtime lands in live playback, where the same direct adopt
@@ -496,8 +516,32 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
 
     if (! smoothersPrimed || enteringOffline)
     {
+        // An offline entry that LATCHES (a composition change the render
+        // wants, e.g. Force Max's factor, with no re-prepare) empties the
+        // pipeline at full gain, and a render that starts from an empty
+        // pipeline must not carry the realtime stream into it (KNOWN_ISSUES
+        // KI-024, the PR #42 review of 0.2.15). Two stages outlived the latch
+        // and did: the EQ, whose ring-out of the realtime audio reached the
+        // render — at the Post position inside its latency window (up to
+        // −1.0 dBFS), at the Pre position into the head of the new audio
+        // (−1.2 dBFS up to 637 samples after the cut) — and the output dBTP
+        // tap, which read the step into the emptied pipeline (+0.88 dB over
+        // the ceiling in the session hold for a render whose file has none).
+        // Both restart here, as prepare() restarts them; an entry that does
+        // not latch keeps the continuous stream, exactly as before (KI-004).
+        // So does the DRY ring, the bypass leg's line: the latch clears the
+        // wet ring only, and a render bypassed from its first sample played
+        // the realtime input out of it for the whole latency window (−2 dBFS,
+        // measured; the same on 0.2.15 — the review of this round). With
+        // BYPASS off the dry leg is not in the render, so nothing else moves.
+        const bool entryEmptiesPipeline = enteringOffline && latchWanted;
         if (latchWanted)
             latchOsConfig (wantIdx, wantPh, wantTpClamp);
+        if (entryEmptiesPipeline)
+        {
+            eq.resetState();
+            dryRing.clear();
+        }
         if (wantEq != appliedEqPos)
         {
             // Paired with the position change on THIS branch too, exactly as
@@ -517,6 +561,20 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         }
         duckState = DuckState::idle;
         duckGain  = 1.0f;
+        // A TP engagement's decay stands in for the duck's out-leg, so it goes
+        // with the duck. Left running it continued the LAST REALTIME FRAME into
+        // the head of the bounce — summed onto the now-unducked processed path,
+        // whose Post-EQ ring-out it could push up to +1.46 dB over the ceiling
+        // (the PR #42 review of 0.2.14; reset() below already covers the
+        // re-prepare path). Its history goes too: the render's pre-history is
+        // silence. The output dBTP tap restarts only when a decay was cut, so
+        // it does not read the cut as a step across the realtime/offline
+        // splice; with no decay in flight the stream is continuous and the tap
+        // keeps its history, exactly as before — unless the entry emptied the
+        // pipeline (above), which is the same splice.
+        if (engageTail.active() || entryEmptiesPipeline)
+            outTp.reset();
+        engageTail.reset();
         // A render that STARTS with an empty pipeline is not a transition:
         // the reported latency is the promise that those samples are absent,
         // so no hold, and nothing is owed from before the reset. `duckAsked`
@@ -617,7 +675,7 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
                                               p.lookaheadMs);
     // The window cannot outgrow the line it reads, and in true-peak mode the
     // line is the allowance LESS the clamp's share (ADR-0041): a 10 ms setting
-    // engages 10 ms − 0.875 ms at 48 kHz there. The cap follows the APPLIED
+    // engages 10 ms − 0.958 ms at 48 kHz there. The cap follows the APPLIED
     // composition, so it moves only at the silent bottom that moves the line.
     const int   lineSamples   = delaySamples - clampDelay;
     const float windowTarget  = juce::jlimit (1.0f, (float) lineSamples,
@@ -639,6 +697,30 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         pushGain.setTargetValue (pushTarget);
         ceilingLinear.setTargetValue (ceilingTarget);
         windowSamples.setTargetValue (windowTarget);
+    }
+
+    // THE TRUE-PEAK PATH IS JUDGED AT EMISSION (ADR-0045). Its audio leaves
+    // clampDelay samples after it enters, and the promise is the ceiling in
+    // force when it leaves. Between block-rate retargets the smoother is a
+    // deterministic ramp, so a copy run clampDelay steps ahead gives that value
+    // exactly (the same float operations in the same order — never skip(),
+    // whose multiply rounds differently); a retarget HERE can only move the
+    // future of the frames already in flight, and the clamp lowers their
+    // ceilings to it. What makes the not-gliding exit exact: every EFFECTIVE
+    // retarget leaves the smoother gliding (its ramp is kCeilingGlideSeconds, so
+    // stepsToTarget > 0 at every supported rate), so a smoother that is not
+    // gliding has had no retarget since the in-flight frames were stamped and
+    // their predictions still hold — the static-ceiling path does no extra
+    // work. Static ceiling: every value is the target, exactly as before.
+    if (appliedTpClamp)
+    {
+        ceilingAhead = ceilingLinear;
+        if (ceilingLinear.isSmoothing())
+        {
+            for (int i = 0; i < clampDelay; ++i)
+                ceilInFlight[(size_t) i] = ceilingAhead.getNextValue();
+            clamp.lowerInFlightCeilings (ceilInFlight.data(), clampDelay);
+        }
     }
 
     // ---- Invariant 9, the unconditional per-block repairs -----------------
@@ -751,15 +833,43 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         if (dryM > -70.0f && wetM > -70.0f)
             compMeasureDb = juce::jlimit (-24.0f, 6.0f,
                                           dryMeter.shortTermLufs() - wetMeter.shortTermLufs());
-        // Predict floor: the deterministic gain lift, GR-corrected by the
-        // previous block's DEEPEST reduction (grMinLinear is a per-call
-        // minimum, not an average — so the floor is slightly more aggressive
-        // than a mean would make it, which is the safe direction for a
-        // monitor-only attenuation). The P3 form of §2.7's "expected GR"; the
-        // P4 adaptive engine refines it. Only ever attenuation.
+        // Predict floor: the deterministic gain lift less §2.7's "expected GR"
+        // (ADR-0006 decision 7) — the reduction the level-taking stages left
+        // behind in the PREVIOUS block, three terms:
+        //  - the limiter's DEEPEST reduction (grMinLinear is a per-call
+        //    minimum, not an average: it OVER-states the limiter's loudness
+        //    loss, so on its own this term errs toward a SHALLOWER floor);
+        //  - the compressor's block-end reduction, weighted by Comp Mix (a
+        //    parallel mix m applies 1 − m + m·g, not g). Read from the stage,
+        //    which only this thread touches — NOT from the published
+        //    `compGrDb`, which `clearPublishedStageGr` writes from the message
+        //    thread, so reading it here would let a meter reset move the
+        //    monitor gain (the reason `grMinLinear` is kept out of that clear);
+        //  - the Clip/Sat stage's measured level change (`clipLevelDb`, energy
+        //    out over in across the stage). Drive is level-compensated, yet the
+        //    stage takes level out: at Oversampling Off mostly the first-order
+        //    ADAA kernel's cos(πf/fs) droop (KNOWN_ISSUES KI-005, audit
+        //    DSP-004), on hot programme the shaved peaks too.
+        // Counting the limiter alone over-stated the lift whenever the other
+        // two worked, and min(measure, predict) KEPT that too-deep floor after
+        // the measure converged, so MATCH settled below the input (audit
+        // DSP-005, KNOWN_ISSUES KI-023). Every term is a figure the previous
+        // block left behind: nothing here integrates, holds or ratchets across
+        // blocks, and the floor only ever attenuates.
         const float grDbNow  = juce::Decibels::gainToDecibels (
                                    grMinLinear.load (std::memory_order_relaxed), -60.0f);
-        const float predictDb = -juce::jmax (0.0f, p.inputGainDb + p.limGainDb + grDbNow);
+        const float compGrNow = comp.currentGainReductionDb();          // <= 0 dB
+        const float compMixNow = juce::jlimit (0.0f, 1.0f, p.compMix);
+        const float compDbNow = compGrNow < -1.0e-6f
+                                  ? juce::Decibels::gainToDecibels (
+                                        1.0f - compMixNow
+                                          + compMixNow * juce::Decibels::decibelsToGain (compGrNow),
+                                        -60.0f)
+                                  : 0.0f;
+        float expectedGrDb = grDbNow + compDbNow + clipLevelDb;
+        if (! std::isfinite (expectedGrDb))
+            expectedGrDb = grDbNow;              // never let a stage fault reach the monitor gain
+        const float predictDb = -juce::jmax (0.0f, p.inputGainDb + p.limGainDb + expectedGrDb);
         const float appliedDb = compOn ? juce::jmin (compMeasureDb, predictDb) : 0.0f;
         monitorGain.setTargetValue (juce::Decibels::decibelsToGain (appliedDb));
     }
@@ -768,8 +878,11 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     //      overhead, never to unprocessed audio -----------------------------
     grMinThisCall   = 1.0f;
     grMinThisCallCh[0] = grMinThisCallCh[1] = 1.0f;
+    clipInSqCall = clipOutSqCall = 0.0;
     renderTpMaxCall = 0.0f;
     renderPeakCall  = 0.0f;
+    sessionTpMaxCall = 0.0f;
+    sessionPeakCall  = 0.0f;
     // THE CHUNK LOOP BREAKS ON THE HISTORY'S BOUNDARY AS WELL AS ON `maxBlock`
     // (0.2.12, OQ-017 fix 1). `maxBlock - histSamples` is the distance to the
     // next prepared-block boundary of the PROCESSED-AUDIO stream, which is at
@@ -815,6 +928,8 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         grMinChunkCh[0] = grMinChunkCh[1] = 1.0f;
         renderTpMaxChunk = 0.0f;
         renderPeakChunk  = 0.0f;
+        sessionTpMaxChunk = 0.0f;
+        sessionPeakChunk  = 0.0f;
         processChunk (buffer, start, num, p, eqPre, eqPost);
         // Chunk into call — the meters' figures, unchanged in meaning because
         // min and max are associative.
@@ -823,6 +938,8 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
         grMinThisCallCh[1] = juce::jmin (grMinThisCallCh[1], grMinChunkCh[1]);
         renderTpMaxCall    = juce::jmax (renderTpMaxCall, renderTpMaxChunk);
         renderPeakCall     = juce::jmax (renderPeakCall, renderPeakChunk);
+        sessionTpMaxCall   = juce::jmax (sessionTpMaxCall, sessionTpMaxChunk);
+        sessionPeakCall    = juce::jmax (sessionPeakCall, sessionPeakChunk);
         // …and chunk into the history entry, which completes exactly when it
         // holds `maxBlock` samples. The loop above guarantees it never holds
         // more, so this is an `if`, not a `while`: no unbounded catch-up.
@@ -841,6 +958,16 @@ bool AnabasisEngine::process (juce::AudioBuffer<float>& buffer, const EnginePara
     }
     grMinLinear.store (grMinThisCall, std::memory_order_relaxed);
     compGrDb.store (comp.currentGainReductionDb(), std::memory_order_relaxed);
+    // The Clip/Sat stage's level change over this call, for the NEXT block's
+    // §2.7 predict floor (audit DSP-005). Exactly 0 dB when the stage passed
+    // every sample through (drive 0, no colour: the same values summed into
+    // both accumulators), and 0 dB for a silent call or a non-finite figure.
+    // Audio-thread member, not an atomic: nothing else reads it.
+    {
+        const double ratio = clipInSqCall > 1.0e-12 ? clipOutSqCall / clipInSqCall : 1.0;
+        const float  db    = (float) (10.0 * std::log10 (juce::jmax (ratio, 1.0e-3)));
+        clipLevelDb = std::isfinite (db) ? juce::jlimit (-24.0f, 6.0f, db) : 0.0f;
+    }
     // Per-channel per-stage copies (0.1.2 item 12) — the same meter row, one
     // store per channel per block.
     for (int ch = 0; ch < 2; ++ch)
@@ -904,7 +1031,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     // ======== Stage A - base rate: input gain -> EQ(Pre) -> compressor =====
     // Also fills the per-base-sample control arrays the region indexes, so
     // the SAME instantaneous ceiling the gain computer uses reaches the
-    // clamp, exactly as before the restructure. The EQ ticks in whichever
+    // clamp — `ceilArr` in TP-off, `ceilEmitArr` (the lower of the values at
+    // entry and emission) in TP mode (ADR-0045, ADR-0046). The EQ ticks in whichever
     // stage processes it - ticking here while Post processes in stage E
     // would hand every Post sample the block's final coefficients, a
     // block-length step that breaks the smoothing contract.
@@ -913,6 +1041,19 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         const float gIn   = inputGain.getNextValue();
         const float gPush = pushGain.getNextValue();
         ceilArr[(size_t) n] = ceilingLinear.getNextValue();
+        // The LOWER of the ceiling at entry and the predicted ceiling at
+        // emission (the PR #42 review of 0.2.15): identical on a static
+        // ceiling and during a descent (the emission value is the lower
+        // there), and during an ASCENT the frame answers to its entry value —
+        // so a reversal mid-ascent (−20 → 0 → −20 dB) revises stamps that were
+        // never raised to the rising trajectory, instead of pulling them down
+        // by both slopes at once, which let the segment straddling the
+        // emission point read +0.30 dB (Annex 2) over the live ceiling at
+        // 48 kHz at clamp level in 0.2.15 (+0.60 dB at 8 kHz). The cost: an
+        // upward glide reaches the output up to clampDelay samples later in
+        // TP mode — under the ceiling, never over.
+        if (appliedTpClamp)
+            ceilEmitArr[(size_t) n] = juce::jmin (ceilingAhead.getNextValue(), ceilArr[(size_t) n]);
         const int wBase = juce::jlimit (1, delaySamples - clampDelay,
                                         juce::roundToInt (windowSamples.getNextValue()));
         wArr[(size_t) n] = wBase;
@@ -999,10 +1140,15 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         region = osActive->processSamplesUp (stagedBlock);
 
     const int regionSamples = num << osShift;
+    double clipInSq = 0.0, clipOutSq = 0.0;   // §2.7 predict floor's Clip/Sat term
     for (int i = 0; i < regionSamples; ++i)
     {
         const int   b          = i >> osShift;
-        const float ceilingNow = ceilArr[(size_t) b];
+        // The limiter plays each sample to the ceiling the clamp holds it to:
+        // the live value in TP-off, where the clamp adds no delay; in TP mode
+        // the value the clamp stamps the same base sample with (ADR-0045), the
+        // lower of entry and emission (ADR-0046: on a rise, the entry value).
+        const float ceilingNow = appliedTpClamp ? ceilEmitArr[(size_t) b] : ceilArr[(size_t) b];
         const int   wOs        = wArr[(size_t) b] << osShift;
 
         float frame[kMaxChannels] = {};
@@ -1018,9 +1164,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             }
         }
 
+        for (int ch = 0; ch < nCh; ++ch)
+            clipInSq += (double) frame[ch] * frame[ch];
         clip.processSample (frame, nCh);       // Clipper/Sat, inside the region
         for (int ch = 0; ch < nCh; ++ch)
+        {
+            clipOutSq += (double) frame[ch] * frame[ch];
             ANABASIS_TRACE (anabasis::StageTrace::clipOut, ch, frame[ch]);
+        }
 
         // Limiter push, at its documented place in the chain: after Clip/Sat,
         // before the lookahead line, so the detector and the delayed signal
@@ -1036,13 +1187,14 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // future level-affecting control inside the region, where a slower
         // glide or a higher factor could put an image under the cutoff.
         //
-        // For `ceilArr` the same hold is LOAD-BEARING, not a cost: the region's
-        // gain computer and stage E's CeilingClamp must use the SAME
-        // instantaneous ceiling, which is what CeilingClamp's header promises
-        // ("a backstop, never a second differently-timed threshold"). The
-        // clamp runs at base rate on the decimated signal, so interpolating
-        // `ceilArr` across the region would give the two a different threshold
-        // per sample and break that contract. Do not "improve" it.
+        // For the ceiling the same hold is LOAD-BEARING, not a cost: the
+        // region's gain computer and stage E's CeilingClamp must use the SAME
+        // instantaneous ceiling per base sample (`ceilArr`, or `ceilEmitArr` in
+        // TP mode), which is what CeilingClamp's header promises ("a backstop,
+        // never a second differently-timed threshold"). The clamp runs at base
+        // rate on the decimated signal, so interpolating it across the region
+        // would give the two a different threshold per sample and break that
+        // contract. Do not "improve" it.
         if (const float gPushNow = pushArr[(size_t) b]; ! juce::exactlyEqual (gPushNow, 1.0f))
             for (int ch = 0; ch < nCh; ++ch)
                 frame[ch] *= gPushNow;
@@ -1092,14 +1244,17 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         float gains[kMaxChannels] = { 1.0f, 1.0f };
         limiter.processSample (tapped, nCh, wOs, ceilingNow, gains);
         // GR TAP SCOPE, since the name does not say it: this is the LIMITER's
-        // reduction, not the chain's. `MasteringComp::currentGainReductionDb()`
-        // exists and is read only by the tests, so the published `pubGrDb`, the
-        // GR history ring and the §2.7 predict floor
-        // (`inputGainDb + limGainDb + grDbNow`) all describe the limiter alone
-        // — the floor therefore UNDER-estimates the lift whenever the
-        // compressor is doing the work, and `min(measure, predict)` hides that
-        // once the measure converges. A P5 item (the meter legend has to say
-        // which reduction it is showing) rather than a defect today.
+        // reduction, not the chain's. The compressor's own figure
+        // (`MasteringComp::currentGainReductionDb()`) reaches only the COMP
+        // lanes, through `compGrDbCh`; the published `pubGrDb` and the GR
+        // history ring — and so the numeric "lim GR" readout, whose caption
+        // says so (audit VIS-003) — describe the limiter alone. The §2.7
+        // predict floor reads this tap AND the compressor's and the Clip/Sat
+        // stage's own figures (the block top; audit DSP-005, KNOWN_ISSUES
+        // KI-023): counting the limiter alone over-estimated the lift whenever
+        // the other two took level out, and `min(measure, predict)` KEPT that
+        // too-deep floor after the measure converged. (Until 2026-09-27 this
+        // comment stated that error's direction backwards.)
         // `nCh - 1` is the LAST active channel. `process` already refuses a
         // block with no channels -- `numChannels <= 0` returns false before any
         // chunk runs -- so nCh >= 1 whenever this line executes. That guard
@@ -1136,6 +1291,8 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
     }
     if (osActive != nullptr)
         osActive->processSamplesDown (stagedBlock);
+    clipInSqCall  += clipInSq;
+    clipOutSqCall += clipOutSq;
 
     // ======== Stage E - base rate: EQ(Post) -> clamp -> dither -> bypass ===
     const bool ditherOn = p.ditherMode != 0;
@@ -1258,11 +1415,12 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
 
         // ADR-0006 item 3: with true-peak mode applied the gain acts on the
         // clamp's own true-peak estimate, the hard clip under it the backstop;
-        // without, the hard clip alone. The ceiling travels WITH each frame
-        // through the true-peak path's delay, so every sample is still judged
-        // against the instantaneous ceiling the limiter used for it.
+        // without, the hard clip alone. The true-peak path is handed the lower
+        // of the ceiling at THIS frame's entry and at its emission (stage A,
+        // ADR-0046), so every emitted sample is judged at or under the live
+        // ceiling at its emission — the same value the limiter played it to.
         if (appliedTpClamp)
-            clamp.processFrameTruePeak (clampFrame, nCh, ceilingNow);
+            clamp.processFrameTruePeak (clampFrame, nCh, ceilEmitArr[(size_t) n]);
         else
             for (int ch = 0; ch < nCh; ++ch)
                 clampFrame[ch] = clamp.processSample (clampFrame[ch], ceilingNow);
@@ -1358,8 +1516,21 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             // §2.9 spectrum tap 2: post-chain — the same render the meters read.
             (ch == 0 ? specOutL : specOutR)[(size_t) n] = renderFrame[ch];
 
+            // §2.7 loudness compensation (MATCH) on the PROCESSED leg, after the
+            // delta substitution and BEFORE the bypass crossfade (ADR-0044,
+            // amending ADR-0006 decision 8): the matched processed signal sits
+            // at the input's loudness, BYPASS plays the delay-aligned input at
+            // unity, so switching between them is the loudness-matched
+            // comparison, and DELTA + MATCH stays g·(dry − processed). Applied
+            // after the bypass mix until 0.2.14, the gain scaled BOTH legs and
+            // the comparison kept the whole level difference (audit UX-009).
+            // Exact skip at unity — MATCH off, and always offline, where the
+            // engine snaps the gain to 1 (invariant 10).
+            if (! juce::exactlyEqual (monGainNow, 1.0f))
+                wetLeg *= monGainNow;
+
             // Bypass crossfade. The SECOND leg downstream of dither (the §2.7
-            // monitor gain below is the other), and unlike that one it is not
+            // monitor gain above is the other), and unlike that one it is not
             // monitor-only — it runs in a render too. Both endpoints are exact
             // branches, so a steady state is on the quantisation grid either
             // way; the ~10 ms ramp between them is a convex combination of a
@@ -1374,11 +1545,6 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             else if (bypassMix >= 1.0f) out = delayedDry;                       // exact endpoint
             else                        out = wetLeg + (delayedDry - wetLeg) * bypassMix;
 
-            // §2.7 loudness compensation: POST-mix, so the bypass leg carries
-            // the same gain (loudness-matched bypass). Exact skip at unity.
-            if (! juce::exactlyEqual (monGainNow, 1.0f))
-                out *= monGainNow;
-
             if (! std::isfinite (out))
             {
                 sawNonFinite = true;
@@ -1392,6 +1558,17 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         dryMeter.processFrame (monFrameDry, nCh);
         wetMeter.processFrame (monFrameWet, nCh);
         adaptiveEngine.pushFrame (monFrameDry, nCh);
+        // ADR-0020 amendment 4 (audit VIS-001): the SESSION figures leave out
+        // the frames a realtime bypass audition is audible — any part of the
+        // ~10 ms ramp included, so no crossfaded input reaches them. Offline
+        // the bypass is part of the rendered file and is measured. The rolling
+        // readings (M, S, RMS) and the GR history's waveform keep following
+        // what the render tap carries, exactly as before. The true-peak
+        // estimator reports ~6 samples late, so at a release up to that many
+        // ramp samples can enter the TP hold — at under 2 % of the input's
+        // level, stated rather than compensated.
+        const bool sessionOpen = bypassMix <= 0.0f || p.nonRealtime;
+        outMeter.setSessionPaused (! sessionOpen);
         outMeter.processFrame (renderFrame, nCh);
         outRms.processFrame (renderFrame, nCh);      // §2.9 stats row (ADR-0020)
         {
@@ -1401,6 +1578,23 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             {
                 renderTpMaxChunk = juce::jmax (renderTpMaxChunk, tp[ch]);
                 renderPeakChunk = juce::jmax (renderPeakChunk, std::abs (renderFrame[ch]));
+            }
+            // The readings still describing pre-reset positions stay out of
+            // the session TP (resetMeterHolds). Counted on EVERY frame — it
+            // is a position offset, not a session count, so a bypass pause
+            // does not stretch it.
+            const bool tpInSession = sessionTpSkip == 0;
+            if (sessionTpSkip > 0)
+                --sessionTpSkip;
+            if (sessionOpen)
+            {
+                for (int ch = 0; ch < nCh; ++ch)
+                {
+                    if (tpInSession)
+                        sessionTpMaxChunk = juce::jmax (sessionTpMaxChunk, tp[ch]);
+                    sessionPeakChunk  = juce::jmax (sessionPeakChunk, std::abs (renderFrame[ch]));
+                }
+                ++sessionSamples;
             }
         }
         if (++dryReadPos >= dryRingSize)

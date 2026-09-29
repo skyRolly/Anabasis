@@ -48,7 +48,8 @@ cmake --build build --target Anabasis_Standalone
 The single most useful habit for this project, from the brief (§3, §5.4):
 
 - **Always compare loudness-matched.** Use the plugin's own loudness-compensated monitoring and
-  loudness-matched bypass. Uncompensated A/B always favours the louder version, so an
+  loudness-matched bypass (MATCH on, then BYPASS — since 0.2.14 the comparison really is matched,
+  ADR-0044; before it, MATCH scaled the bypassed input too and the jump remained). Uncompensated A/B always favours the louder version, so an
   uncompensated comparison cannot tell you whether a change improved anything.
 - **Use delta monitoring** to hear what the processing is removing, not just what it leaves.
 - Record what you measured, on what material, in `worklogs/` — including the alternatives you
