@@ -28,7 +28,9 @@ name: KI-028 diagnostics (macOS pluginval teardown abort)
 #      fault handler);
 #   4. runs the AU randomise lane KI028_SEEDED_RUNS times on the recorded seed,
 #      KI028_RANDOM_RUNS times on fresh seeds and KI028_FAST_RUNS times on the
-#      recorded seed without "Editor Automation", cycling three variants per
+#      recorded seed without "Editor Automation", each pass under a watchdog
+#      (KI028_RUN_TIMEOUT_S: a pass still alive then is `sample`d -- every
+#      thread's stack -- and then aborted and killed), cycling three variants per
 #      run (A: stock pluginval signal handling -- reproduces exit 9 exactly;
 #      B: pluginval's handler refused, so ReportCrash writes a full .ips with
 #      every thread; C: as B plus MallocScribble=1, which fills freed blocks
@@ -36,12 +38,24 @@ name: KI-028 diagnostics (macOS pluginval teardown abort)
 #      0x5555... address instead of reading as EMPTY under macOS's
 #      zero-on-free, which separates "empty std::function" from
 #      "use-after-free of a std::function");
-#   5. symbolicates every captured frame with atos against the dSYMs and
-#      uploads everything.
+#   5. prints every KI028 line of a failing pass into the job log, symbolicates
+#      every captured frame with atos against the dSYMs, and uploads everything
+#      -- also when the job fails or times out.
 #
 # Matrix: macos-15-intel (thin x86_64, the macos-intel job's configuration)
-# and macos-latest (universal, the macos job's configuration), each for the
-# PR head (github.sha) and for main (MAIN_SHA).
+# only, for
+#   pr-head -- the Anabasis AU of the pushed commit (github.sha);
+#   control -- JUCE's own examples/CMake/AudioPlugin AU, built from the SAME
+#              JUCE commit the pushed commit pins (the one its configure
+#              fetches), with no Anabasis code in it: if the control aborts
+#              the same way, the defect is not the plug-in's.
+# The first run (36520602892, on 0d42384, pr-head AND main x macos-15-intel AND
+# macos-latest) settled the rest: the abort reproduced on main (ed06ad0) as
+# often as on the head -- seeded passes 8/10 vs 7/10 on macos-15-intel -- and
+# not once in 100 passes on macos-latest; fresh seeds 0/20. Its artifacts were
+# lost (both Intel jobs hung on one pass until the job timeout, and the upload
+# steps did not run on a cancelled job), which is what the watchdog, the
+# in-log frame dump and the always() uploads are for.
 #
 # Trigger: ONLY a push to the PR branch that changes THIS FILE or the
 # interposer (.github/ki028/**). No workflow_dispatch: a dispatched run executes
@@ -50,7 +64,6 @@ name: KI-028 diagnostics (macOS pluginval teardown abort)
 # cache-poisoning path (its alert on 0d42384, this file's pluginval-run step);
 # a branch push keeps the run in the branch's own scope. To re-run, edit the
 # env block below (the run counts) on a branch that carries this file and push.
-# "pr-head" tests the pushed commit (github.sha); "main" tests MAIN_SHA below.
 # ---------------------------------------------------------------------------
 
 on:
@@ -74,8 +87,6 @@ env:
   PLUGINVAL_TAG: v1.0.4
   PLUGINVAL_COMMIT: ed19c2c16b57a6d94db391bea3ef4a80b769d5bf
   PLUGINVAL_JUCE_COMMIT: 5179f4e720d8406ebd1b5401c86aea8da6cc83c9
-  # main at the time of writing (ed06ad0).
-  MAIN_SHA: ed06ad069d5ee51de6b7ec156c75724b5cd82d80
   KI028_SEED: "0x5161f59"
   # Three groups per job. SEEDED and RANDOM run the CI lane unchanged. FAST
   # replays the seed with only "Editor Automation" disabled (~41 s of the ~47 s
@@ -83,60 +94,52 @@ env:
   # in place, so the recorded order -- "Plugin programs" last -- is kept, and a
   # pass ends (and tears down) about four times as often. It is a
   # throughput-for-fidelity trade and is labelled as such in every output.
-  KI028_SEEDED_RUNS: "10"
-  KI028_RANDOM_RUNS: "10"
-  KI028_FAST_RUNS: "30"
+  # Fresh seeds are off: 0 of 20 reproduced in the first run.
+  KI028_SEEDED_RUNS: "8"
+  KI028_RANDOM_RUNS: "0"
+  KI028_FAST_RUNS: "6"
+  # A pass normally takes ~50 s (seeded) or ~6 s (fast); one still running
+  # after this long is sampled, then aborted, then killed.
+  KI028_RUN_TIMEOUT_S: "300"
 
 jobs:
   diag:
     name: KI-028 ${{ matrix.runner }} / ${{ matrix.ref_label }}
     runs-on: ${{ matrix.runner }}
-    # Budget: pluginval build (rebuilt every run: the cache step is restore-only) + Anabasis AU/VST3
-    # build + 20 full pluginval passes of roughly 50 s each (the failing pass
-    # took 47 s; "Editor Automation" alone is ~41 s) + 30 fast passes of
-    # roughly 10 s + symbolication.
-    timeout-minutes: 150
+    # Budget: pluginval build (rebuilt every run: the cache step is restore-only) + the
+    # plug-in build + 8 full pluginval passes of roughly 50 s each (the failing
+    # pass took 47 s; "Editor Automation" alone is ~41 s) + 6 fast passes of
+    # roughly 6 s + at most one watchdog timeout per pass + symbolication.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        runner: [ macos-15-intel, macos-latest ]
-        ref_label: [ pr-head, main ]
+        runner: [ macos-15-intel ]
+        ref_label: [ pr-head, control ]
         include:
           - runner: macos-15-intel
             archs: "x86_64"
             native_arch: x86_64
             ccache_lineage: ccache-macos-intel-
-          - runner: macos-latest
-            archs: "arm64;x86_64"
-            native_arch: arm64
-            ccache_lineage: ccache-macos-universal-
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 1G
       CCACHE_COMPILERCHECK: content
     steps:
-      - name: Pick the commit under test
-        id: pick
-        run: |
-          set -euo pipefail
-          if [ "${{ matrix.ref_label }}" = "main" ]; then
-            echo "sha=$MAIN_SHA" >> "$GITHUB_OUTPUT"
-          else
-            echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
-          fi
-
-      # The commit under test goes to the workspace ROOT, exactly where build.yml
+      # The pushed commit goes to the workspace ROOT, exactly where build.yml
       # checks out, so absolute paths (ccache hashes, the -object_path_lto
-      # objects, the dSYM debug maps) match the CI build it mirrors.
+      # objects, the dSYM debug maps) match the CI build it mirrors. The
+      # control job checks it out too: its configure is what fetches the JUCE
+      # commit the control plug-in is built from.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ steps.pick.outputs.sha }}
+          ref: ${{ github.sha }}
           # Third-party build code runs in this job (brew, pluginval's and
           # JUCE's CMake): leave no token in the workspace's git config.
           persist-credentials: false
 
-      # The interposer source comes from the commit that carries THIS workflow,
-      # whichever commit is under test.
+      # The interposer source, from the same commit (a separate sparse checkout,
+      # so the tools path is identical in every job).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -291,18 +294,57 @@ jobs:
           -DANABASIS_BUILD_NUMBER=${{ github.run_number }}
 
       - name: Build the AU and VST3
-        run: cmake --build build --config Release --target Anabasis_AU Anabasis_VST3
+        if: matrix.ref_label != 'control'
+        run: |
+          set -euo pipefail
+          cmake --build build --config Release --target Anabasis_AU Anabasis_VST3
+          echo "PLUGIN_BUNDLE=$PWD/build/Anabasis_artefacts/Release/AU/Anabasis.component" >> "$GITHUB_ENV"
+
+      # CONTROL: JUCE's own CMake AudioPlugin example -- no parameters, a
+      # plain editor, no Anabasis code -- built from the JUCE source tree the
+      # configure above fetched (the commit CMakeLists.txt pins), with the same
+      # generator, architecture, deployment target and build type, and
+      # JUCE's recommended config/LTO flags as the example itself links them.
+      - name: Build the control AU (JUCE's AudioPlugin example, the pinned JUCE)
+        if: matrix.ref_label == 'control'
+        run: |
+          set -euo pipefail
+          JUCE_SRC="$PWD/build/_deps/juce-src"
+          test -f "$JUCE_SRC/examples/CMake/AudioPlugin/CMakeLists.txt"
+          echo "JUCE under test: $(git -C "$JUCE_SRC" rev-parse HEAD 2>/dev/null || echo '(no git metadata)')"
+          sed -n 's/^set(ANABASIS_JUCE_TAG "\([0-9a-f]*\)".*/pinned by CMakeLists.txt: \1/p' CMakeLists.txt
+          CTRL="$RUNNER_TEMP/ki028-control"
+          mkdir -p "$CTRL"
+          {
+            echo 'cmake_minimum_required(VERSION 3.22)'
+            echo 'project(KI028_CONTROL VERSION 0.0.1)'
+            echo 'add_subdirectory("${KI028_JUCE_SRC}" juce)'
+            echo 'add_subdirectory("${KI028_JUCE_SRC}/examples/CMake/AudioPlugin" example)'
+          } > "$CTRL/CMakeLists.txt"
+          cmake -S "$CTRL" -B "$CTRL/build" -G Ninja \
+            -DKI028_JUCE_SRC="$JUCE_SRC" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="${{ matrix.archs }}" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+          cmake --build "$CTRL/build" --target AudioPluginExample_AU
+          BUNDLE="$(find "$CTRL/build" -type d -name '*.component' -path '*Release/AU/*' | head -n1)"
+          test -n "$BUNDLE"
+          echo "PLUGIN_BUNDLE=$BUNDLE" >> "$GITHUB_ENV"
 
       - name: dSYMs for the plug-in binaries (must carry DWARF)
         run: |
           set -euo pipefail
           SYMS="$RUNNER_TEMP/syms"
           mkdir -p "$SYMS"
-          AU_BIN="build/Anabasis_artefacts/Release/AU/Anabasis.component/Contents/MacOS/Anabasis"
-          VST3_BIN="build/Anabasis_artefacts/Release/VST3/Anabasis.vst3/Contents/MacOS/Anabasis"
+          AU_NAME="$(basename "$PLUGIN_BUNDLE" .component)"
+          AU_BIN="$PLUGIN_BUNDLE/Contents/MacOS/$AU_NAME"
           lipo -archs "$AU_BIN"
-          dsymutil "$AU_BIN"   -o "$SYMS/Anabasis.component.dSYM"
-          dsymutil "$VST3_BIN" -o "$SYMS/Anabasis.vst3.dSYM"
+          dsymutil "$AU_BIN" -o "$SYMS/$AU_NAME.component.dSYM"
+          if [ "${{ matrix.ref_label }}" != control ]; then
+            VST3_BIN="build/Anabasis_artefacts/Release/VST3/Anabasis.vst3/Contents/MacOS/Anabasis"
+            dsymutil "$VST3_BIN" -o "$SYMS/Anabasis.vst3.dSYM"
+            dwarfdump --uuid "$VST3_BIN"
+          fi
           cp -R "$RUNNER_TEMP/pv-out/pluginval.dSYM" "$SYMS/"
           for D in "$SYMS"/*.dSYM; do
             DW="$(find "$D/Contents/Resources/DWARF" -type f | head -n1)"
@@ -315,8 +357,9 @@ jobs:
               exit 1
             fi
           done
-          dwarfdump --uuid "$AU_BIN" "$VST3_BIN"
+          dwarfdump --uuid "$AU_BIN"
           echo "SYMS=$SYMS" >> "$GITHUB_ENV"
+          echo "AU_NAME=$AU_NAME" >> "$GITHUB_ENV"
 
       - name: Build the __cxa_throw interposer
         run: |
@@ -333,10 +376,10 @@ jobs:
           set -euo pipefail
           DEST="$HOME/Library/Audio/Plug-Ins/Components"
           mkdir -p "$DEST"
-          rm -rf "$DEST/Anabasis.component"
-          cp -R build/Anabasis_artefacts/Release/AU/Anabasis.component "$DEST/"
+          rm -rf "$DEST/$AU_NAME.component"
+          cp -R "$PLUGIN_BUNDLE" "$DEST/"
           killall -9 AudioComponentRegistrar 2>/dev/null || true
-          echo "AU_BUNDLE=$DEST/Anabasis.component" >> "$GITHUB_ENV"
+          echo "AU_BUNDLE=$DEST/$AU_NAME.component" >> "$GITHUB_ENV"
           # No crash dialog: ReportCrash still writes the .ips.
           defaults write com.apple.CrashReporter DialogType none || true
 
@@ -381,29 +424,64 @@ jobs:
             fi
             TAG="$(printf 'r%03d-%s-%s' "$i" "$GROUP" "$VARIANT")"
             echo "::group::run $TAG (group $GROUP, variant $VARIANT, seed $SEED_LABEL)"
-            # A subshell that EXPORTS and then execs pluginval: the DYLD_* and
-            # malloc variables reach pluginval only (not perl, not any protected
-            # binary in between), and the subshell's status IS pluginval's.
+            PIDFILE="$LOGDIR/pid-$TAG"
+            RCFILE="$LOGDIR/rc-$TAG"
+            rm -f "$PIDFILE" "$RCFILE"
+            # A subshell that EXPORTS and then runs pluginval as its child: the
+            # DYLD_* and malloc variables reach pluginval only (not perl, not the
+            # watchdog below, not any protected binary in between); pluginval's
+            # pid goes to PIDFILE for the watchdog and its status to RCFILE.
             (
               export DYLD_INSERT_LIBRARIES="$KI028_LIB"
               export KI028_TRACE_FILE="$LOGDIR/trace-$TAG.txt"
               if [ "$VARIANT" != A ]; then export KI028_KEEP_DEFAULT_SIGNALS=1; fi
               if [ "$VARIANT" = C ]; then export MallocScribble=1; fi
               case "$GROUP" in
-                fresh)
-                  exec "$PV_BIN" --strictness-level "$STRICTNESS" --randomise \
-                    --validate "$AU_BUNDLE" --timeout-ms 600000 ;;
-                seeded)
-                  exec "$PV_BIN" --strictness-level "$STRICTNESS" --randomise --random-seed "$KI028_SEED" \
-                    --validate "$AU_BUNDLE" --timeout-ms 600000 ;;
-                *)
-                  exec "$PV_BIN" --strictness-level "$STRICTNESS" --randomise --random-seed "$KI028_SEED" \
-                    --disabled-tests "$DISABLED" --validate "$AU_BUNDLE" --timeout-ms 600000 ;;
+                fresh)  set -- --randomise ;;
+                seeded) set -- --randomise --random-seed "$KI028_SEED" ;;
+                *)      set -- --randomise --random-seed "$KI028_SEED" --disabled-tests "$DISABLED" ;;
               esac
+              "$PV_BIN" --strictness-level "$STRICTNESS" "$@" \
+                --validate "$AU_BUNDLE" --timeout-ms 600000 &
+              PV=$!
+              echo "$PV" > "$PIDFILE"
+              wait "$PV"
+              echo "$?" > "$RCFILE"
             ) 2>&1 \
               | perl -MTime::HiRes=time -ne '$|=1; printf "%.6f %s", time, $_' \
-              > "$LOGDIR/run-$TAG.log"
-            rc="${PIPESTATUS[0]}"
+              > "$LOGDIR/run-$TAG.log" &
+            PIPE=$!
+            # The watchdog: the first run lost both Intel jobs to one pass that
+            # never ended. A pass alive after KI028_RUN_TIMEOUT_S is sampled
+            # (every thread's stack, 10 s), then sent SIGABRT (variants B/C: a
+            # crash report), then SIGKILL.
+            HUNG=no
+            START=$SECONDS
+            while [ ! -s "$RCFILE" ]; do
+              if [ $(( SECONDS - START )) -ge "$KI028_RUN_TIMEOUT_S" ]; then
+                HUNG=yes
+                PVPID="$(cat "$PIDFILE" 2>/dev/null || true)"
+                echo "::warning::run $TAG still running after $KI028_RUN_TIMEOUT_S s -- sampling pid ${PVPID:-?}, then SIGABRT, then SIGKILL"
+                if [ -n "$PVPID" ]; then
+                  sudo -n sample "$PVPID" 10 -mayDie -file "$LOGDIR/hang-$TAG.sample.txt" > /dev/null 2>&1 \
+                    || sample "$PVPID" 10 -mayDie -file "$LOGDIR/hang-$TAG.sample.txt" > /dev/null 2>&1 || true
+                  sudo -n chmod a+r "$LOGDIR/hang-$TAG.sample.txt" 2> /dev/null || true
+                  kill -ABRT "$PVPID" 2> /dev/null || true
+                  for _ in 1 2 3 4 5 6; do kill -0 "$PVPID" 2> /dev/null || break; sleep 5; done
+                  kill -KILL "$PVPID" 2> /dev/null || true
+                fi
+                for _ in 1 2 3 4 5; do [ -s "$RCFILE" ] && break; sleep 2; done
+                break
+              fi
+              sleep 2
+            done
+            # perl ends when the last writer of its pipe closes; a grandchild
+            # still holding it must not stall the loop.
+            for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$PIPE" 2> /dev/null || break; sleep 1; done
+            kill "$PIPE" 2> /dev/null || true
+            wait "$PIPE" 2> /dev/null
+            rc="$(cat "$RCFILE" 2> /dev/null || true)"
+            [ -n "$rc" ] || rc=255
             tail -n 5 "$LOGDIR/run-$TAG.log"
             echo "::endgroup::"
             if ! grep -q 'KI028 LOADED' "$LOGDIR/run-$TAG.log"; then
@@ -419,7 +497,19 @@ jobs:
               9) CLASS=crash-via-pluginval-handler ;;
               *) if [ "$rc" -ge 128 ]; then CLASS="signal-$(( rc - 128 ))"; else CLASS="exit-$rc"; fi ;;
             esac
-            if [ "$rc" -ne 0 ] || [ "$BFC" = yes ]; then captured=1; fi
+            if [ "$HUNG" = yes ]; then CLASS="hung-then-killed($CLASS)"; fi
+            if [ "$rc" -ne 0 ] || [ "$BFC" = yes ] || [ "$HUNG" = yes ]; then
+              captured=1
+              # Every interposer line of a failing pass goes into the job log, so
+              # the throw site survives even if the artifact upload does not.
+              echo "::group::run $TAG -- interposer lines (rc=$rc, hung=$HUNG)"
+              grep -E 'KI028 (EVENT|FRAME|END|NOTE)|libc\+\+abi|pluginval received| SUCCESS$|Completed tests in|Starting tests in' "$LOGDIR/run-$TAG.log" | tail -n 800
+              if [ -f "$LOGDIR/hang-$TAG.sample.txt" ]; then
+                echo "--- sample of the hung pass (first 600 lines) ---"
+                head -n 600 "$LOGDIR/hang-$TAG.sample.txt"
+              fi
+              echo "::endgroup::"
+            fi
             printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$TAG" "$GROUP" "$VARIANT" "$SEED_LABEL" "$SEED_PRINTED" "$rc" "$CLASS" "$SUCCESS_LINE" "$BFC" >> "$SUMMARY"
           done
           # Crash reports written during the runs (variants B and C).
@@ -432,7 +522,7 @@ jobs:
           echo "captured=$captured" >> "$GITHUB_OUTPUT"
 
       - name: Symbolicate every captured frame
-        if: ${{ !cancelled() && env.LOGDIR != '' }}
+        if: ${{ always() && env.LOGDIR != '' }}
         env:
           NATIVE_ARCH: ${{ matrix.native_arch }}
         run: |
@@ -453,6 +543,8 @@ jobs:
           table = [
               ("pluginval.app/Contents/MacOS/pluginval", dwarf("pluginval.dSYM")),
               ("Anabasis.component/Contents/MacOS/Anabasis", dwarf("Anabasis.component.dSYM")),
+              ("Audio Plugin Example.component/Contents/MacOS/Audio Plugin Example",
+               dwarf("Audio Plugin Example.component.dSYM")),
               ("Anabasis.vst3/Contents/MacOS/Anabasis", dwarf("Anabasis.vst3.dSYM")),
               ("libthrowtrace.dylib", dwarf("libthrowtrace.dylib.dSYM")),
           ]
@@ -510,10 +602,10 @@ jobs:
           done
 
       - name: Job summary
-        if: ${{ !cancelled() && env.LOGDIR != '' }}
+        if: ${{ always() && env.LOGDIR != '' }}
         run: |
           {
-            echo "### KI-028 diag -- ${{ matrix.runner }} / ${{ matrix.ref_label }} (${{ steps.pick.outputs.sha }})"
+            echo "### KI-028 diag -- ${{ matrix.runner }} / ${{ matrix.ref_label }} ($GITHUB_SHA, AU ${AU_NAME:-?})"
             echo
             echo '```'
             column -t -s "$(printf '\t')" "$LOGDIR/runs.tsv"
@@ -521,7 +613,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload logs, traces, symbolicated stacks and crash reports
-        if: ${{ !cancelled() && env.LOGDIR != '' }}
+        if: ${{ always() && env.LOGDIR != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ki028-${{ matrix.runner }}-${{ matrix.ref_label }}-logs
@@ -532,28 +624,34 @@ jobs:
       # The binaries and dSYMs are only worth their size when something was
       # captured: they let a human re-symbolicate the .ips crash reports.
       - name: Upload binaries and dSYMs (only when something was captured)
-        if: ${{ !cancelled() && steps.runs.outputs.captured == '1' }}
+        if: ${{ always() && steps.runs.outputs.captured == '1' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ki028-${{ matrix.runner }}-${{ matrix.ref_label }}-symbols
           path: |
             ${{ env.SYMS }}
-            build/Anabasis_artefacts/Release/AU/Anabasis.component
+            ${{ env.PLUGIN_BUNDLE }}
             ${{ env.PV_APP }}
             ${{ env.KI028_LIB }}
           retention-days: 14
 
       - name: Remove the AU installed for the runs
         if: ${{ always() }}
-        run: rm -rf "$HOME/Library/Audio/Plug-Ins/Components/Anabasis.component"
+        run: |
+          if [ -n "${AU_NAME:-}" ]; then rm -rf "$HOME/Library/Audio/Plug-Ins/Components/$AU_NAME.component"; fi
 
-      # Red when the failure was reproduced, so a reproduction cannot be missed;
-      # green means N+M clean passes, which is evidence of rarity, not of absence.
+      # Red when the failure was reproduced, so a reproduction cannot be missed,
+      # and red when the runs did not complete; green means that many clean
+      # passes, which is evidence of rarity, not of absence.
       - name: Verdict
-        if: ${{ !cancelled() && env.LOGDIR != '' }}
+        if: ${{ always() && env.LOGDIR != '' }}
         run: |
           if [ "${{ steps.runs.outputs.captured }}" = "1" ]; then
-            echo "::error::KI-028 reproduced (non-zero exit or a std::bad_function_call throw) -- see the symbolicated-*.txt files and crash/ in the logs artifact"
+            echo "::error::KI-028 reproduced (a non-zero exit, a std::bad_function_call throw or a hung pass) -- see the job log's interposer groups, and symbolicated-*.txt, hang-*.sample.txt and crash/ in the logs artifact"
+            exit 1
+          fi
+          if [ "${{ steps.runs.outcome }}" != "success" ]; then
+            echo "::error::the runs did not complete (step outcome: ${{ steps.runs.outcome }}) -- no verdict"
             exit 1
           fi
           echo "No failure in $(( KI028_SEEDED_RUNS + KI028_RANDOM_RUNS + KI028_FAST_RUNS )) passes on ${{ matrix.runner }} / ${{ matrix.ref_label }}."
