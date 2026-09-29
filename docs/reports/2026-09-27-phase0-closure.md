@@ -113,3 +113,11 @@ while the cleaned name is empty) is a family deviation too. Both stay deferred.
   §Phase 0 re-verification.
 - The review round's measurements: [`worklogs/2026-09-27-pr42-review-closure.md`](../../worklogs/2026-09-27-pr42-review-closure.md).
 - The first round's: [`worklogs/2026-09-27-phase0-product-correctness.md`](../../worklogs/2026-09-27-phase0-product-correctness.md).
+
+*Pointer (2026-09-29, PR split review; this record is otherwise unedited).* PR #42 was split into
+stacked PRs, and this record ships in PR #43. The Phase 1 worklog cited above is not part of PR #43,
+and its re-verification ran on the review head's code; the pluginval re-check in §5 ran on PR #42's
+`11c9482`. The Phase 0 re-verification was re-run on PR #43's own head `2a5f8a8` —
+[`worklogs/2026-09-29-pr43-phase0-verification.md`](../../worklogs/2026-09-29-pr43-phase0-verification.md),
+which also re-runs the pluginval item (two external crash positions occurred there, both retried and
+passed) and the ADR-0042 ordering mutation.

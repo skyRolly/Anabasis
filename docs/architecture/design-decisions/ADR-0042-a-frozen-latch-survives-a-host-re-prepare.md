@@ -115,7 +115,10 @@ offline bounce, host activate cycles) are tabulated with their evidence in
 `docs/reports/2026-09-27-phase0-owner-decisions.md` §3, with a technical recommendation (decision
 material; accepted 2026-09-27). Re-checked at acceptance on the accepted tree: code unchanged since
 the review, the ordering mutation still pinned, preset and A/B coherence as tabulated there
-(`docs/reports/2026-09-27-phase0-closure.md`). **Not verified
+(`docs/reports/2026-09-27-phase0-closure.md`). *Pointer (2026-09-29, PR split review):* the
+closure carries no ordering or mutation content; the mutation was re-run on PR #43's head `2a5f8a8` —
+with the carry moved after the ADR-0014 injection, 4 DSP and 1 state check fail
+(`worklogs/2026-09-29-pr43-phase0-verification.md` §6(a)). **Not verified
 in a DAW:** whether a given host re-prepares
 on transport start or before a bounce (the audit's TEST-002); a scripted Carla host re-prepared the
 plugin through deactivate/activate with Freeze and every parameter preserved, but its engine carried

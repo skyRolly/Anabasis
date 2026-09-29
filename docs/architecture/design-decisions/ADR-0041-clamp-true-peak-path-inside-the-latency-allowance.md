@@ -389,6 +389,10 @@ reverted); **Unverified** for the voicing constants (not listened to).
 - Acceptance re-verification, 2026-09-27: the steady-state matrix, the 248-configuration transition
   sweep, TP-off identity, the latency composition and the Ardour engagement export re-run on the
   accepted tree — `docs/reports/2026-09-27-phase0-closure.md`.
+- Split-review re-verification, 2026-09-29, on PR #43's head `2a5f8a8` (the closure's own evidence
+  pointer leads into the stacked PR #42): the transition sweep reconstructed with a negative control,
+  TP-off identity with `main`, a steady-state TP-on matrix and the latency composition —
+  `worklogs/2026-09-29-pr43-phase0-verification.md`.
 - Estimator comparison (why three readings): same worklog, §Investigation.
 - ITU-R BS.1770-5 (11/2023), Annex 2 — the example filter table; cross-checked value by value
   against the Recommendation's text.

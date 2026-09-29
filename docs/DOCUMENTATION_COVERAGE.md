@@ -6,7 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **0.2.17's records head CI (2026-09-29)** — the follow-up that records it
+**Last updated:** for **the PR #43 split review, merged into this branch (2026-09-29)** — Phase 0's
+evidence re-run on PR #43's own head and the Phase 0 suite count re-counted (1977 = 548 + 1429; the
+addendum above the Phase 0 closure addenda), and the Phase 0 baseline in HANDOVER's count chain
+corrected with it. Before that, for **0.2.17's records head CI (2026-09-29)** — the follow-up that records it
 (addendum below). Before that, for **0.2.17 (2026-09-29) — the fifth PR #42 review round's
 records** (addendum below). Before that, for **DSP-005 (2026-09-29, still 0.2.16 until the round's records commit)** — MATCH's
 predict floor counts the compressor (× Comp Mix) and the Clip/Sat stage (addendum below). Before that,
@@ -833,6 +836,41 @@ hook, the seams, the synchronous `Value` delivery), this file (the ADR-0025 disc
 the tooltip gate's predicate and wiring left it; `getTipFor`'s early return stays). Citations
 re-anchored by `check-citations.py --fix` (`THREAD_MODEL.md`, ADR-0027: the editor lines moved).
 **Drift:** none beyond the moved anchors.
+**Addendum (2026-09-29, PR #43 split review, still 0.2.13) — Phase 0's evidence made self-contained,
+the suite count re-counted.** PR #42 was split into stacked PRs; this tree ships as PR #43. **Drift
+reported, then corrected:**
+
+- **README.md and HANDOVER's Test Status said 1973 (544 + 1429).** The suites at this head run
+  **1977 (548 + 1429)**, locally and in CI run 36554523764. `00fa1a9` (ADR-0043) added four DSP checks;
+  its addendum below says "+2 … +1" and misses `testTruePeakModeHoldsTheCeiling`'s premise split.
+  README and HANDOVER now read 1977; the addendum below is not edited.
+- **The closure record's §6 and §5, ADR-0041's acceptance re-verification and ADR-0042's ordering
+  re-check pointed into `worklogs/2026-09-27-phase1-match-statistics-observability.md`.** That worklog
+  belongs to the stacked PR #42, and its re-checks ran on the review head (the pluginval re-check on
+  PR #42's `11c9482`); ADR-0042's pointer led to a record with no mutation content at all.
+
+**New evidence:** `worklogs/2026-09-29-pr43-phase0-verification.md`, run on `2a5f8a8`:
+
+- the suites and gates;
+- the clamp delay D values;
+- the transition sweep, reconstructed as 10 800 renders — 0 over after the toggle, while the negative
+  control `3e9b343` has 9393 over;
+- TP-off identity with `main` (264 / 264 hash-identical);
+- a 3168-render steady-state TP-on matrix (0 over on either defining meter);
+- the ADR-0042 ordering and ADR-0043 Annex 2 mutations;
+- pluginval: two external crash positions, both retried and passed;
+- PREfast: 0 results in `src/`;
+- the disposition of the review findings raised against PR #43.
+
+**Rows engaged:**
+
+- **Documentation hygiene** — README, HANDOVER, and this ledger.
+- **Decisions** — dated pointers appended to ADR-0041's evidence list and ADR-0042's acceptance
+  sentence (append-only, ADR_POLICY).
+- **Dated reports** — the closure record gains a dated pointer at its end and is otherwise unedited
+  (SOURCE_OF_TRUTH: superseded, not corrected in place).
+- **Not re-run** — the Ardour export: Ardour is absent and the session was never committed, so the
+  worklog states the code-identity argument instead.
 
 **Addendum (2026-09-27, Phase 0 closure, still 0.2.13) — the closure record.** New dated report
 `docs/reports/2026-09-27-phase0-closure.md`: the three decisions, the PR #42 review closed item by
