@@ -1848,7 +1848,7 @@ Evidence [Verified — measured on the whole engine, 0.2.15 and the fixed tree; 
 - Test:   `testTheClampSilencesAnAstronomicalInput` covers 1e30 (silenced) and the gain range at 1e9, not the 1e9 reading
 - Commit: PR #42 (recorded)
 
-### KI-028 — pluginval sometimes crashes after its `SUCCESS` line, at validator teardown (2026-09-28)
+### KI-028 — pluginval sometimes crashes after its `SUCCESS` line, at validator teardown (2026-09-28) — **DISPOSITIONED 2026-09-29: pre-existing / external**
 
 **Severity:** Medium (a release-gate failure on a platform without a crash-retry; whether a real
 host is affected is unknown)
@@ -1955,6 +1955,59 @@ after the diagnostic workflow has run.**
   - Both signatures end in SIGSEGV (exit ≥ 128), which the Linux crash-retry covers. Nothing here
     was run on macOS, whose event loop is different code; the macOS `std::bad_function_call` is what
     the diagnostic workflow is for.
+
+**Disposition, 2026-09-29 — PRE-EXISTING / EXTERNAL.** The words above and the first addendum are
+unchanged; this is the disposition they waited for. Evidence: `worklogs/2026-09-29-pr42-round5-contract-ki028-clock.md` §6.
+
+- **The macOS abort's throw site is in Apple's AudioToolboxCore, under the host's listener**
+  [Verified — `.github/workflows/ki028-diag.yml` run 36533479226 on `839685d`, pr-head job
+  109292164478: the interposer's trace of the throw and the terminate, `atos` against the dSYMs,
+  three ReportCrash `.ips` with every thread]. Four failing passes of fourteen (seed `0x5161f59`,
+  macOS 15.7.9 24G830, Intel), all after `SUCCESS`, all the same stack on pluginval's message
+  thread: a block on the main CFRunLoop (`__CFRUNLOOP_IS_CALLING_OUT_TO_A_BLOCK__`) runs
+  AudioToolboxCore's `AUParameterListener` lambda, which invokes an EMPTY `std::function` —
+  `std::bad_function_call`, the thrown `type_info` AudioToolboxCore's own — and the exception escapes
+  `-[NSApplication run]`. **No thread holds an Anabasis frame** at the throw or at the abort; the
+  validator thread is already in `PluginsUnitTestRunner::~PluginsUnitTestRunner` (the plug-in
+  instance deleted). The listener is the HOST's: pluginval 1.0.4's JUCE 8.0.3
+  `AudioUnitPluginInstance::createEventListener` creates it with `AUEventListenerCreate` on the
+  main run loop, and its teardown (`cleanup()`) disposes it FIRST (`AUListenerDispose`), then
+  `releaseResources`, then `AudioComponentInstanceDispose` — the same order in JUCE 9.0.1
+  (`juce_AudioUnitPluginFormatImpl.h`), so a pluginval on a newer JUCE is not known to differ. An
+  event notification still queued for that listener when it is disposed is then run against its
+  emptied callback [inferred: Apple's code is not readable; the order and the stack are].
+- **The plug-in's part is the event traffic, and that traffic is legitimate.** A control — JUCE's
+  own `examples/CMake/AudioPlugin` AU (no parameters), built from the JUCE commit Anabasis pins, run
+  by the same pluginval on the same seed and test order ("Plugin programs" last) — **never aborted:
+  0 of 14** (run 36537705309, job 109305735516), against Anabasis's **4 of 14** (the job above) and
+  15 of 20 seeded passes in the first run. Anabasis's AU sends parameter-change events through JUCE
+  9.0.1's wrapper (`AUEventListenerNotify`) when a parameter really moves — the macro layer writes
+  its managed parameters with host notification and stays silent on a no-op write
+  (`MacroEngine::setParam`); `setCurrentProgram` is a no-op (one program); `releaseResources` and the
+  destructor notify nothing. A plug-in with parameters that notifies its host is the AU contract,
+  not a defect; the fault is invoking a disposed listener's callback.
+- **Not introduced by this branch:** `main` (`ed06ad0`) aborts as often as the head (seeded passes
+  8 / 10 vs 7 / 10, run 36520602892, `macos-15-intel`). **Intel only:** 0 of 100 passes on
+  `macos-latest` (arm64). **Seed-dependent:** 0 of 20 fresh seeds.
+- **The Linux crashes are external too** [Verified — local cores and a causal test]: signature B (after
+  `SUCCESS`, `juce_VST3PluginFormat.cpp:477`, pluginval's JUCE 8.0.3 VST3 host `RunLoop::Impl`) is
+  removed by JUCE `04e167d64` alone — 5 of 567 runs with pluginval as released vs 0 of 567 with that
+  one upstream fix ported, against the same Anabasis binaries (Fisher one-sided p = 0.031);
+  signature A (in-test, XEmbed `callAsync ([this] …)`) is pluginval's JUCE 8.0.3 X11 host, the class
+  the Linux crash-retry exists for. 0 Anabasis frames in every core.
+- **What changes:** nothing in the product (no Anabasis defect found), and nothing in the gate:
+  macOS keeps no crash-retry, no retry count is raised, nothing is suppressed —
+  `scripts/run-pluginval.sh` labels the abort `CRASHED` (the first addendum) and the step still fails.
+  **A red macOS AU pluginval pass whose log ends `SUCCESS` then `libc++abi: terminating due to
+  uncaught exception of type std::__1::bad_function_call` is this issue**: re-run the job and record
+  the run; any other signature is a new failure and is investigated as one. Whether this signature
+  may be re-run past at a release gate, or blocks until pluginval ships a host that does not dispose
+  a listener with events queued, is the owner's decision (`docs/reports/2026-09-29-pr42-round5-closure.md` §6).
+- **The diagnostic stays** (`ki028-diag.yml`, never a gate): it re-runs on a push that touches it and
+  reproduces the abort on demand, which is what a pluginval or macOS upgrade has to be checked against.
+- **Not established:** which event was queued (a parameter change or a property change) and Apple's
+  internal ordering; whether any real host disposes its listener the same way (none was run); why
+  arm64 does not reproduce.
 
 ## Standing note for P1 onward
 

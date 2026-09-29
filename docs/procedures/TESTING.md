@@ -827,7 +827,10 @@ interposer `.github/ki028/throwtrace.cpp` with `DYLD_INSERT_LIBRARIES`, runs the
 repeatedly on the recorded seed, on fresh seeds, and on the recorded seed without
 `Editor Automation`, symbolicates with `atos` and uploads the logs, traces and any crash reports.
 A red run means KI-028 reproduced; a green one is N clean passes — evidence of rarity, not of
-absence. Wiring and triggers: `CI_CD.md`.
+absence. Since 2026-09-29 it also builds a control — JUCE's own `examples/CMake/AudioPlugin` AU
+from the pinned JUCE — and runs it the same way; with it, KI-028 was dispositioned **pre-existing /
+external** (the throw is in Apple's AudioToolboxCore under pluginval's AU host teardown, no
+Anabasis frame on any thread; the control never aborted). Wiring and triggers: `CI_CD.md`.
 
 ## What cannot be verified headlessly
 

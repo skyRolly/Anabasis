@@ -336,6 +336,12 @@ exit 9). The released `pluginval.app` is hardened-runtime signed, so dyld ignore
 It is **not** part of the release gate, is referenced by no other workflow (no `workflow_call`,
 `workflow_run` or cross-file `needs:`), and must never be made a required check (item 5 under
 "Before enabling branch protection"). Whether it stays is decided with KI-028's disposition.
+**Decided 2026-09-29: it stays**, as KI-028's reproducer — KI-028 is dispositioned pre-existing /
+external (`KNOWN_ISSUES.md`), and a pluginval or macOS-image upgrade is what this workflow checks it
+against. Runs so far: 36520602892 (`0d42384`: head 7 / 10 and `main` 8 / 10 seeded passes aborted on
+`macos-15-intel`, 0 / 100 on `macos-latest`; artifacts lost to the job timeout), 36533479226
+(`839685d`: the throw site captured, 4 / 14; the control stopped at its DWARF check), 36535966698
+(`9a19b02`: cancelled by the next push), 36537705309 (`5562229`: the control 0 / 14).
 
 ## The C++23 canary — retired (ADR-0030)
 

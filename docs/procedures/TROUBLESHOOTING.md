@@ -24,7 +24,7 @@ Common failures and where to look. Build/test/CI details are in `BUILD.md`, `TES
 | Windows step passes suspiciously fast, output garbled | pluginval is a GUI-subsystem app; the call operator does not wait | use `run-pluginval.ps1`, which launches via `System.Diagnostics.Process` and `WaitForExit()` |
 | Passes deterministic, fails randomise | an order- or value-dependent defect — usually state restoration | do **not** dismiss it; the randomise mode exists precisely to find these |
 | Repeated crash, exit ≥ 128 | a signal crash; retried 3× (Linux only — the retry is scoped to the X11/XEmbed flake) | if it survives the retries it is treated as a failure — investigate rather than raising the retry count |
-| macOS: `pluginval: CRASHED (…, exit 9)` after `pluginval received <signal>, exiting immediately` | a crash that pluginval's own macOS signal handler turned into exit 9 — not a validation failure; macOS has no crash-retry, so the pass fails | read the log above it; if it follows `SUCCESS`, see `KNOWN_ISSUES.md` KI-028 |
+| macOS: `pluginval: CRASHED (…, exit 9)` after `pluginval received <signal>, exiting immediately` | a crash that pluginval's own macOS signal handler turned into exit 9 — not a validation failure; macOS has no crash-retry, so the pass fails | read the log above it. If it follows `SUCCESS` and the abort line is `libc++abi: terminating due to uncaught exception of type std::__1::bad_function_call`, it is `KNOWN_ISSUES.md` KI-028 — external (Apple's AudioToolboxCore under pluginval 1.0.4's AU host teardown; dispositioned 2026-09-29): re-run the job and record the run. Any other signature is a new failure — investigate it; never raise a retry count for it |
 
 ## Runtime / DAW
 

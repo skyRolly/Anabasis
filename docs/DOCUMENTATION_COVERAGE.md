@@ -6,7 +6,10 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for **the session length's semantics (2026-09-29, still 0.2.16)** — the review
+**Last updated:** for **KI-028's disposition (2026-09-29, still 0.2.16)** — pre-existing / external:
+the macOS abort's throw site captured in Apple's AudioToolboxCore under pluginval's AU host teardown,
+a JUCE-example control that never aborts (addendum below). Before that, for **the session length's
+semantics (2026-09-29, still 0.2.16)** — the review
 item "Session clock includes unmeasured return audio" closed as preserved and pinned (addendum
 below). Before that, for **KI-028's diagnostic workflow (2026-09-29, still 0.2.16)** — a non-gating
 macOS workflow to capture pluginval's teardown abort, macOS exit 9 reported as a crash, and the
@@ -588,6 +591,24 @@ the open frames); eight mutants (the clock counting paused frames, the ramp coun
 watermark removed, the clock skipping the guard, the SP hold taking paused frames, offline pausing,
 RESET not zeroing the clock, whole-second publication) each killed. No code, UI string, parameter,
 state or ADR decision changes; no `CHANGELOG.md` entry (no user-visible behaviour change).
+
+**Addendum (2026-09-29, still 0.2.16, a later commit of the same round) — KI-028 dispositioned
+pre-existing / external.** The diagnostic workflow ran four times (`0d42384`, `839685d`, `9a19b02`,
+`5562229`; its own fixes between them: the `workflow_dispatch` trigger removed after CodeQL's
+cache-poisoning alert, Intel only, a per-pass watchdog, the frames in the job log, uploads on
+`always()`, a control AU built with `-g` and a retained LTO object). **KNOWN_ISSUES** — KI-028's
+heading carries the disposition and a dated disposition addendum follows the first (the entry's words
+kept): the throw site in AudioToolboxCore's `AUParameterListener` block on pluginval's message
+thread, no Anabasis frame on any thread, the host's listener disposed first in JUCE 8.0.3's (and
+9.0.1's) AU host teardown, the control 0 / 14 against Anabasis 4 / 14, `main` as frequent as the
+head, the Linux signatures external (JUCE `04e167d64`, 5 / 567 vs 0 / 567), and what a red macOS AU
+pass with this signature means for the gate (re-run and record; no retry raised; the owner decides
+whether it may be re-run past at a release). **Procedures** — `CI_CD.md` (the workflow stays, as the
+reproducer; its runs), `TESTING.md` (the control and the disposition), `TROUBLESHOOTING.md` (the
+exact signature, and that any other one is a new failure). **Correction** to the session-length
+addendum above: it lists eight mutants; ten were run and killed — also the TP hold taking readings
+at paused frames and the loudness ring-out guard removed (the round's worklog §5). No code, UI string,
+parameter, state or ADR changes.
 
 **Addendum (2026-09-28, 0.2.16) — the fourth PR #42 review round: the low-rate true-peak contract,
 KI-024, the statistics RESET.** Code: (1) ADR-0046 — `CeilingClamp`'s eased attack (`easeWeight`,
