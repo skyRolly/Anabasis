@@ -1726,10 +1726,12 @@ Evidence [Verified — the reviewer's harness]:
 > rests on a derived bound for inputs not already under reduction when a cut arrives, a search over
 > requirement sequences with an exact inner maximiser for the rest, and clamp and engine searches;
 > (2) at 3901–11999 Hz, 8 and 11.025 kHz included, true-peak mode is not available (the sample clip;
-> the Ceiling reads dB) — a behaviour change from 0.2.15, where the path ran there with this
-> entry's residual (`COMPATIBILITY_MATRIX.md` §Sample rates; OQ-020 for any wording beyond the unit
-> (resolved 2026-09-29: the TP and Ceiling tooltips name the 12 kHz boundary instead of claiming
-> dBTP; wording ⊕));
+> the Ceiling reads dB) *(2026-09-29: what is not available is the dBTP ceiling; with TP on at
+> Oversampling Off or 2× the limiter still detects on its true-peak estimate, a best effort with no
+> dBTP guarantee — ADR-0046's ratification note (b))* — a behaviour change from 0.2.15, where the
+> path ran there with this entry's residual (`COMPATIBILITY_MATRIX.md` §Sample rates; OQ-020 for
+> any wording beyond the unit (resolved 2026-09-29: the TP and Ceiling tooltips name the 12 kHz
+> boundary instead of claiming dBTP; wording ⊕));
 > (3) a finite input around +180 dBFS is outside what the clamp's float gain can resolve (KI-027,
 > older than this entry).
 >

@@ -476,8 +476,9 @@ completed; a dated ratification note — (a) the re-verification against `6ee9f2
 A / D / window table (the TP-mode window shorter from 12 kHz to below 62 kHz, unchanged from 62 kHz,
 and LONGER at 3901–11999 Hz, where 0.2.15 engaged the path) and the reported-latency identity
 labelled derived, the impulse tests its measurement; (b) below 12 kHz the TP switch still moves the
-limiter's detector — a best effort, no dBTP guarantee, recorded as intended, no DSP change; (c) the
-unit at a host rate ≤ 0, a non-conforming host's limitation; (d) invariant 3's prescribed text.
+limiter's detector at Oversampling Off / 2× — a best effort, no dBTP guarantee, recorded as
+intended, no DSP change; (c) the unit at a host rate ≤ 0, a non-conforming host's limitation; (d)
+invariant 3's prescribed text.
 **Banners on the records it moves** — ADR-0041 (a dated note on each 2026-09-28 banner), ADR-0015
 item 5 and ADR-0004 (in effect; ADR-0004's D figure), ADR-0045 (a separately dated note naming which
 of its decisions stand and which are in force as amended; its 2026-09-28 banner kept word for word,

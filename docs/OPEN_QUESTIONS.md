@@ -758,10 +758,12 @@ the words, with the rest of the R2 item-11 tooltip set.
 
 The choice follows the prepared rate only, never the switch (`CeilingUnitSource::rateEngagesTruePeak`,
 the rate half of ADR-0046 decision 5's predicate, which the unit's `truePeakEngaged` now calls, so
-the unit and the tips share one decider). Below 12 kHz no position of the switch makes the dBTP
-claim true. "12 kHz" in both strings is formatted from `CeilingClamp::kMinTruePeakRate`
-(`truePeakRateBoundary`, `src/gui/PluginEditor.cpp`), so the words cannot name a boundary the rail
-does not use.
+the unit and the tips share one decider — and with it the unit's one recorded limitation: after a
+prepare at a host rate ≤ 0, which no conforming host sends, both answer as at 48 kHz while the
+engine runs the sample clip, ADR-0046's ratification note (c)). Below 12 kHz no position of the
+switch makes the dBTP claim true. "12 kHz" in both strings is formatted from
+`CeilingClamp::kMinTruePeakRate` (`truePeakRateBoundary`, `src/gui/PluginEditor.cpp`), so the words
+cannot name a boundary the rail does not use.
 
 **Where the words come from.** Every term but one is already in UI copy: "Ceiling", "TP", "dBTP",
 "sample peak" and "inter-sample peaks" (the two tooltips above, `tipFor` in `src/gui/PluginEditor.cpp`),

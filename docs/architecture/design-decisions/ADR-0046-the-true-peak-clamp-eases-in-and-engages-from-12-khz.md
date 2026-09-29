@@ -350,7 +350,10 @@ ceiling, Annex 2 unless marked; the round's worklog §2 carries the method and t
 >   otherwise.* Invariant 4 now carries decision 6's text exactly; from 2026-09-28 it had carried it
 >   split in two and reworded (" — 12 kHz and up", a bold sentence of its own), and its guard list
 >   still labelled `testTruePeakModeHoldsTheCeilingBelow44k` "any sample rate" — both corrected,
->   with a dated note in the invariant. Invariant 8 carries the figure as prescribed and one
+>   with a dated note in the invariant; substituted in place, decision 6's clause would have left the
+>   list's closing "during and after every transition" behind the below-12 kHz sentence, so it
+>   stays where it stood, ahead of the rate clause (the words unchanged, their order kept). Invariant
+>   8 carries the figure as prescribed and one
 >   sentence more, prescribed here so the approval covers the text as it stands: *"The figure is
 >   ADR-0046's, whose narrower revision reach replaced ADR-0045's "(16 + A/2 + 1) glide steps —
 >   0.0185"."* The invariant → test map's rows 4 and 8 gain the ADR-0045 / ADR-0046 guards

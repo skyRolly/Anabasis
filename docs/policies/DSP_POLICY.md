@@ -94,15 +94,17 @@ stage exists; evidence citations are added as the modules land (constraint C7).
 
 4. **The output never exceeds the ceiling.** A final safety clamp sits after the limiter and
    before dither, and holds **under every condition** — any input, any parameter combination, any
-   automation rate, any host sample rate — true-peak mode's inter-sample promise holds wherever the
-   path engages, 12 kHz and up (`truePeakPathEngages`, ADR-0046); below 12 kHz the ceiling holds on
-   sample peaks and the Ceiling reads dB, during and after every transition. Tolerance ≤ 0.1 dBTP in
-   true-peak mode, dBTP as defined below. *(Until 2026-09-28 this sentence said "any sample rate"
+   automation rate, any host sample rate, during and after every transition — true-peak mode's
+   inter-sample promise holds wherever the path engages, 12 kHz and up (`truePeakPathEngages`,
+   ADR-0046); below 12 kHz the ceiling holds on sample peaks and the Ceiling reads dB. Tolerance
+   ≤ 0.1 dBTP in true-peak mode, dBTP as defined below. *(Until 2026-09-28 this sentence said "any sample rate"
    with no boundary; the path engaged from 3901 Hz and read up to +0.23 dB over below 44.1 kHz,
    KI-025.)* *(From 2026-09-28 to 2026-09-29 the rate clause stood split in two — "any host sample
    rate" in the list and a bold sentence of its own, "True-peak mode's inter-sample promise holds
    wherever the path engages — 12 kHz and up …" — and it now carries ADR-0046 decision 6's
-   prescribed text as written, completed at the record's ratification.)*
+   prescribed text as written, completed at the record's ratification — the list's closing "during
+   and after every transition" kept ahead of the rate clause, where it had stood, so it does not read
+   as part of the below-12 kHz sentence.)*
    **Scope: the PROGRAMME path** — the processed signal, and everything an offline render can
    emit. The two monitor-only audition legs are outside it by the same reading that lets bypass
    carry the unclamped dry signal (invariant 7): bypass monitoring plays the input as-is, and
