@@ -218,9 +218,21 @@ instructive): the ENGINE owns it, in `AdaptiveEngine`'s **retained** trim set �
 scalars plus a release-stored flag which `reset()` deliberately does not clear, so the vector
 outlives the engine's re-initialisation exactly as `learned` and the two reference targets do. Two
 sets exist because two different questions are being asked: `publishedTrim*()` is *what the
-adaptive layer is applying right now* and must be zeroed with the internal struct, or the P5
-overlay would report a vector the DSP is not using (KI-006's readout half); `retainedTrim*()` is
-*the vector this instance last latched*, which is persistence state.
+adaptive layer is applying right now*, so it follows the internal struct — zeroed at a reset, and
+back with the struct when the vector comes back — or the P5 overlay would report a vector the DSP
+is not using (KI-006's readout half); `retainedTrim*()` is *the vector this instance last latched*,
+which is persistence state.
+
+**Across a host re-prepare, a frozen vector keeps playing** (**ADR-0042**, Accepted 2026-09-27 —
+audit finding STATE-004, KI-006's audio half). `reset()` stashes the applied vector, and the first
+block after it re-adopts it when that block's snapshot has Freeze ON — the first moment the Freeze
+state is known, which is why the decision is not taken inside `reset()` (a user may engage Freeze
+while stopped). Only the applied/published set comes back; the retained set and its generation do
+not move, because nothing new was latched and moving the generation would hand the latch to
+whichever A/B slot is live (the round-42 clause below). With Freeze OFF adaptation restarts from
+rest, as before. Until then invariant 3's "while frozen, the adaptive layer contributes a constant"
+held only between re-prepares: the audio ran on zero trims while FREEZE stayed lit and the save
+kept the vector.
 
 The wrapper's `liveFrozenTrims` mirror is **not** the owner. It covers exactly one window — a
 restore staged and not yet applied, where the engine's answer is one session out of date.

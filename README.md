@@ -30,7 +30,7 @@ headless Linux machine, no IDE.
   §2.7 loudness-compensated monitor, the §5.4 adaptive engine with Learn **including the ADR-0014
   frozen-trim restore**, the P5 editor (Simple and Advanced views, meters, spectrum, curve
   display) and the P6 per-slot undo / 13-preset factory bank (Default + 12) / performance bench — verified by
-  `tests/` (**1787 checks** — `AnabasisTests` 439 + `AnabasisStateTests` 1348 — re-count from the suites' own output when editing, the same rule
+  `tests/` (**1977 checks** — `AnabasisTests` 548 + `AnabasisStateTests` 1429 — re-count from the suites' own output when editing, the same rule
   HANDOVER's status row carries — green on Linux, together with pluginval at the strictness
   `.github/workflows/build.yml` sets, in both modes ×3; see
   [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) for the measured DSP numbers — aliasing, latency,
@@ -142,6 +142,11 @@ The full technical documentation lives in **[`docs/`](docs/)**:
   (CodeQL + PREfast raw-SARIF findings, dispositions and Roadmap) and
   [`2026-09-26-anabasis-product-ux-audit.md`](docs/reports/2026-09-26-anabasis-product-ux-audit.md)
   (product / UX / UI / interaction audit: verified findings, decisions, priorities and the roadmap)
+  with its Phase 0 follow-up [`2026-09-27-phase0-follow-up.md`](docs/reports/2026-09-27-phase0-follow-up.md)
+  (what the first implementation round decided and verified, finding by finding), the owner
+  decision material [`2026-09-27-phase0-owner-decisions.md`](docs/reports/2026-09-27-phase0-owner-decisions.md)
+  and the closure record [`2026-09-27-phase0-closure.md`](docs/reports/2026-09-27-phase0-closure.md)
+  (the decisions taken, the review closed item by item, the Phase 0 status matrix)
 - **History & status:** [`CHANGELOG.md`](CHANGELOG.md) ·
   [`docs/HANDOVER.md`](docs/HANDOVER.md) · [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) ·
   [`docs/FUTURE_RISKS.md`](docs/FUTURE_RISKS.md) · [`docs/POSTMORTEMS.md`](docs/POSTMORTEMS.md)

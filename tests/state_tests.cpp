@@ -3314,20 +3314,36 @@ static void testPreparedStateAndSlotOwnership()
         check (std::abs (savedRelease() - latched) < 1.0e-9,
                "liveLatch: (premise) the live latch serialises while the engine still holds it");
 
+        const auto genBefore = proc.adaptiveReadout().retainedTrimGeneration();
         proc.prepareToPlay (96000.0, 512);
-        // The two sets part company HERE, which is the whole reason there are
-        // two: the PUBLISHED set describes what the adaptive layer is applying
-        // and is correctly zeroed with the internal struct (KI-006's audio and
-        // readout halves, untouched), while the RETAINED set is persistence
-        // state and survives, exactly as `learned`/`refOnsetRate`/`refTiltDb`
-        // always have. Asserting both is what stops a future "simplification"
-        // from collapsing them back into one.
+        // The two sets still part company across the reset itself — the
+        // PUBLISHED set describes what the adaptive layer is applying, and
+        // between the reset and the next block nothing is being applied —
+        // while the RETAINED set is persistence state and never leaves,
+        // exactly as `learned`/`refOnsetRate`/`refTiltDb` never have.
         check (! proc.adaptiveReadout().hasPublishedTrims(),
-               "liveLatch: (premise) the APPLIED vector did not survive re-initialisation");
+               "liveLatch: between the reset and the next block nothing is being applied");
         check (proc.adaptiveReadout().hasRetainedTrims(),
-               "liveLatch: the RETAINED vector did — persistence state outlives a re-prepare");
+               "liveLatch: the RETAINED vector survives — persistence state outlives a re-prepare");
         check (std::abs (savedRelease() - latched) < 1.0e-9,
                "liveLatch: a re-prepare cannot take a live-latched Freeze with it");
+
+        // ADR-0042 (audit finding STATE-004): with FREEZE still lit, the first
+        // block after the re-prepare brings the latched vector back into the
+        // AUDIO. Until then this half was KI-006's open one: the render ran on
+        // zero trims, FREEZE stayed lit and the save kept the vector — three
+        // answers to one question. The carry republishes the applied set only;
+        // the retained generation must not move, or the latch would change
+        // hands between A/B slots (round 42, the test below).
+        proc.processBlock (buf, midi);
+        check (proc.adaptiveReadout().hasPublishedTrims(),
+               "liveLatch: the first frozen block after a re-prepare applies the latched vector again");
+        check (std::abs ((double) proc.adaptiveReadout().publishedTrimRelease() - latched) < 1.0e-9,
+               "liveLatch: …the SAME vector, so FREEZE, the audio and the save agree");
+        check (proc.adaptiveReadout().retainedTrimGeneration() == genBefore,
+               "liveLatch: …and the carry latches nothing new (the retained generation is unchanged)");
+        check (std::abs (savedRelease() - latched) < 1.0e-9,
+               "liveLatch: …and the save still writes the latched vector");
     }
 }
 
@@ -3389,6 +3405,20 @@ static void testAFrozenLatchDoesNotFollowTheSlotSwitch()
            "slotIsolation: a slot that never latched serialises no vector of another slot's");
     check (std::abs (savedRelease (0) - latched) < 1.0e-9,
            "slotIsolation: …and slot A's own record is untouched by the switch");
+
+    // ADR-0042's constraint, from the audit's challenge of STATE-004: the
+    // re-prepare carry must NOT make slot B claim slot A's latch. It restores
+    // the vector the audio was applying (slot A's, still — the A/B half of
+    // this shape is KNOWN_ISSUES KI-007's, an owner call) but latches nothing,
+    // so the generation B's ownership boundary recorded does not move and B
+    // still serialises no vector. A carry written with `publishTrims (true)`
+    // would bump it and fail exactly here.
+    proc.prepareToPlay (48000.0, 512);
+    proc.processBlock (buf, midi);
+    check (juce::exactlyEqual (savedRelease (1), -999.0),
+           "slotIsolation: a re-prepare in a vectorless freeze-ON slot still claims no other slot's vector");
+    check (std::abs (savedRelease (0) - latched) < 1.0e-9,
+           "slotIsolation: …and slot A's own record is untouched by the re-prepare");
 
     // Back to A: its vector arrives through the mirror and a staged restore,
     // which is the branch that owns the window before the restore lands.
