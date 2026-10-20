@@ -6,6 +6,11 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
+**Review addendum (2026-10-21):** `worklogs/2026-10-21-devin-review-pr43.md`
+maps the four DSP findings to #42's later implementations, retains the
+unattributed state-restoration crash, and records the main merge's preservation
+of the development evidence. No Phase 0 DSP code was changed by this review.
+
 **Last updated:** for the **AGENTS.md contributor-entry migration (2026-10-21)** — documentation-only: `AGENTS.md` is inventoried as the primary root contributor/agent guide, `CLAUDE.md` as its Claude-compatible import, and the README, repository map, source-of-truth class list, `AI_AGENT_POLICY.md`, `DEVELOPMENT.md` and `DEVELOPMENT_BRIEF.md` now identify the primary guide. The self-coverage row below is synchronized.
 Before that, for **the PR #43 split review, merged into this branch (2026-09-29)** — Phase 0's
 evidence re-run on PR #43's own head and the Phase 0 suite count re-counted (1977 = 548 + 1429; the
