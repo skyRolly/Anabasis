@@ -260,8 +260,13 @@ void LoudnessMeterView::paint (juce::Graphics& g)
     // absorbs the LSB-scale noise the dither stage adds AFTER the clamp — near
     // the ceiling 0.005 dB is ≈ 18 LSB at 16-bit, so flat and shaped TPDF both
     // fit inside it, and neither is a limiter failure. The TP row keeps its
-    // exact test deliberately: its over-warning is the documented one above,
-    // and it measures a quantity the clamp does not bound.
+    // exact test deliberately: its over-warning is the documented one above.
+    // It measured a quantity the clamp did not bound until ADR-0041 (Accepted);
+    // in true-peak mode the clamp now holds this estimator's reading to the
+    // ceiling within invariant 4's 0.1 dB, and measured a few thousandths of a
+    // dB above it on ~3 % of hostile configurations — so this row can warn
+    // while printing the ceiling. The audit's VIS-002 (this row's slack) is an
+    // ADR-0020 amendment left to the owner; KNOWN_ISSUES KI-020 records it.
     static constexpr float kCeilingWarnSlackDb = 0.005f;
     statRow ("SP", fmt (shownPeak, 2) + " dBFS",
              shownPeak > shownCeiling + kCeilingWarnSlackDb && shownPeak > silent);
