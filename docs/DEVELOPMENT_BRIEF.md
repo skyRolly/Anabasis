@@ -248,7 +248,7 @@ Ratio 1.1–4:1 (default ≈ 1.5:1), Threshold, Attack 5–100 ms, Release 50–
 >
 > Part II is a *summary with pointers*. The binding, normative versions of these rules live in
 > this repository under [`docs/policies/`](policies/) — those files, not this brief, are what an
-> agent must obey. Read [`../AGENTS.md`](../AGENTS.md) first. `CLAUDE.md` imports this file for Claude-aware tooling.
+> agent must obey. Read [`../AGENTS.md`](../AGENTS.md) first. `CLAUDE.md` imports `AGENTS.md` for Claude-aware tooling.
 
 ---
 
