@@ -6,7 +6,7 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
-**Last updated:** for the **AGENTS.md contributor-entry migration (2026-10-21)** — documentation-only: `AGENTS.md` is inventoried as the primary root contributor/agent guide, `CLAUDE.md` as its Claude-compatible import, and the README, repository map, source-of-truth class list and development procedure now identify the primary guide. The self-coverage row below is synchronized.
+**Last updated:** for the **AGENTS.md contributor-entry migration (2026-10-21)** — documentation-only: `AGENTS.md` is inventoried as the primary root contributor/agent guide, `CLAUDE.md` as its Claude-compatible import, and the README, repository map, source-of-truth class list, `AI_AGENT_POLICY.md`, `DEVELOPMENT.md` and `DEVELOPMENT_BRIEF.md` now identify the primary guide. The self-coverage row below is synchronized.
 Before that, for **the PR #43 split review, merged into this branch (2026-09-29)** — Phase 0's
 evidence re-run on PR #43's own head and the Phase 0 suite count re-counted (1977 = 548 + 1429; the
 addendum above the Phase 0 closure addenda), and the Phase 0 baseline in HANDOVER's count chain
