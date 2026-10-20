@@ -248,7 +248,7 @@ Ratio 1.1–4:1 (default ≈ 1.5:1), Threshold, Attack 5–100 ms, Release 50–
 >
 > Part II is a *summary with pointers*. The binding, normative versions of these rules live in
 > this repository under [`docs/policies/`](policies/) — those files, not this brief, are what an
-> agent must obey. Read [`../CLAUDE.md`](../CLAUDE.md) first.
+> agent must obey. Read [`../AGENTS.md`](../AGENTS.md) first. `CLAUDE.md` imports `AGENTS.md` for Claude-aware tooling.
 
 ---
 
@@ -273,7 +273,7 @@ descriptive Architecture. A Policy change is enacted only by a new/updated ADR.
 
 | Class | Location | Role |
 |---|---|---|
-| **Developer** | `docs/` (architecture, procedures, policies, status) + `CLAUDE.md` | binding + descriptive; the evidence chain |
+| **Developer** | `docs/` (architecture, procedures, policies, status) + `AGENTS.md` (primary contributor/agent instructions) + `CLAUDE.md` (Claude-compatible import) | binding + descriptive; the evidence chain |
 | **User** | `docs/user/` | derived; never evidence |
 | **Internal / testing** | `SUPPORT.md`, `.github/ISSUE_TEMPLATE/` | derived; restates the legal class, never diverges from it |
 | **Legal** | `NOTICE`, `THIRD_PARTY_LICENSES.md`, `EULA.md`, `PRIVACY.md`, `TRADEMARKS.md` | `NOTICE` + `THIRD_PARTY_LICENSES.md` are authoritative for third-party attribution facts |
@@ -389,7 +389,8 @@ Anabasis/
 │                         test targets.                                       [added at P1]
 ├── README.md             Project façade (features, status, quick start, docs nav).
 ├── CHANGELOG.md          Version history (Keep a Changelog; evidence-cited).
-├── CLAUDE.md             AI/contributor entry point: mandatory policy pre-read + repo constraints.
+├── AGENTS.md             Primary contributor/agent entry point: mandatory policy pre-read + repo constraints.
+├── CLAUDE.md             Claude-compatible import of AGENTS.md.
 ├── src/                  Source: wrapper + GUI + format-agnostic DSP core.
 │   ├── dsp/              AnabasisDSP INTERFACE lib — no dependency on the plugin wrapper.
 │   └── gui/              LookAndFeel + visualisers (GR history, LUFS meters, curve display).
@@ -596,7 +597,7 @@ Beyond the inherited structure, Anabasis's Level-2/3 suites must additionally as
 
 ## 22. Working method / session protocol (inherit)
 
-1. **Before touching code**: read `CLAUDE.md` → `SOURCE_OF_TRUTH.md` → the relevant System
+1. **Before touching code**: read `AGENTS.md` → `SOURCE_OF_TRUTH.md` → the relevant System
    Policies → the Architecture doc + any ADR governing the area.
 2. **Re-scan the workspace at the start of every phase and on every resume** (C4). Never
    regenerate work that already exists on disk.

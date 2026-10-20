@@ -117,6 +117,9 @@ To build without network (JUCE already on disk):
 
 The full technical documentation lives in **[`docs/`](docs/)**:
 
+- **Contributor and agent entry point:** [`AGENTS.md`](AGENTS.md) (primary instructions) ·
+  [`CLAUDE.md`](CLAUDE.md) (Claude-compatible import)
+
 - **Start here:** [`docs/DEVELOPMENT_BRIEF.md`](docs/DEVELOPMENT_BRIEF.md) (the product spec) ·
   [`docs/architecture/design-decisions/ADR_INDEX.md`](docs/architecture/design-decisions/ADR_INDEX.md)
   (**the binding decisions** — read before writing code) ·
@@ -195,6 +198,6 @@ inventory (component, purpose, licence, and the exact file each licence was read
 archives — the one carrier every download route passes through, since neither installer ever
 carried them (ADR-0021; `docs/policies/RELEASE_POLICY.md` §"Third-party attribution").
 
-Contributors and AI agents: read **[`CLAUDE.md`](CLAUDE.md)** and
-`docs/policies/AI_AGENT_POLICY.md` before changing code — some changes (parameter IDs,
+Contributors and AI agents: read **[`AGENTS.md`](AGENTS.md)** and
+`docs/policies/AI_AGENT_POLICY.md` before changing code. `CLAUDE.md` is a Claude-compatible import of `AGENTS.md`. — some changes (parameter IDs,
 serialization, threading, DSP order, latency) are hard-stop, human-review-required.
