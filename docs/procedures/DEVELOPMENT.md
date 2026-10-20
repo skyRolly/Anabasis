@@ -7,7 +7,7 @@ covers the dev loop.
 
 1. **Re-scan the workspace** (constraint C4). The filesystem is the authoritative execution state,
    not chat history or a summary. Never regenerate work that already exists on disk.
-2. Read `CLAUDE.md` → `docs/SOURCE_OF_TRUTH.md` → `docs/policies/AI_AGENT_POLICY.md`.
+2. Read `AGENTS.md` → `docs/SOURCE_OF_TRUTH.md` → `docs/policies/AI_AGENT_POLICY.md`. `CLAUDE.md` is a Claude-compatible import of `AGENTS.md`.
 3. Check `docs/OPEN_QUESTIONS.md`. If your task requires an answer that lives there, escalate —
    do not decide it yourself.
 4. Check the current phase in `docs/HANDOVER.md`. Work outside the current phase's scope needs a
