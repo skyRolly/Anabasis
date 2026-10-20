@@ -16,6 +16,7 @@
 #include "GrHistoryBuffer.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
+#include <array>
 #include <atomic>
 #include <memory>
 
@@ -670,6 +671,10 @@ private:
     float sessionTpMaxChunk = 0.0f, sessionPeakChunk = 0.0f;
     int64_t sessionSamples = 0;
     int     sessionTpSkip = 0;   // see resetMeterHolds
+    // Eligibility follows the estimator's REPORTED position, including both
+    // bypass edges. Audio-thread state, carried across calls and meter resets.
+    std::array<bool, TruePeakEstimator::kReportLag> sessionTpOpenHistory {};
+    int sessionTpOpenPos = 0;
 
     // THE HISTORY ENTRY UNDER CONSTRUCTION (0.2.12, OQ-017 fix 1): the two
     // statistics an entry carries, folded over the samples it has collected so

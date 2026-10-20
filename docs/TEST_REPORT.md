@@ -155,6 +155,19 @@ of the lookahead range than at the top, not that anything escapes the ceiling. R
 rather than compensated: subtracting the group delay from `wOs` would shift the detector tap for
 every non-true-peak configuration too, for a correction smaller than one wedge entry above 2 ms.
 
+## Session TP eligibility at bypass edges — 2026-10-21, PR #42
+
+Linux x86-64, GCC 14.2, C++23, Release with default LTO, pinned JUCE 9.0.1.
+`testSessionTruePeakFollowsTheReportedBypassPosition` drives the real engine
+at 44.1 kHz / 64 and 96 kHz / 512 with a loud dry input and a quiet processed
+leg. A separate estimator measures the emitted waveform; eligibility is indexed
+by its reported position in an audio-derived history. Both six-frame edge
+windows, a RESET during the audition, and calls spanning internal chunks are
+checked exactly. SP and duration retain current-frame timing. With the new
+bypass regression and corrected clock model, the previous implementation failed
+14 checks; the updated engine delays only TP eligibility. The companion worklog
+records the final suite result and the offline-entry comparison.
+
 ## Metering cost, structural — not yet measured (DESIGN §9 ≤ 0.5 %)
 
 Recorded as the starting point for the P6 CPU measurement, which is now the binding open number

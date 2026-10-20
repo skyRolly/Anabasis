@@ -45,6 +45,15 @@ read as data, so the sample heading immediately below is not mistaken for struct
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- **BYPASS no longer admits delayed audition peaks into the session TP hold.**
+  TP eligibility now follows the estimator's six-frame reporting lag at both
+  bypass edges. Sample peak and the session clock retain their existing timing,
+  and RESET still excludes readings of positions before the reset.
+  Evidence: PR #42; `testSessionTruePeakFollowsTheReportedBypassPosition`. [Verified]
+
 ## [0.2.17] — 2026-09-29
 
 **The fifth review round of PR #42: MATCH settles closer to the input's loudness, and below 12 kHz

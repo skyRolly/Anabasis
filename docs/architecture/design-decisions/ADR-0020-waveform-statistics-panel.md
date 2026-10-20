@@ -436,3 +436,18 @@ and I / LRA measure with their stated guards — rather than as the audio I admi
 the clock in fast A/B comparison, move the SP/TP holds and the clock apart, and change the recorded
 and pinned RESET behaviour). The behaviour is unchanged; the reading is recorded so the review can
 overturn it.
+
+**Implementation correction — bypass eligibility follows the reported TP position
+(2026-10-21, PR #42 Devin review).** Amendment 4 item 2's documented six-frame
+closing-ramp leakage is removed. `AnabasisEngine::processChunk` delays only TP
+eligibility by `TruePeakEstimator::kReportLag`, admitting the last six processed
+positions after an audition starts and rejecting the last six audition positions
+after it ends. SP and session duration still follow the current frame. The
+2026-09-29 note's clock frames therefore describe the positions TP measures,
+rather than the later frames at which its readings arrive. This implements the
+existing programme-exclusion contract; no signal path, estimator, latency,
+published scalar or reset boundary changes. The eligibility history survives
+`resetMeterHolds`; the independent existing six-reading reset skip still removes
+all positions before RESET. Guards:
+`testSessionTruePeakFollowsTheReportedBypassPosition` and the position model in
+`testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio`.

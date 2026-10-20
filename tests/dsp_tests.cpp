@@ -3660,6 +3660,81 @@ inline AutomationRun automateCeiling (double sr, int block, int factor, int kind
 }
 } // namespace tpceiling
 
+// A bulk swap that changes only TP on the offline-entry block follows the
+// render-start contract: restart the latched pipeline, discard old EQ/dry
+// audio, and write no transition fade. Compare with both a clean render and
+// the same entry without the wrapper's bulk-swap duck request.
+static void testTpOnlyOfflineEntryWithABulkSwapStartsClean()
+{
+    constexpr double sr = 48000.0;
+    constexpr int B = 64;
+    for (const int eqPosition : { 0, 1 })
+        for (const bool bypass : { false, true })
+        {
+            anabasis::AnabasisEngine requested, control, clean;
+            for (auto* e : { &requested, &control, &clean })
+                e->prepare (sr, B, 2);
+            anabasis::EngineParameters p;
+            p.freeze = true;
+            p.compRatio = 1.0f;
+            p.clipMix = 0.0f;
+            p.eqPosition = eqPosition;
+            p.eqHighShelfGainDb = 12.0f;
+            p.bypass = bypass;
+            juce::AudioBuffer<float> a (2, B), b (2, B), c (2, B);
+            float oldPeak = 0.0f, renderedPeak = 0.0f, stalePeak = 0.0f;
+            for (int block = 0; block < 64; ++block)
+            {
+                for (int i = 0; i < B; ++i)
+                    for (int ch = 0; ch < 2; ++ch)
+                    {
+                        const float v = 0.05f * (float) std::sin (0.7 * (double) (block * B + i) + 0.3 * ch);
+                        a.setSample (ch, i, v);
+                        b.setSample (ch, i, v);
+                    }
+                requested.process (a, p);
+                control.process (b, p);
+                oldPeak = juce::jmax (oldPeak, requested.lastRenderPeak());
+            }
+            p.truePeakMode = true;       // OS remains Off; no Force Max
+            p.nonRealtime = true;
+            requested.requestForcedDuck();
+            bool matchesControl = true, matchesClean = true;
+            for (int block = 0; block < 96; ++block)
+            {
+                for (int i = 0; i < B; ++i)
+                    for (int ch = 0; ch < 2; ++ch)
+                    {
+                        const int t = block * B + i;
+                        const float v = t < 1024 ? 0.0f
+                            : 0.1f * (float) std::sin (0.6 * (double) t + 0.4 * ch);
+                        a.setSample (ch, i, v);
+                        b.setSample (ch, i, v);
+                        c.setSample (ch, i, v);
+                    }
+                requested.process (a, p);
+                control.process (b, p);
+                clean.process (c, p);
+                for (int i = 0; i < B; ++i)
+                    for (int ch = 0; ch < 2; ++ch)
+                    {
+                        const float v = a.getSample (ch, i);
+                        matchesControl = matchesControl && juce::exactlyEqual (v, b.getSample (ch, i));
+                        matchesClean = matchesClean && juce::exactlyEqual (v, c.getSample (ch, i));
+                        if (block * B + i < 1024)
+                            stalePeak = juce::jmax (stalePeak, std::abs (v));
+                        renderedPeak = juce::jmax (renderedPeak, std::abs (v));
+                    }
+            }
+            check (oldPeak > 0.01f && renderedPeak > 0.05f,
+                   "tpOnlyOfflineSwap: (premise) playback and the new render are audible, with charged EQ history");
+            check (juce::exactlyEqual (stalePeak, 0.0f),
+                   "tpOnlyOfflineSwap: TP-only entry clears the old programme on wet and bypass legs, at both EQ positions");
+            check (matchesControl && matchesClean,
+                   "tpOnlyOfflineSwap: a simultaneous bulk-swap duck writes exactly the clean render, without a transition fade");
+        }
+}
+
 static void testTruePeakModeHoldsTheCeilingUnderAutomation()
 {
     using tpceiling::Move;
@@ -6822,7 +6897,7 @@ static void testTheSessionFiguresPauseForABypassAudition()
 // prepare — every frame at which no part of a realtime bypass was audible,
 // and every frame of an offline render — counted from the first open frame
 // after a resume or a reset, exactly. Those are the frames the SP hold takes
-// and the frames at which the TP hold takes its readings. It is deliberately
+// and the positions the TP hold measures, six frames later. It is deliberately
 // NOT "the audio admitted into I or LRA", which is not a duration: I is gated
 // in overlapping 400 ms blocks and LRA samples 3 s windows, and the meter's
 // watermark keeps the first 100-200 ms after a resume (exactly as after a
@@ -6834,7 +6909,7 @@ static void testTheSessionFiguresPauseForABypassAudition()
 // two outputs are bit-identical exactly on the frames the bypass crossfade
 // sits at 0 — so "open" is read off the audio, not off the engine's own flag.
 // The holds are modelled on the same stream (the SP max over open frames; a
-// TruePeakEstimator's readings at open frames, minus the kReportLag readings
+// TruePeakEstimator's readings of open positions, minus the kReportLag readings
 // a reset skips) and must match bit for bit after every call. I's first
 // admission after a resume and after a RESET, and LRA's after a resume, are
 // found to the frame (1-frame calls at the edge) and must land exactly where
@@ -6856,6 +6931,7 @@ struct Rig
     float spModel = 0.0f, tpModel = 0.0f, spHold = 0.0f, tpHold = 0.0f, renderPeak = 0.0f;
     float level = 1.0f;
     bool prevOpen = true, holdsMatch = true;
+    std::vector<bool> openFrames;
 
     Rig (double rate, int block, bool offline) : sr (rate), B (block)
     {
@@ -6895,12 +6971,15 @@ struct Rig
             const bool isOpen = p.nonRealtime || same;
             float tp[2] = {};
             est.processFrame (o, 2, tp);
+            openFrames.push_back (isOpen);
+            const int64_t reported = t - anabasis::TruePeakEstimator::kReportLag;
+            if ((reported < 0 || openFrames[(size_t) reported])
+                && t - resetAt >= anabasis::TruePeakEstimator::kReportLag)
+                tpModel = juce::jmax (tpModel, tp[0], tp[1]);
             if (isOpen)
             {
                 ++open;
                 spModel = juce::jmax (spModel, std::abs (o[0]), std::abs (o[1]));
-                if (t - resetAt >= anabasis::TruePeakEstimator::kReportLag)
-                    tpModel = juce::jmax (tpModel, tp[0], tp[1]);
             }
             if (! isOpen && prevOpen)
                 pauseStart = t;
@@ -6965,6 +7044,58 @@ struct Rig
     }
 };
 } // namespace sessionClock
+
+// The estimator's position and the session clock are different timelines.
+// Read eligibility from the rendered audio, then compare a separate estimator
+// at that position. Single-frame calls expose both six-frame edge windows;
+// longer calls exercise history carried across calls and internal chunks.
+static void testSessionTruePeakFollowsTheReportedBypassPosition()
+{
+    constexpr int lag = anabasis::TruePeakEstimator::kReportLag;
+    for (const auto& cfg : { std::pair<double, int> { 44100.0, 64 }, { 96000.0, 512 } })
+    {
+        sessionClock::Rig r (cfg.first, cfg.second, false);
+        r.p.ceilingDbTp = -20.0f;
+        r.p.inputGainDb = -12.0f;
+        r.level = 8.0f;
+        r.run (0.2);
+        const int64_t beforePause = r.clock();
+        r.p.bypass = true;
+        bool keepsProcessed = true, pausesSpAndClock = true;
+        for (int k = 0; k < lag + 2; ++k)
+        {
+            r.call (1);
+            keepsProcessed = keepsProcessed && (k < lag ? r.e.lastSessionTpMax() > 0.0f
+                                                        : juce::exactlyEqual (r.e.lastSessionTpMax(), 0.0f));
+            pausesSpAndClock = pausesSpAndClock && r.clock() == beforePause
+                && juce::exactlyEqual (r.e.lastSessionPeak(), 0.0f);
+        }
+        check (keepsProcessed,
+               "sessionTpBypass: the six processed positions reported after BYPASS begins still enter TP, then admission stops");
+        check (pausesSpAndClock,
+               "sessionTpBypass: SP and the clock pause at the first audible bypass frame, without a six-frame delay");
+
+        r.run (0.1);
+        r.reset();                         // retain estimator and eligibility history
+        r.call (3 * r.B + 1);              // a host block spanning internal chunks
+        r.releaseBypass();                 // stops on the first open frame
+        bool rejectsAudition = juce::exactlyEqual (r.e.lastSessionTpMax(), 0.0f);
+        const bool immediateSpAndClock = r.clock() == 1 && r.e.lastSessionPeak() > 0.0f;
+        for (int k = 1; k < lag; ++k)
+        {
+            r.call (1);
+            rejectsAudition = rejectsAudition && juce::exactlyEqual (r.e.lastSessionTpMax(), 0.0f);
+        }
+        r.call (1);
+        check (rejectsAudition && r.e.lastSessionTpMax() > 0.0f,
+               "sessionTpBypass: after release the six audition positions stay out, then the first processed position enters TP");
+        check (immediateSpAndClock,
+               "sessionTpBypass: SP and the clock resume on the first processed frame");
+        r.call (2 * r.B + 7);
+        check (r.renderPeak > 1.0f && r.holdsMatch,
+               "sessionTpBypass: a loud dry audition and both edges match the independent position model across calls and chunks");
+    }
+}
 
 static void testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio()
 {
@@ -9736,6 +9867,7 @@ int main()
     testTruePeakModeHoldsTheCeiling();
     testTruePeakEngagementHoldsTheCeiling();
     testOfflineEntryDropsTheEngagementTail();
+    testTpOnlyOfflineEntryWithABulkSwapStartsClean();
     testAForceMaxEntryStartsTheRenderClean();
     testTruePeakModeHoldsTheCeilingUnderAutomation();
     testTruePeakModeBoundsTheStepAtACeilingCut();
@@ -9781,6 +9913,7 @@ int main()
     testMeterResetIgnoresTheStraddlingSubBlock();
     testStatisticsResetStartsTheSessionAtTheReset();
     testTheSessionFiguresPauseForABypassAudition();
+    testSessionTruePeakFollowsTheReportedBypassPosition();
     testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio();
     testSpectrumRingsCarryTheTaps();
     testGrHistoryEntriesFollowThePreparedBlock();

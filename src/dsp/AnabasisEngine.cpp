@@ -295,6 +295,8 @@ void AnabasisEngine::reset() noexcept
     sessionTpMaxChunk = sessionPeakChunk = 0.0f;
     sessionSamples = 0;
     sessionTpSkip = 0;
+    sessionTpOpenHistory.fill (true);   // estimator pre-history is silence
+    sessionTpOpenPos = 0;
     grMinChunk = 1.0f;
     grMinChunkCh[0] = grMinChunkCh[1] = 1.0f;
     // THE HISTORY ACCUMULATOR IS DELIBERATELY NOT IN THIS LIST, and round 16
@@ -1563,10 +1565,9 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
         // ~10 ms ramp included, so no crossfaded input reaches them. Offline
         // the bypass is part of the rendered file and is measured. The rolling
         // readings (M, S, RMS) and the GR history's waveform keep following
-        // what the render tap carries, exactly as before. The true-peak
-        // estimator reports ~6 samples late, so at a release up to that many
-        // ramp samples can enter the TP hold — at under 2 % of the input's
-        // level, stated rather than compensated.
+        // what the render tap carries, exactly as before. TP eligibility is
+        // delayed by the estimator's reporting lag below; SP and the clock
+        // use the current frame.
         const bool sessionOpen = bypassMix <= 0.0f || p.nonRealtime;
         outMeter.setSessionPaused (! sessionOpen);
         outMeter.processFrame (renderFrame, nCh);
@@ -1586,14 +1587,17 @@ void AnabasisEngine::processChunk (juce::AudioBuffer<float>& buffer, const int s
             const bool tpInSession = sessionTpSkip == 0;
             if (sessionTpSkip > 0)
                 --sessionTpSkip;
+            const bool tpPositionOpen = sessionTpOpenHistory[(size_t) sessionTpOpenPos];
+            sessionTpOpenHistory[(size_t) sessionTpOpenPos] = sessionOpen;
+            if (++sessionTpOpenPos == TruePeakEstimator::kReportLag)
+                sessionTpOpenPos = 0;
+            if (tpInSession && tpPositionOpen)
+                for (int ch = 0; ch < nCh; ++ch)
+                    sessionTpMaxChunk = juce::jmax (sessionTpMaxChunk, tp[ch]);
             if (sessionOpen)
             {
                 for (int ch = 0; ch < nCh; ++ch)
-                {
-                    if (tpInSession)
-                        sessionTpMaxChunk = juce::jmax (sessionTpMaxChunk, tp[ch]);
                     sessionPeakChunk  = juce::jmax (sessionPeakChunk, std::abs (renderFrame[ch]));
-                }
                 ++sessionSamples;
             }
         }

@@ -11,6 +11,17 @@ maps the four DSP findings to #42's later implementations, retains the
 unattributed state-restoration crash, and records the main merge's preservation
 of the development evidence. No Phase 0 DSP code was changed by this review.
 
+**Stacked review implementation (2026-10-21):**
+`worklogs/2026-10-21-devin-review-pr42.md` records the remaining session-TP
+eligibility fix, the old implementation's failing regression, the two bypass
+edges and the TP-only offline-entry/bulk-swap comparison. ADR-0020's dated
+implementation correction, DSP_POLICY invariant 11, TESTING, TEST_REPORT,
+USER_MANUAL and CHANGELOG describe eligibility at reported positions. The
+existing session-clock definition and stopped GR maximum remain unchanged.
+The metering trigger's `DSP_ALGORITHMS.md` is still a planned document; it was
+not generated for this repair. The #43 merge keeps this branch's later DSP
+code and Phase 1 records while retaining the Phase 0 review addendum above.
+
 **Last updated:** for the **AGENTS.md contributor-entry migration (2026-10-21)** — documentation-only: `AGENTS.md` is inventoried as the primary root contributor/agent guide, `CLAUDE.md` as its Claude-compatible import, and the README, repository map, source-of-truth class list, `AI_AGENT_POLICY.md`, `DEVELOPMENT.md` and `DEVELOPMENT_BRIEF.md` now identify the primary guide. The self-coverage row below is synchronized.
 Before that, for **the PR #43 split review, merged into this branch (2026-09-29)** — Phase 0's
 evidence re-run on PR #43's own head and the Phase 0 suite count re-counted (1977 = 548 + 1429; the

@@ -202,6 +202,18 @@ alone does not carry the property; these are the cases where the wrong stimulus 
 | `testMatchPredictCountsEveryLevelTakingStage` | The compressor must **engage** (−20 dBFS pink, threshold −24, ratio 4, limGain +6): at the −17 dBFS calibration point its reduction is exactly 0, so a compressor term passes vacuously there. And one case must run at **Comp Mix 50 % after lead silence**, so the predict floor acts alone for its first seconds — the only phase in which a term unweighted by the mix plays the matched signal above the input | ADR-0006 decision 7, audit DSP-005 |
 | `testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio` | A **never-bypassed twin** run in lockstep, so the frames a bypass made audible are read off the audio rather than off the engine's own flag (a test that trusts the flag pins nothing); a **RESET inside an audition**; and **open runs shorter than 0.5 s** between auditions — the case where the length grows and I cannot | ADR-0020 amendment 4 item 3 |
 
+The 2026-10-21 review adds two DSP cases:
+`testSessionTruePeakFollowsTheReportedBypassPosition` uses a loud dry audition,
+a quiet processed leg, single-frame calls at both bypass edges, a RESET during
+the audition, and delivered blocks spanning internal chunks. The session-clock
+model indexes eligibility by the external estimator's reported position;
+SP and duration still use current frames.
+`testTpOnlyOfflineEntryWithABulkSwapStartsClean` toggles TP with Oversampling Off
+on the offline-entry block while requesting the bulk-swap duck. At both EQ
+positions and on wet/bypass renders it compares against a clean start and an
+otherwise identical entry without the request, checking exact silence from old
+programme and absence of a rendered transition fade.
+
 ### `tests/state_tests.cpp` → `AnabasisStateTests`
 
 Compiles the **real** plugin sources into its own console target, so it exercises the actual

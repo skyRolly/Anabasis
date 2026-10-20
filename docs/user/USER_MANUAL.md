@@ -317,8 +317,10 @@ programme the session figures describe. It stops while you listen to **BYPASS** 
 playback: an audition of your input is not part of the master you are measuring, so it is left
 out of I, LRA and the peak holds (since 0.2.14 — before, a bypass comparison could raise the
 peak holds above your Ceiling and pull I toward the input). The time and the peak holds pick up
-again with the first moment after the audition, keeping what they held before it; **I** and
-**LRA** leave a little more out. As
+again with the first moment after the audition, keeping what they held before it.
+**TP** reports those programme positions six samples later; both edges of the
+audition are excluded by position, so delayed audition readings cannot enter its hold.
+**I** and **LRA** leave a little more out. As
 after a reset, up to the first 0.2 s after the audition is not in **I**, and nor is up to 0.1 s
 before it — so less than half a second between two auditions adds to the time but nothing to
 **I** — and **LRA** moves again about 3 s after it. The rolling readings still follow what you
