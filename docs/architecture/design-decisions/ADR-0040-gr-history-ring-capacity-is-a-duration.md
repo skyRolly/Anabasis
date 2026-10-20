@@ -155,7 +155,7 @@ Measured on this container (Release, x86-64):
 
    **No sample rate is rejected or altered to make this true.** A clamp on the rate was considered
    and declined for a reason beyond the engine's own: the single `setLatencySamples` call site reads
-   `getSampleRate()` (`src/PluginProcessor.cpp:913-914`), **not** the rate handed to
+   `getSampleRate()` (`src/PluginProcessor.cpp:916-917`), **not** the rate handed to
    `AnabasisEngine::prepare` (`:776`). Clamping the engine's rate would therefore shrink the actual
    lookahead while leaving the REPORTED figure unchanged — breaking ADR-0004's
    reported-equals-impulse contract that `testReportedLatencyMatchesImpulse` pins, and engaging the

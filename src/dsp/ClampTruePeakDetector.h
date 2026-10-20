@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <cstddef>
 
 // ============================================================================
 //  ClampTruePeakDetector.h — the ceiling clamp's true-peak detector, and the
@@ -235,9 +236,9 @@ public:
         for (int ch = 0; ch < nCh; ++ch)
         {
             auto& h = hist[ch];
-            h[(size_t) writeIdx] = x[ch];
-            h[(size_t) (writeIdx + kTaps)] = x[ch];
-            w[ch] = &h[(size_t) (writeIdx + 1)];               // oldest → newest
+            h[(std::size_t) writeIdx] = x[ch];
+            h[(std::size_t) (writeIdx + kTaps)] = x[ch];
+            w[ch] = &h[(std::size_t) (writeIdx + 1)];               // oldest → newest
         }
         // BOTH CHANNELS IN ONE PASS: their accumulations are independent, so
         // interleaving them doubles the work in flight per loop step. A mono

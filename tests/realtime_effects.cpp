@@ -40,6 +40,10 @@
 //  and a violation seeded inside the decay's junction check is reported here at
 //  the driver's call to `EngagementTail::start` (the PR #42 review worklog) -- the
 //  call graph is followed into the new code, not stopped at its door.
+//  0.2.15 (ADR-0045) added the in-flight revision the engine runs at a block top
+//  (`CeilingClamp::lowerInFlightCeilings` and its sliding minimum) and the decay
+//  reset at offline entry; both are driven below, and an allocation seeded in the
+//  revision is reported at the driver's call (the 2026-09-28 worklog).
 //
 //  SCOPE, deliberately narrow: the JUCE-free first-party leaves only. Adding a
 //  header that reaches JUCE reintroduces the noise above, so the include list
@@ -121,6 +125,13 @@ namespace
         // out-leg: its junction check (a replay through a private detector)
         // at the toggle, then its per-sample value, and the history it is fed.
         tail.start (ceilingLinear);
+        // ADR-0045: a retarget at a block top lowers the ceilings of the frames
+        // in flight and re-derives their requirements from the stored readings.
+        {
+            const float emitCeil[4] = { ceilingLinear, 0.9f * ceilingLinear, 0.8f * ceilingLinear,
+                                        0.7f * ceilingLinear };
+            tpClamp.lowerInFlightCeilings (emitCeil, 4);
+        }
         for (int i = 0; i < n; ++i)
         {
             float frame[2] = { l[i], r[i] };
@@ -135,6 +146,8 @@ namespace
             l[i] = frame[0];
             r[i] = frame[1];
         }
+        // Entering offline drops a decay still in flight (the review of 0.2.14).
+        tail.reset();
 
         // The latency arithmetic the engine runs per block to decide whether the
         // reported PDC still matches the configuration (ADR-0004).

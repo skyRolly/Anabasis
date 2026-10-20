@@ -76,6 +76,7 @@ public:
         subCount = 0;
         subFill  = 0;
         integratedFrom = 0;
+        sessionPaused  = false;
         for (auto& s : subRing) s = 0.0;
         clearSessionCumulative();
     }
@@ -144,15 +145,75 @@ public:
         // at a quarter of the block's energy, which is exactly the bias the
         // watermark exists to prevent. Land the reset on a sub-block boundary
         // (subFill == 0) and there is no straddler, so +4 is right there.
-        integratedFrom = subCount + 4 + (subFill > 0 ? 1 : 0);
+        //
+        // A sub-block that post-dates the reset is still not CLEAN if it
+        // starts right after it: the K-weighting biquads (never cleared — that
+        // would notch the rolling windows too) ring the pre-reset programme
+        // into it. Measured before the guard (the PR #42 review of 0.2.15): a
+        // reset on a boundary after a loud 40 Hz tone, then 5 s of digital
+        // silence, read −33.7 LUFS integrated where the empty value belongs.
+        // So the first admitted sub-block also starts at least one sub-block
+        // (100 ms) after the reset (`firstCleanSubBlock`), by which time the
+        // ring-out is under the energy floor. Half that was the first guard
+        // (leaks measured up to 28.7 ms integrated, 46.7 ms ungated on tones),
+        // and the review of this round found DC at 0.99 cut at a 50 ms gap
+        // still leaving the ungated mean at −115.5 LUFS after 2 s of silence
+        // (16 of 336 reset positions, 8–192 kHz); at 100 ms, 0 of 336, the
+        // worst −120.69 LUFS — the floor.
+        integratedFrom = firstCleanSubBlock() + 4;
         // The LRA watermark is the SAME rule at the short-term window's
         // length: an LRA sample IS a 3 s window, so the first one carrying no
         // pre-reset material is 30 sub-blocks out, plus the straddler. Getting
         // this wrong would not merely bias the number — one retained loud
         // pre-reset short-term value sets the 95th percentile for the rest of
         // the session, and LRA has no averaging to dilute it.
-        lraFrom = subCount + 30 + (subFill > 0 ? 1 : 0);
+        lraFrom = firstCleanSubBlock() + 30;
     }
+
+    // The first sub-block that post-dates this instant (the straddler rule)
+    // AND starts at least a whole sub-block (100 ms) after it, so the
+    // K-weighting filters' ring-out of the material before it has decayed
+    // below the energy floor before the first admitted sample (measured on
+    // tones, a 20 Hz sine and DC cut at every sub-block phase, 8–192 kHz).
+    int64_t firstCleanSubBlock() const noexcept
+    {
+        const int64_t straddler = subFill > 0 ? 1 : 0;
+        return subCount + straddler + 1;
+    }
+
+    // PAUSE the session-cumulative half (ADR-0020 amendment 4, audit VIS-001):
+    // while paused no gating block enters the integrated histogram or the
+    // ungated mean and no short-term value enters the LRA histogram; the
+    // rolling windows (momentary, short-term) keep running, because they
+    // describe what is playing now. The engine pauses it while a REALTIME
+    // bypass audition is audible, so a comparison against the input is not
+    // folded into the programme's session figures.
+    //
+    // RESUMING is resetIntegrated's watermark rule WITHOUT the clear: the
+    // first gating block admitted after a pause averages four sub-blocks that
+    // all post-date it, and the first LRA sample thirty — the sub-block in
+    // progress at the resume (the straddler) counted as paused. Pausing needs
+    // no watermark: admission is decided when a sub-block completes, and a
+    // completion while paused admits nothing. The resume takes the same
+    // ring-out guard as a reset (`firstCleanSubBlock`): the bypassed audio ran
+    // through the K-weighting too. The cost, stated: up to one sub-block
+    // (100 ms) of programme before a pause and up to 200 ms after it is not
+    // measured, and LRA resumes ~3 s after it. A reset issued DURING a pause needs
+    // nothing extra: it admits nothing while paused, and the resume comes
+    // after it, so the resume's watermark is the later of the two and plain
+    // assignment is exact. Audio thread only; an edge-triggered compare.
+    void setSessionPaused (bool paused) noexcept
+    {
+        if (paused == sessionPaused)
+            return;
+        sessionPaused = paused;
+        if (! paused)
+        {
+            integratedFrom = firstCleanSubBlock() + 4;
+            lraFrom        = firstCleanSubBlock() + 30;
+        }
+    }
+    bool isSessionPaused() const noexcept { return sessionPaused; }
 
     // One frame (all channels of one sample step).
     void processFrame (const float* x, int numCh) noexcept
@@ -366,7 +427,7 @@ private:
 
         // A gating block exists once four sub-blocks have accumulated; its
         // mean square is the mean of the last four sub-block means.
-        if (subCount >= 4 && subCount >= integratedFrom)
+        if (! sessionPaused && subCount >= 4 && subCount >= integratedFrom)
         {
             double z = 0.0;
             for (int k = 0; k < 4; ++k)
@@ -411,7 +472,7 @@ private:
         // Its own watermark, not `integratedFrom`: a short-term window reaches
         // ten times further back, so sharing the integrated one would admit
         // 2.9 s of pre-reset programme.
-        if (subCount >= 30 && subCount >= lraFrom)
+        if (! sessionPaused && subCount >= 30 && subCount >= lraFrom)
         {
             const float st = windowLoudness (30);
             if (st >= -70.0f && std::isfinite (st))       // the absolute gate
@@ -508,6 +569,7 @@ private:
 
     // The fixed-size integrated-gating accumulator.
     int64_t integratedFrom = 0;   // resetIntegrated watermark (see there)
+    bool    sessionPaused  = false;   // setSessionPaused (see there)
     int32_t histCount[kBins] = {};
     double  histSum[kBins] = {};
     int64_t totalGatedBlocks = 0;

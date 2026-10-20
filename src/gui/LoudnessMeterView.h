@@ -26,9 +26,15 @@ class AnabasisAudioProcessor;
 //  AES-17 +3.01 dB offset. The audio thread therefore never reads a display
 //  preference, and flipping either setting is instant with no audio involved.
 //
-//  Clicking the panel issues the §2.9 meter-hold reset request (integrated +
-//  both peak holds — the momentary-request row implemented at the P5
-//  opening).
+//  RESET, on the header line, issues the §2.9 meter-hold reset request
+//  (integrated, LRA, both peak holds and the session duration — the
+//  momentary-request row implemented at the P5 opening). Until 0.2.14 the
+//  WHOLE panel was that control: any click, right-click or drag start on the
+//  readings or on the empty glass below them discarded the session (audit
+//  UX-002). The body is inert now; RESET is a named, focusable button
+//  (ADR-0020 amendment 4). Beside the header, the length of programme the
+//  session figures cover (m:ss), which stops while a realtime bypass
+//  audition is audible (audit VIS-009 / VIS-001).
 //
 //  STREAMING TARGETS ARE GONE, deliberately (owner directive 2026-08-05,
 //  superseding OQ-008): platform normalisation makes per-platform target
@@ -78,6 +84,15 @@ public:
     static bool  shouldAdoptRms (float rawDb, bool holdingAReading, double sinceAdoptSecs) noexcept;
     static float rmsWithReference (float rawDb, bool aes17) noexcept;
 
+    // The session duration beside the header: whole seconds, m:ss below an
+    // hour and h:mm:ss above, never rounded up — it says how much programme
+    // the figures cover, and a second the meters have not heard yet is not
+    // part of it. Static so the suite pins the rule without a tick.
+    static juce::String sessionTimeText (float seconds);
+
+    // The header's reset control, for the editor (hover easing) and the suite.
+    juce::Button& resetControl() noexcept { return resetButton; }
+
     explicit LoudnessMeterView (AnabasisAudioProcessor&);
     // Detached FIRST — the tick reads the whole `shown*` snapshot, declared
     // after `clock`, so `= default` freed it under an armed attachment. Same
@@ -87,7 +102,7 @@ public:
     ~LoudnessMeterView() override { clock.stop(); }
 
     void paint (juce::Graphics&) override;
-    void mouseDown (const juce::MouseEvent&) override;
+    void resized() override;
     void visibilityChanged() override;
 
 private:
@@ -110,7 +125,12 @@ private:
           // moves the snapshot and repaints without a separate flag — the
           // shape `shownTpOn` needed a flag for, and the reason it is gone
           // along with the field it mirrored.
-          shownPeak = 1.0f, shownRms = 1.0f, shownLra = -1.0f;
+          shownPeak = 1.0f, shownRms = 1.0f, shownLra = -1.0f,
+          // Whole seconds of the session duration (see sessionTimeText), so
+          // the header repaints once a second, not at the meter tick.
+          shownSessionSecs = -1.0f;
+
+    juce::TextButton resetButton { "RESET" };
 
     // The RMS readout hold (0.1.3 item 1 — see tick() for the analysis-vs-
     // display judgement, and the two static rules above for the arithmetic).

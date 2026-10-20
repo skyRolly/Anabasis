@@ -161,10 +161,23 @@ esac
 #  retries because a GUI-subsystem process can return a null `$LASTEXITCODE`,
 #  which is an exit-code DETECTION problem rather than a crash it is excusing.
 #  That rationale is unrelated to this one and is deliberately left alone.)
+#
+#  ON macOS A CRASH ARRIVES AS EXIT 9, NOT AS 128 + SIGNAL (KI-028). pluginval's
+#  command-line mode installs its own handler for SIGFPE, SIGILL, SIGSEGV, SIGBUS
+#  and SIGABRT on macOS only (`Source/CommandLine.cpp`, `setupSignalHandling` ->
+#  `kill9WithSomeMercy`), and that handler ends the process with
+#  `std::_Exit (SIGKILL)` -- a normal exit whose STATUS is 9 -- after printing
+#  "pluginval received <signal>, exiting immediately". So on macOS the `< 128`
+#  test below would report a segfault or an abort (an uncaught C++ exception
+#  ends in abort) as a "real validation failure". Nothing else in pluginval
+#  exits with 9 (its own codes are 0, 1 and 255), so 9 is classified as the
+#  crash it is. The ACTION does not change: macOS has no crash-retry, so it
+#  still fails the pass immediately -- only the message stops mislabelling it.
 # ----------------------------------------------------------------------------
 case "$(uname -s)" in
-    Linux) CRASH_RETRY_ATTEMPTS=3 ;;   # the XEmbed flake documented above
-    *)     CRASH_RETRY_ATTEMPTS=1 ;;   # no known host-side flake: fail on the first crash
+    Linux)  CRASH_RETRY_ATTEMPTS=3; PLUGINVAL_HANDLER_CRASH_RC="" ;;   # the XEmbed flake documented above
+    Darwin) CRASH_RETRY_ATTEMPTS=1; PLUGINVAL_HANDLER_CRASH_RC=9  ;;   # no known host-side flake; crashes exit 9
+    *)      CRASH_RETRY_ATTEMPTS=1; PLUGINVAL_HANDLER_CRASH_RC="" ;;   # no known host-side flake: fail on the first crash
 esac
 
 run_one_pass() {
@@ -180,6 +193,10 @@ run_one_pass() {
         if [ "$rc" -eq 0 ]; then
             echo "pluginval: PASSED ($label) at strictness $STRICTNESS (attempt $attempt/$attempts)"
             return 0
+        fi
+        if [ -n "$PLUGINVAL_HANDLER_CRASH_RC" ] && [ "$rc" -eq "$PLUGINVAL_HANDLER_CRASH_RC" ]; then
+            echo "pluginval: CRASHED ($label, exit $rc) -- pluginval's own macOS signal handler turns SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGABRT into exit $rc; a crash, not a validation failure. No crash-retry on this platform (the retry exists for the Linux X11/XEmbed flake only)."
+            return "$rc"
         fi
         if [ "$rc" -lt 128 ]; then
             echo "pluginval: FAILED ($label) at strictness $STRICTNESS (exit $rc) -- real validation failure, not a crash."

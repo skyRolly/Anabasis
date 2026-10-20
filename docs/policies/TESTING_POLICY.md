@@ -194,7 +194,12 @@ its methodology is not permitted (constraint C2).
    misclassified as an abnormal termination and still fails, after three wasted retries.)
    Everything above 1 therefore comes from the OS, and the OS conventions differ:
    - **Linux/macOS** — a signal crash is `exit ≥ 128` (128 + signal number). So `< 128` is a real
-     failure and fails immediately; `≥ 128` may be retried.
+     failure and fails immediately; `≥ 128` may be retried. **One exception, pluginval's own:** on
+     macOS its command-line mode installs a handler for SIGFPE/SIGILL/SIGSEGV/SIGBUS/SIGABRT
+     (`Source/CommandLine.cpp`, `kill9WithSomeMercy`) that ends the process with
+     `std::_Exit (SIGKILL)`, so a crash there arrives as **exit 9**. `run-pluginval.sh` reports
+     that code as a crash, not a validation failure, and still fails the pass immediately (macOS
+     has no crash-retry), so the gate's behaviour is unchanged — only the label (KI-028).
    - **Windows** — there are no signals, so nothing the OS reports lands in 1…255; a code in that
      range came from pluginval itself and is a **real failure** that must **not** be retried —
      including **128…255**, which on the other two platforms would read as a crash. An abnormal

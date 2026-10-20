@@ -265,7 +265,7 @@ void GrHistoryView::paintHistory (juce::Graphics& g)
         return;
 
     auto area = getLocalBounds().toFloat().reduced (10.0f, 8.0f);
-    const int cols = juce::jmax (1, (int) area.getWidth());
+    const int cols = plotColumns (getLocalBounds());   // the readout reads the same geometry
 
     // FIXED-IDENTITY decimation buckets + an area fill (0.1.1, owner shimmer
     // report). The previous draw re-derived each column's entry range from the

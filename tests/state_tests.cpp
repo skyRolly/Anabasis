@@ -3822,7 +3822,8 @@ static void testMeterResetClearsSessionHolds()
            "meterReset: a session load cleared the previous programme's holds");
 
     // The GUI affordance's half of the SAME row, which had nothing behind it.
-    // `LoudnessMeterView::mouseDown` calls `requestMeterReset()` and nothing
+    // The panel's reset (the whole panel's `mouseDown` then; the RESET button
+    // since 0.2.14) calls `requestMeterReset()` and nothing
     // else, and the display publish lived at the state-load call site — so with
     // the transport stopped (exactly when a user reads an integrated figure and
     // decides to clear it) the click set a flag no block ever consumed, and the
@@ -7004,11 +7005,11 @@ static void testTheHistoryWindowKeepsItsSecondsAcrossThePreparedPairs()
     // clamp past the pairs the round-17 version had pinned as its examples.
     //
     // Round 19 also removes the last "below anything a host offers" from these
-    // assertions. That clause was doing load-bearing work for a ceiling this
-    // product does not declare — `AnabasisEngine::prepare` rails the derived
-    // lookahead and not `sr`, and `DSP_POLICY.md` invariant 4 claims the
-    // ceiling holds at "any sample rate" — so the band is stated as an entry
-    // RATE and the pairs are consequences of it.
+    // assertions. That clause was doing load-bearing work for a ceiling this product
+    // does not declare — `AnabasisEngine::prepare` rails the derived lookahead and not
+    // `sr`, and `DSP_POLICY.md` invariant 4 claims the ceiling holds at "any sample rate"
+    // (since ADR-0046: "any host sample rate", the true-peak promise from 12 kHz) — so
+    // the band is stated as an entry RATE and the pairs are consequences of it.
     check (384000.0 / 32.0 <= fullRate && 192000.0 / 16.0 <= fullRate
              && 384000.0 / 16.0 > fullRate,
            "grSeconds: (premise) the whole window still fits at 384 kHz / 32 and 192 kHz / 16, and 384 kHz / 16 is the first pair past the clamp");
@@ -10681,6 +10682,71 @@ static void testMetersReadTheRenderNotTheMonitor()
 }
 
 // ---------------------------------------------------------------------------
+// ADR-0044 through the wrapper: BYPASS — the host's own bypass, which is this
+// parameter — plays the input at unity whether or not MATCH is on, at the
+// Simple view's Loudness 70 % point. The listening buffers of the two runs
+// are bit-identical once the bypass crossfade has settled, and so is every
+// published reading (the meters read the render, which MATCH never touched).
+// Until 0.2.14 MATCH scaled the bypassed input by its gain as well, so the
+// comparison against BYPASS kept the whole level difference (audit UX-009).
+static void testBypassPlaysTheInputAtUnityWithMatchOn()
+{
+    struct R { std::vector<float> tail; float lufsS, lufsI, tpMax; double wetRms; };
+    auto run = [] (bool match)
+    {
+        AnabasisAudioProcessor proc;
+        proc.prepareToPlay (48000.0, 512);
+        proc.apvts.getParameter (pid::loudness)->setValueNotifyingHost (0.7f);
+        proc.getMacroEngine().flushPendingMapping();
+        if (match)
+            proc.apvts.getParameter (pid::loudnessComp)->setValueNotifyingHost (1.0f);
+        auto* bypass = proc.apvts.getParameter (pid::bypass);
+
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        R r {};
+        double wetSq = 0.0;
+        uint32_t rng = 0x5EEDu;
+        for (int b = 0; b < 300; ++b)                  // 2 s processed, then 1.2 s bypassed
+        {
+            if (b == 190)
+                bypass->setValueNotifyingHost (1.0f);
+            for (int n = 0; n < 512; ++n)
+            {
+                rng = rng * 1664525u + 1013904223u;
+                const float v = ((float) (rng >> 8) / 8388608.0f - 1.0f) * 0.25f;
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, 0.8f * v);
+            }
+            proc.processBlock (buf, midi);
+            if (b >= 150 && b < 190)
+                for (int n = 0; n < 512; ++n)
+                    wetSq += (double) buf.getSample (0, n) * buf.getSample (0, n);
+            if (b >= 220)
+                for (int ch = 0; ch < 2; ++ch)
+                    for (int n = 0; n < 512; ++n)
+                        r.tail.push_back (buf.getSample (ch, n));
+        }
+        r.lufsS = proc.meterLufsS();
+        r.lufsI = proc.meterLufsI();
+        r.tpMax = proc.meterDbTpMax();
+        r.wetRms = std::sqrt (wetSq / (40.0 * 512.0));
+        return r;
+    };
+    const auto off = run (false), on = run (true);
+    check (on.wetRms < off.wetRms * 0.7,
+           "matchWrapper: (premise) MATCH audibly pulls the processed signal down before the bypass");
+    check (on.tail.size() == off.tail.size() && on.tail == off.tail,
+           "matchWrapper: settled BYPASS is sample-identical with MATCH on and off");
+    check (juce::exactlyEqual (on.lufsS, off.lufsS) && juce::exactlyEqual (on.lufsI, off.lufsI)
+             && juce::exactlyEqual (on.tpMax, off.tpMax),
+           "matchWrapper: MATCH moves no published reading across the bypass either");
+    AnabasisAudioProcessor probe;
+    check (probe.getBypassParameter() == probe.apvts.getParameter (pid::bypass),
+           "matchWrapper: the host's bypass IS this parameter, so a host bypass takes the same path");
+}
+
+// ---------------------------------------------------------------------------
 // MODE_AND_ADAPTATION_POLICY invariant 2's named guard: switching Simple ⇄
 // Advanced changes NOTHING about the rendered sound — not approximately,
 // sample-identically. Two processors, identical input and settings; one
@@ -10979,6 +11045,53 @@ static void testTheCeilingAdvertisesTheUnitItEnforces()
         check (box->getText().endsWith (" dB") && ! box->getText().contains ("dBTP"),
                "ceilingUnit: TP off right after opening on TP-on still refreshes the box");
     }
+}
+
+// THE UNIT FOLLOWS THE PATH, NOT JUST THE SWITCH (ADR-0046). True-peak mode
+// engages from `CeilingClamp::kMinTruePeakRate` (12 kHz) up; below it the rail
+// runs the sample clip whatever the parameter says, so a " dBTP" suffix there
+// would be the claim the suffix exists to keep honest. The rate is the one the
+// processor already publishes (the GR history ring's pair, KI-017), read by the
+// same `getText` the host and the value box call. Re-preparing back up restores
+// the claim — the answer is the PREPARED rate's, never a latched one.
+static void testTheCeilingUnitFollowsTheRateTheTruePeakPathEngagesAt()
+{
+    AnabasisAudioProcessor proc;
+    auto* ceil = proc.apvts.getParameter (pid::ceiling);
+    auto* tp   = proc.apvts.getParameter (pid::truePeakMode);
+    check (ceil != nullptr && tp != nullptr,
+           "ceilingUnitRate: (premise) the ceiling and true-peak parameters exist");
+    if (ceil == nullptr || tp == nullptr)
+        return;
+
+    tp->setValueNotifyingHost (1.0f);
+    check (ceil->getCurrentValueAsText().endsWith (" dBTP"),
+           "ceilingUnitRate: (premise) before any prepare, TP on reads dBTP (the 48 kHz fallback)");
+
+    const struct { double rate; bool engaged; const char* what; } rows[] = {
+        { 48000.0, true,  "ceilingUnitRate: 48 kHz with TP on reads dBTP" },
+        { 11999.0, false, "ceilingUnitRate: 11999 Hz with TP on reads plain dB (the path does not engage)" },
+        { 12000.0, true,  "ceilingUnitRate: 12000 Hz with TP on reads dBTP (the lowest engaged rate)" },
+        { 11025.0, false, "ceilingUnitRate: 11.025 kHz with TP on reads plain dB" },
+        {  8000.0, false, "ceilingUnitRate: 8 kHz with TP on reads plain dB" },
+        { 22050.0, true,  "ceilingUnitRate: re-preparing at 22.05 kHz restores dBTP" },
+    };
+    for (const auto& r : rows)
+    {
+        proc.prepareToPlay (r.rate, 256);
+        check (anabasis::truePeakPathEngages (r.rate) == r.engaged,
+               "ceilingUnitRate: (premise) the rail predicate agrees with the table");
+        const auto text = ceil->getCurrentValueAsText();
+        check (r.engaged ? text.endsWith (" dBTP")
+                         : (text.endsWith (" dB") && ! text.contains ("dBTP")), r.what);
+        proc.releaseResources();
+    }
+
+    proc.prepareToPlay (8000.0, 256);
+    tp->setValueNotifyingHost (0.0f);
+    check (ceil->getCurrentValueAsText().endsWith (" dB"),
+           "ceilingUnitRate: TP off below the rail still reads plain dB");
+    proc.releaseResources();
 }
 
 // ---------------------------------------------------------------------------
@@ -11733,6 +11846,1617 @@ static void testBothChannelsCarryAudioThroughTheWrapper()
     }
 }
 
+// ---------------------------------------------------------------------------
+// TEST-001 (2026-09-26 audit): the editor's 24 Hz tick — the whole layer that
+// carries the model onto the panel — had no test that ran it. No message loop
+// runs here, so the timer never fires; `refreshFromModel()` is the tick body
+// `timerCallback` calls, public for that reason. Every case below first checks
+// a PREMISE that the widget has NOT moved before the tick runs, so a pass means
+// the tick did the work — and each was run against a mutation that deletes or
+// inverts the branch it names (DOCUMENTATION_COVERAGE, 2026-09-27). The pop-up
+// housekeeping the tick also runs is inert with nothing open and stays under
+// ADR-0025's disclosure, as does the hovered = TRUE half of the combo flag.
+
+template <typename T>
+static T* findFirstChildOfType (juce::Component& root)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* t = dynamic_cast<T*> (c))
+            return t;
+        if (auto* found = findFirstChildOfType<T> (*c))
+            return found;
+    }
+    return nullptr;
+}
+
+static void collectCombos (juce::Component& root, juce::Array<juce::ComboBox*>& out)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* b = dynamic_cast<juce::ComboBox*> (c))
+            out.add (b);
+        collectCombos (*c, out);
+    }
+}
+
+static AnabasisAudioProcessorEditor* openTickEditor (AnabasisAudioProcessor& proc,
+                                                     std::unique_ptr<juce::AudioProcessorEditor>& holder,
+                                                     const char* tag)
+{
+    holder.reset (proc.createEditor());
+    auto* ed = dynamic_cast<AnabasisAudioProcessorEditor*> (holder.get());
+    const juce::String msg = juce::String (tag) + ": (premise) the editor was created";
+    check (ed != nullptr, msg.toRawUTF8());
+    return ed;
+}
+
+// T0 + T1: the tick's first two steps. T0 is the consumer of the flag
+// `parameterChanged` raises for a mode or bypass write — the ONLY consumer for
+// a write off the message thread, and here (where the on-thread post is never
+// delivered) the only one at all. T1 is the sole writer of the combo "hov"
+// property the look-and-feel prefers.
+static void testTheTickAppliesAPendingModeSwitchAndTheComboHoverFlag()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickMode");
+    if (ed == nullptr)
+        return;
+
+    auto* learn = findButtonByText (*ed, "LEARN");
+    check (learn != nullptr, "tickMode: (premise) the LEARN button was found");
+    if (learn == nullptr)
+        return;
+
+    // T1 first, on the untouched editor: nothing else writes the flag.
+    juce::Array<juce::ComboBox*> combos;
+    collectCombos (*ed, combos);
+    int flaggedBefore = 0;
+    for (auto* c : combos)
+        if (c->getProperties().contains ("hov"))
+            ++flaggedBefore;
+    check (combos.size() > 0 && flaggedBefore == 0,
+           "tickHover: (premise) no combo carries the hover flag before the first tick");
+    ed->refreshFromModel();
+    int flagged = 0, hovered = 0;
+    for (auto* c : combos)
+        if (c->getProperties().contains ("hov"))
+        {
+            ++flagged;
+            if ((bool) c->getProperties()["hov"])
+                ++hovered;
+        }
+    {
+        juce::String msg;
+        msg << "tickHover: the tick gives every combo its hover flag (" << flagged
+            << " of " << combos.size() << ")";
+        check (flagged == combos.size(), msg.toRawUTF8());
+    }
+    check (hovered == 0, "tickHover: …and with no pointer over the editor, none reads hovered");
+
+    // T0, on the message thread.
+    const int simpleH = ed->getHeight();
+    check (learn->isVisible(), "tickMode: (premise) the Simple view shows LEARN");
+    auto* adv = proc.apvts.getParameter (pid::advancedMode);
+    adv->setValueNotifyingHost (1.0f);
+    check (ed->getHeight() == simpleH && learn->isVisible(),
+           "tickMode: (premise) the mode write alone changes nothing on screen here");
+    ed->refreshFromModel();
+    check (ed->getHeight() > simpleH && ! learn->isVisible(),
+           "tickMode: the tick applies a pending switch to Advanced");
+
+    // …and OFF it: a host automating the mode from its own thread, where
+    // `parameterChanged` may only raise the flag.
+    std::thread ([adv] { adv->setValueNotifyingHost (0.0f); }).join();
+    check (ed->getHeight() > simpleH && ! learn->isVisible(),
+           "tickMode: (premise) an off-thread write only raises the flag");
+    ed->refreshFromModel();
+    check (ed->getHeight() == simpleH && learn->isVisible(),
+           "tickMode: the tick consumes a flag raised off the message thread");
+}
+
+// T6 + T13 through the tick: both helpers are already tested when called
+// directly, which is exactly why a tick that stopped calling them passed.
+static void testTheTickCallsTheSettingsAndCeilingRefreshes()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickSettings");
+    if (ed == nullptr)
+        return;
+
+    auto* os = findComboByTitle (*ed, "Oversampling");
+    check (os != nullptr, "tickSettings: (premise) the oversampling combo was found by title");
+    if (os == nullptr)
+        return;
+    proc.internalState.state().setProperty (iid::oversample, 3, nullptr);   // 8×
+    check (os->getSelectedItemIndex() != 3,
+           "tickSettings: (premise) the tree write alone does not move the combo");
+    ed->refreshFromModel();
+    check (os->getSelectedItemIndex() == 3 && os->getText() == "8x",
+           "tickSettings: the tick re-seeds the settings combos from the tree");
+
+    auto* ceil = proc.apvts.getParameter (pid::ceiling);
+    auto* knob = findSliderByTitle (*ed, ceil->getName (24));
+    auto* box  = knob != nullptr ? findChildLabel (*knob) : nullptr;
+    check (box != nullptr, "tickCeiling: (premise) the Ceiling value box was found");
+    if (box == nullptr)
+        return;
+    proc.apvts.getParameter (pid::truePeakMode)->setValueNotifyingHost (1.0f);
+    check (! box->getText().contains ("dBTP"),
+           "tickCeiling: (premise) the TP write alone leaves the cached suffix");
+    ed->refreshFromModel();
+    check (box->getText().endsWith (" dBTP"),
+           "tickCeiling: the tick refreshes the Ceiling's unit when TP engages");
+}
+
+// OQ-020 (resolved 2026-09-29): the TP switch's and the Ceiling's tooltips
+// follow the RATE the true-peak path engages at, never the switch. From
+// 12 kHz up they are the R2 set's words, unchanged; below, neither repeats
+// that set's dBTP clause and both name the boundary, formatted from
+// `CeilingClamp::kMinTruePeakRate`. What is asserted about the new words are
+// truths, not the words (OQ-018's precedent); the from-12-kHz words ARE held
+// to the shipped strings, because this change must not move them (C8). Read
+// through `getTooltip()`: that is the accessible help JUCE's button and slider
+// handlers report, and headless there is no handler to ask.
+static void collectButtonsByText (juce::Component& root, const juce::String& text,
+                                  juce::Array<juce::Button*>& out)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* b = dynamic_cast<juce::Button*> (c); b != nullptr && b->getButtonText() == text)
+            out.add (b);
+        collectButtonsByText (*c, text, out);
+    }
+}
+
+static void collectSlidersByTitle (juce::Component& root, const juce::String& title,
+                                   juce::Array<juce::Slider*>& out)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* s = dynamic_cast<juce::Slider*> (c); s != nullptr && s->getTitle() == title)
+            out.add (s);
+        collectSlidersByTitle (*c, title, out);
+    }
+}
+
+// Every slider whose value box does not carry the slider's own tip. The
+// forward that keeps the Ceiling's number in step is `Knob::setTooltip`, which
+// every knob inherits, so the sweep is over all of them: it holds before the
+// forward existed too (JUCE copies the tip when it builds a box), which is what
+// says the forward changes nothing for a knob whose tip never moves.
+static void collectValueBoxTipMismatches (juce::Component& root, juce::StringArray& out)
+{
+    for (auto* c : root.getChildren())
+    {
+        if (auto* s = dynamic_cast<juce::Slider*> (c))
+            if (auto* box = findChildLabel (*s); box != nullptr && box->getTooltip() != s->getTooltip())
+                out.add (s->getTitle());
+        collectValueBoxTipMismatches (*c, out);
+    }
+}
+
+static void testTheTruePeakTipsFollowTheRateTheTruePeakPathEngagesAt()
+{
+    AnabasisAudioProcessor proc;
+    auto* tp   = proc.apvts.getParameter (pid::truePeakMode);
+    auto* ceil = proc.apvts.getParameter (pid::ceiling);
+    check (tp != nullptr && ceil != nullptr, "tpTips: (premise) the two parameters exist");
+    if (tp == nullptr || ceil == nullptr)
+        return;
+    proc.prepareToPlay (48000.0, 256);
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tpTips");
+    if (ed == nullptr)
+        return;
+
+    struct Views { juce::Array<juce::Button*> tps; juce::Array<juce::Slider*> ceils; };
+    auto viewsOf = [ceil] (juce::Component& root)
+    {
+        Views v;
+        collectButtonsByText (root, "TP", v.tps);
+        collectSlidersByTitle (root, ceil->getName (24), v.ceils);
+        return v;
+    };
+    const auto views = viewsOf (*ed);
+    check (views.tps.size() == 2 && views.ceils.size() == 2,
+           "tpTips: (premise) both views' TP switches and Ceiling knobs were found");
+    if (views.tps.size() != 2 || views.ceils.size() != 2)
+        return;
+
+    // One tip per control kind, carried by both views and by each Ceiling
+    // knob's value box; empty strings when they disagree anywhere.
+    struct Tips { juce::String tp, ceiling; };
+    auto tipsOf = [] (const Views& v)
+    {
+        Tips t { v.tps[0]->getTooltip(), v.ceils[0]->getTooltip() };
+        for (auto* b : v.tps)
+            if (b->getTooltip() != t.tp)
+                t.tp = {};
+        for (auto* s : v.ceils)
+        {
+            auto* box = findChildLabel (*s);
+            if (s->getTooltip() != t.ceiling || box == nullptr || box->getTooltip() != t.ceiling)
+                t.ceiling = {};
+        }
+        return t;
+    };
+    auto boxesFollowTheirKnobs = [] (juce::Component& root, const char* what)
+    {
+        juce::StringArray stale;
+        collectValueBoxTipMismatches (root, stale);
+        if (! stale.isEmpty())
+            std::printf ("  value box off its knob's tip: %s\n", stale.joinIntoString (", ").toRawUTF8());
+        check (stale.isEmpty(), what);
+    };
+
+    // The from-12-kHz words, as shipped. The clause of each that carries the
+    // dBTP claim is cut from the LIVE tip, so the absence checks below follow
+    // whatever these words become.
+    const auto above = tipsOf (views);
+    check (above.tp == "Catch inter-sample peaks - the Ceiling then holds in dBTP instead of sample peak"
+             && above.ceiling == "The output limit - nothing leaves the plugin above it. "
+                                 "Sample peak by default; engage TP to hold it in dBTP",
+           "tpTips: at 48 kHz both views carry the shipped TP and Ceiling tips, value boxes included");
+    boxesFollowTheirKnobs (*ed, "tpTips: at 48 kHz every knob's value box carries its knob's tip");
+    const auto tpClaim   = above.tp.fromFirstOccurrenceOf (" - ", false, false);
+    const auto ceilClaim = above.ceiling.fromLastOccurrenceOf ("; ", false, false);
+    check (tpClaim.contains ("dBTP") && ceilClaim.contains ("dBTP"),
+           "tpTips: (premise) each from-12-kHz tip has a clause that claims dBTP");
+    // "12 kHz" from the rail's own constant, never typed here.
+    const auto boundary = juce::String (juce::roundToInt (anabasis::CeilingClamp::kMinTruePeakRate / 1000.0))
+                        + " kHz";
+
+    auto isBelow = [&] (const Tips& t)
+    {
+        return t.tp.isNotEmpty() && t.ceiling.isNotEmpty()
+            && ! t.tp.contains (tpClaim) && ! t.ceiling.contains (ceilClaim)
+            && t.tp.contains (boundary) && t.ceiling.contains (boundary);
+    };
+
+    Tips firstBelow;
+    for (const bool on : { true, false })   // the switch's own state must make no difference
+    {
+        tp->setValueNotifyingHost (on ? 1.0f : 0.0f);
+        const juce::String state = on ? " (TP on)" : " (TP off)";
+        ed->refreshFromModel();
+        {
+            const auto t = tipsOf (views);
+            check (t.tp == above.tp && t.ceiling == above.ceiling,
+                   ("tpTips: from the boundary up the switch moves no tip" + state).toRawUTF8());
+        }
+
+        proc.prepareToPlay (11025.0, 256);
+        {
+            const auto t = tipsOf (views);
+            check (t.tp == above.tp && t.ceiling == above.ceiling,
+                   ("tpTips: (premise) the re-prepare alone moves no tip" + state).toRawUTF8());
+        }
+        ed->refreshFromModel();
+        const auto below = tipsOf (views);
+        check (below.tp.isNotEmpty() && below.ceiling.isNotEmpty(),
+               ("tpTips: at 11.025 kHz both views agree, value boxes included" + state).toRawUTF8());
+        check (isBelow (below),
+               ("tpTips: at 11.025 kHz neither tip claims dBTP and both name the rate "
+                "true-peak mode needs" + state).toRawUTF8());
+        boxesFollowTheirKnobs (*ed, ("tpTips: at 11.025 kHz every knob's value box carries its "
+                                     "knob's tip" + state).toRawUTF8());
+        if (on)
+            firstBelow = below;
+        else
+            check (below.tp == firstBelow.tp && below.ceiling == firstBelow.ceiling,
+                   "tpTips: below the boundary the tips are the same with TP on and off");
+
+        proc.prepareToPlay (12000.0, 256);
+        ed->refreshFromModel();
+        {
+            const auto t = tipsOf (views);
+            check (t.tp == above.tp && t.ceiling == above.ceiling,
+                   ("tpTips: at 12 kHz both tips are the from-12-kHz words again" + state).toRawUTF8());
+        }
+    }
+
+    // An editor OPENED below the boundary is right before its first tick.
+    base.reset();
+    proc.prepareToPlay (8000.0, 256);
+    auto* ed2 = openTickEditor (proc, base, "tpTipsOpen");
+    if (ed2 == nullptr)
+        return;
+    const auto views2 = viewsOf (*ed2);
+    check (views2.tps.size() == 2 && views2.ceils.size() == 2,
+           "tpTipsOpen: (premise) both views' TP switches and Ceiling knobs were found");
+    if (views2.tps.size() != 2 || views2.ceils.size() != 2)
+        return;
+    const auto opened = tipsOf (views2);
+    check (isBelow (opened) && opened.tp == firstBelow.tp && opened.ceiling == firstBelow.ceiling,
+           "tpTipsOpen: an editor opened at 8 kHz shows the below-boundary tips before any tick");
+}
+
+// T7: the preset name every tick, the " *" mark on the throttled poll. The
+// exact cadence (every 8th tick) is deliberately not pinned — only that a
+// handful of ticks surface it.
+static void testTheTickShowsThePresetNameAndItsDirtyMark()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickPreset");
+    if (ed == nullptr)
+        return;
+
+    auto* name = findButtonById (*ed, "presetname");
+    check (name != nullptr, "tickPreset: (premise) the preset-name button was found");
+    if (name == nullptr)
+        return;
+
+    check (proc.applyFactoryPreset (1), "tickPreset: (premise) factory preset 1 applied");
+    check (proc.currentPresetName().isNotEmpty()
+             && name->getButtonText() != proc.currentPresetName(),
+           "tickPreset: (premise) an apply made outside the editor has not reached the button");
+    ed->refreshFromModel();
+    check (name->getButtonText() == proc.currentPresetName(),
+           "tickPreset: the tick shows the applied preset's name");
+
+    auto* knee = proc.apvts.getParameter (pid::compKnee);
+    const float kneeNow = knee->getValue();
+    knee->setValueNotifyingHost (kneeNow > 0.5f ? 0.0f : 1.0f);
+    check (proc.presetDirty() && ! name->getButtonText().endsWith (" *"),
+           "tickPreset: (premise) the edit made the preset dirty, unmarked so far");
+    for (int i = 0; i < 16 && ! name->getButtonText().endsWith (" *"); ++i)
+        ed->refreshFromModel();
+    check (name->getButtonText() == proc.currentPresetName() + " *",
+           "tickPreset: the tick's poll marks an edited preset");
+}
+
+// T8: the bypass dim, isolated. A RAW store raises no listener, so the flag T0
+// consumes is never set and only the tick's own edge can show the dim — which
+// is why the notified write below, end to end, is the weaker check: T0 would
+// set the dim for it on its own.
+static void testTheTickDimsTheEditorOnBypass()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickDim");
+    if (ed == nullptr)
+        return;
+    auto* dim = ed->findChildWithID ("dimOverlay");
+    check (dim != nullptr && ! dim->isVisible(), "tickDim: (premise) the dim layer exists and is off");
+    if (dim == nullptr)
+        return;
+
+    auto* raw = proc.apvts.getRawParameterValue (pid::bypass);
+    raw->store (1.0f);
+    check (! dim->isVisible(), "tickDim: (premise) a raw bypass store alone does not dim");
+    ed->refreshFromModel();
+    check (dim->isVisible(), "tickDim: the tick dims the editor while bypassed");
+    raw->store (0.0f);
+    ed->refreshFromModel();
+    check (! dim->isVisible(), "tickDim: …and lifts the dim when bypass clears");
+
+    auto* bypass = proc.apvts.getParameter (pid::bypass);
+    bypass->setValueNotifyingHost (1.0f);
+    ed->refreshFromModel();
+    check (dim->isVisible(), "tickDim: a host bypass write dims the editor end to end");
+    bypass->setValueNotifyingHost (0.0f);
+    ed->refreshFromModel();
+    check (! dim->isVisible(), "tickDim: …and undims it");
+}
+
+// T9: the Simple view's out-LUFS figure, with its "-" for the meter's
+// no-reading sentinel.
+static void testTheTickPrintsTheOutLufsReadout()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickLufs");
+    if (ed == nullptr)
+        return;
+    auto* value = dynamic_cast<juce::Label*> (ed->findChildWithID ("outLufsValue"));
+    check (value != nullptr && value->getText().isEmpty(),
+           "tickLufs: (premise) the out-LUFS label exists and is empty before the first tick");
+    if (value == nullptr)
+        return;
+
+    ed->refreshFromModel();
+    check (value->getText() == "-", "tickLufs: no reading yet prints the dash");
+
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer midi;
+    for (int b = 0; b < 400; ++b)                    // ~4.3 s of a −20 dBFS 1 kHz tone
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const float v = 0.1f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                             * 1000.0f * (float) (b * 512 + n) / 48000.0f);
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+    }
+    const float s = proc.meterLufsS();
+    check (s > -99.0f && value->getText() == "-",
+           "tickLufs: (premise) the meter has a reading the label does not show yet");
+    ed->refreshFromModel();
+    check (value->getText() == juce::String (s, 1),
+           "tickLufs: the tick prints the short-term reading to one decimal");
+}
+
+// T10: the Learn button's §5.4 grammar on a stepped clock — the countdown, the
+// minimum pass, the empty-pass warn flash and its expiry, and a pass that DID
+// move the reference, which must not flash.
+static void testTheTickDrivesTheLearnButton()
+{
+    double fakeNow = 1.0e6;          // declared before the editor, which captures it
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    auto silentBlock = [&] { buf.clear(); proc.processBlock (buf, midi); };
+
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickLearn");
+    if (ed == nullptr)
+        return;
+    ed->setClockForTest ([&fakeNow] { return fakeNow; });
+    auto* learn = findButtonByText (*ed, "LEARN");
+    check (learn != nullptr, "tickLearn: (premise) the LEARN button was found");
+    if (learn == nullptr)
+        return;
+    auto colour = [learn] { return learn->findColour (juce::TextButton::textColourOffId); };
+    const auto& a = proc.adaptiveReadout();
+
+    ed->refreshFromModel();
+    check (learn->getButtonText() == "LEARN" && colour() == abgui::colours::text,
+           "tickLearn: idle, the button reads LEARN in the text colour");
+
+    const double t0 = fakeNow;
+    learn->onClick();
+    silentBlock();                                   // the start lands at a block top
+    check (a.isLearning() && learn->getButtonText() == "LEARN",
+           "tickLearn: (premise) learning, and nothing on the button has moved yet");
+    ed->refreshFromModel();
+    check (learn->getButtonText() == "5" && colour() == abgui::colours::accent,
+           "tickLearn: a started pass counts down from 5 in the accent");
+    fakeNow = t0 + 2500.0;
+    ed->refreshFromModel();
+    check (learn->getButtonText() == "3", "tickLearn: 2.5 s in, the countdown reads 3");
+    fakeNow = t0 + 4001.0;
+    ed->refreshFromModel();
+    check (learn->getButtonText() == "1", "tickLearn: inside the last second it reads 1");
+
+    fakeNow = t0 + 4999.0;
+    learn->onClick();                                // inside the minimum pass
+    silentBlock();
+    check (a.isLearning(), "tickLearn: a stop inside the 5 s minimum pass is ignored");
+
+    fakeNow = t0 + 5000.0;
+    ed->refreshFromModel();
+    check (learn->getButtonText() == "LEARN" && colour() == abgui::colours::accent,
+           "tickLearn: past the minimum the word returns, still lit while learning");
+
+    learn->onClick();                                // an accepted stop, on silence
+    ed->refreshFromModel();
+    check (colour() == abgui::colours::accent,
+           "tickLearn: (premise) before the block top the pass is still running");
+    silentBlock();
+    silentBlock();
+    check (! a.isLearning() && ! a.hasLearned(),
+           "tickLearn: (premise) the silent pass ended without learning anything");
+    ed->refreshFromModel();
+    check (colour() == abgui::colours::warn, "tickLearn: an empty pass flashes warn");
+    const double flashAt = fakeNow;
+    fakeNow = flashAt + 1499.0;
+    ed->refreshFromModel();
+    check (colour() == abgui::colours::warn, "tickLearn: the flash holds for its 1.5 s");
+    fakeNow = flashAt + 1500.0;
+    ed->refreshFromModel();
+    check (colour() == abgui::colours::text, "tickLearn: …and then returns to the text colour");
+
+    // A pass that moves the reference (the material of
+    // testLearnCommitAndAdaptiveRoundTrip) must NOT flash.
+    const double t1 = fakeNow;
+    learn->onClick();
+    for (int b = 0; b < 500; ++b)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const int t = b * 512 + n;
+            float v = 0.3f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                       * 220.0f * (float) t / 48000.0f);
+            if ((t % 4800) < 96) v += 0.6f;
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+    }
+    fakeNow = t1 + 5000.0;
+    learn->onClick();
+    silentBlock();
+    silentBlock();
+    check (! a.isLearning() && a.hasLearned(), "tickLearn: (premise) the second pass learned");
+    ed->refreshFromModel();
+    check (colour() == abgui::colours::text && learn->getButtonText() == "LEARN",
+           "tickLearn: a pass that moved the reference does not flash");
+}
+
+// T11: undo/redo enablement follows the history, not the constructor's seed.
+static void testTheTickEnablesUndoAndRedo()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickUndo");
+    if (ed == nullptr)
+        return;
+    auto* undo = findButtonByText (*ed, juce::String::charToString ((juce::juce_wchar) 0x21BA));
+    auto* redo = findButtonByText (*ed, juce::String::charToString ((juce::juce_wchar) 0x21BB));
+    check (undo != nullptr && redo != nullptr, "tickUndo: (premise) both glyph buttons were found");
+    if (undo == nullptr || redo == nullptr)
+        return;
+    check (! undo->isEnabled() && ! redo->isEnabled(),
+           "tickUndo: (premise) a fresh history opens with both disabled");
+
+    auto* knee = proc.apvts.getParameter (pid::compKnee);
+    knee->beginChangeGesture();
+    knee->setValueNotifyingHost (knee->getNormalisableRange().convertTo0to1 (9.0f));
+    knee->endChangeGesture();
+    proc.flushPendingDetach();
+    check (proc.canUndo() && ! undo->isEnabled(),
+           "tickUndo: (premise) a step was pushed and the button has not followed yet");
+    ed->refreshFromModel();
+    check (undo->isEnabled() && ! redo->isEnabled(), "tickUndo: the tick enables undo");
+
+    proc.undo();
+    check (proc.canRedo() && ! redo->isEnabled(),
+           "tickUndo: (premise) undone, and redo has not followed yet");
+    ed->refreshFromModel();
+    check (! undo->isEnabled() && redo->isEnabled(), "tickUndo: …and swaps to redo after an undo");
+}
+
+// T12: the Advanced view's per-stage GR lanes — right stage, right channel.
+// The two channels are driven to DIFFERENT reductions (unequal levels), so a
+// swap of the lanes or of the stages cannot pass.
+static void testTheTickFeedsTheAdvancedGrLanes()
+{
+    AnabasisAudioProcessor proc;
+    proc.apvts.getParameter (pid::advancedMode)->setValueNotifyingHost (1.0f);
+    proc.prepareToPlay (48000.0, 512);
+    auto set = [&proc] (const char* id, float denorm)
+    {
+        auto* par = proc.apvts.getParameter (id);
+        par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (denorm));
+    };
+    set (pid::compStereoLink, 0.0f);
+    set (pid::stereoLink,     0.0f);
+    set (pid::compThreshold,  -30.0f);
+    set (pid::limGain,        18.0f);
+    juce::AudioBuffer<float> buf (2, 512);
+    juce::MidiBuffer midi;
+    for (int b = 0; b < 60; ++b)
+    {
+        for (int n = 0; n < 512; ++n)
+        {
+            const int t = b * 512 + n;
+            buf.setSample (0, n, 0.25f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                   * 220.0f * (float) t / 48000.0f));
+            buf.setSample (1, n, 0.20f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                   * 330.0f * (float) t / 48000.0f));
+        }
+        proc.processBlock (buf, midi);
+    }
+    const float c0 = proc.meterCompGrDbCh (0), c1 = proc.meterCompGrDbCh (1);
+    const float l0 = proc.meterLimGrDbCh (0),  l1 = proc.meterLimGrDbCh (1);
+    {
+        juce::String msg;
+        msg << "tickGr: (premise) both stages reduce on both channels, differently (comp "
+            << c0 << "/" << c1 << ", lim " << l0 << "/" << l1 << " dB)";
+        check (c0 < -0.5f && c1 < -0.5f && l0 < -0.5f && l1 < -0.5f
+                 && std::abs (c0 - c1) > 0.1f && std::abs (l0 - l1) > 0.1f
+                 && std::abs (c0 - l0) > 0.1f && std::abs (c1 - l1) > 0.1f,
+               msg.toRawUTF8());
+    }
+
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickGr");
+    if (ed == nullptr)
+        return;
+    auto* comp = dynamic_cast<GrMiniMeter*> (ed->findChildWithID ("compGrMeter"));
+    auto* lim  = dynamic_cast<GrMiniMeter*> (ed->findChildWithID ("limGrMeter"));
+    check (comp != nullptr && lim != nullptr, "tickGr: (premise) both GR mini-meters were found");
+    if (comp == nullptr || lim == nullptr)
+        return;
+    check (juce::exactlyEqual (comp->shownDb (0), 0.0f) && juce::exactlyEqual (lim->shownDb (1), 0.0f),
+           "tickGr: (premise) the lanes are empty before the first tick");
+    ed->refreshFromModel();
+    check (juce::exactlyEqual (comp->shownDb (0), c0) && juce::exactlyEqual (comp->shownDb (1), c1),
+           "tickGr: the COMP lanes carry the compressor's per-channel reduction");
+    check (juce::exactlyEqual (lim->shownDb (0), l0) && juce::exactlyEqual (lim->shownDb (1), l1),
+           "tickGr: the LIMIT lanes carry the limiter's per-channel reduction");
+    check (! comp->isMono() && ! lim->isMono(), "tickGr: a stereo layout draws two lanes");
+}
+
+// T14: the graph well's GR/SPEC flip follows `int_spectrumOn`, including an
+// editor opened on SPEC (the seed the cache has to take from the tree). No
+// scale or mode change here: both relayouts flip the views too, and would
+// hide a tick that stopped doing it.
+static void testTheTickFlipsTheGraphWell()
+{
+    {
+        AnabasisAudioProcessor proc;
+        std::unique_ptr<juce::AudioProcessorEditor> base;
+        auto* ed = openTickEditor (proc, base, "tickGraph");
+        if (ed == nullptr)
+            return;
+        auto* spec = findFirstChildOfType<SpectrumView> (*ed);
+        auto* gr   = findFirstChildOfType<GrHistoryView> (*ed);
+        check (spec != nullptr && gr != nullptr && gr->isVisible() && ! spec->isVisible(),
+               "tickGraph: (premise) both views exist and GR is the default");
+        if (spec == nullptr || gr == nullptr)
+            return;
+        auto& tree = proc.internalState.state();
+        tree.setProperty (iid::spectrumOn, true, nullptr);
+        check (gr->isVisible() && ! spec->isVisible(),
+               "tickGraph: (premise) the tree write alone flips nothing");
+        ed->refreshFromModel();
+        check (spec->isVisible() && ! gr->isVisible(), "tickGraph: the tick shows the spectrum");
+        tree.setProperty (iid::spectrumOn, false, nullptr);
+        ed->refreshFromModel();
+        check (gr->isVisible() && ! spec->isVisible(), "tickGraph: …and flips back to GR");
+    }
+    {
+        AnabasisAudioProcessor proc;
+        auto& tree = proc.internalState.state();
+        tree.setProperty (iid::spectrumOn, true, nullptr);
+        std::unique_ptr<juce::AudioProcessorEditor> base;
+        auto* ed = openTickEditor (proc, base, "tickGraph (SPEC seed)");
+        if (ed == nullptr)
+            return;
+        auto* spec = findFirstChildOfType<SpectrumView> (*ed);
+        auto* gr   = findFirstChildOfType<GrHistoryView> (*ed);
+        check (spec != nullptr && gr != nullptr && spec->isVisible() && ! gr->isVisible(),
+               "tickGraph: (premise) an editor opened on SPEC shows the spectrum");
+        if (spec == nullptr || gr == nullptr)
+            return;
+        tree.setProperty (iid::spectrumOn, false, nullptr);
+        ed->refreshFromModel();
+        check (gr->isVisible() && ! spec->isVisible(),
+               "tickGraph: switching an editor opened on SPEC back to GR reaches the screen");
+    }
+}
+
+// T15: the Simple view's edited dot — shown while any knob is off its macro,
+// never in Advanced (per-control badges there), and restored on the way back
+// to Simple with the mask unchanged.
+static void testTheTickShowsTheEditedDot()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tickDot");
+    if (ed == nullptr)
+        return;
+    auto* dot = ed->findChildWithID ("editedDot");
+    check (dot != nullptr, "tickDot: (premise) the edited dot was found");
+    if (dot == nullptr)
+        return;
+    ed->refreshFromModel();
+    check (! dot->isVisible() && proc.detachMask().isEmpty(),
+           "tickDot: (premise) the default state shows no dot");
+
+    auto* limGain = proc.apvts.getParameter (pid::limGain);
+    auto detach = [&proc, limGain] (float db)
+    {
+        limGain->beginChangeGesture();
+        limGain->setValueNotifyingHost (limGain->getNormalisableRange().convertTo0to1 (db));
+        limGain->endChangeGesture();
+        proc.flushPendingDetach();
+    };
+    detach (2.5f);
+    check (! proc.detachMask().isEmpty() && ! dot->isVisible(),
+           "tickDot: (premise) a gestured edit detached a knob; the dot has not followed yet");
+    ed->refreshFromModel();
+    check (dot->isVisible(), "tickDot: the tick shows the edited dot in Simple");
+
+    proc.resetToMacro();
+    proc.flushPendingDetach();
+    check (proc.detachMask().isEmpty(), "tickDot: (premise) back to the macro sound");
+    ed->refreshFromModel();
+    check (! dot->isVisible(), "tickDot: …and hides it once every knob is back on its macro");
+
+    auto* adv = proc.apvts.getParameter (pid::advancedMode);
+    adv->setValueNotifyingHost (1.0f);
+    ed->refreshFromModel();                          // T0 applies the switch
+    detach (4.0f);
+    ed->refreshFromModel();
+    check (! proc.detachMask().isEmpty() && ! dot->isVisible(),
+           "tickDot: an edit made in Advanced does not show the Simple dot there");
+
+    adv->setValueNotifyingHost (0.0f);
+    ed->refreshFromModel();
+    check (dot->isVisible(),
+           "tickDot: returning to Simple with the mask unchanged shows the dot again");
+}
+
+// The tooltip switch's gate (`GatedTooltipWindow`), pinned through its
+// predicate rather than `getTipFor`: JUCE's `TooltipWindow` returns no tip
+// unless the process is in the foreground, which a test process never is, so
+// a check made through `getTipFor` would pass with the gate deleted. The
+// switch is driven the way a project load drives it — a tree write, then the
+// `juce::Value` delivery the message loop would make, dispatched here
+// synchronously — which is the path that reaches `onStateChange` and never
+// `onClick`.
+static void testTheTooltipSwitchGatesEveryTip()
+{
+    AnabasisAudioProcessor proc;
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "tooltipGate");
+    if (ed == nullptr)
+        return;
+    auto* toggle = findButtonByText (*ed, "Tooltips");
+    check (toggle != nullptr, "tooltipGate: (premise) the Tooltips switch was found");
+    if (toggle == nullptr)
+        return;
+    check (! toggle->getToggleState() && ! ed->tooltipGateOpen(),
+           "tooltipGate: the shipped default (tooltips off) keeps the gate closed");
+
+    auto deliver = [toggle] { toggle->getToggleStateValue().getValueSource().sendChangeMessage (true); };
+    auto& tree = proc.internalState.state();
+    tree.setProperty (iid::tooltipsOn, true, nullptr);
+    check (! ed->tooltipGateOpen(), "tooltipGate: (premise) the tree write alone opens nothing");
+    deliver();
+    check (toggle->getToggleState() && ed->tooltipGateOpen(),
+           "tooltipGate: switching tooltips on through the stored value opens the gate");
+    tree.setProperty (iid::tooltipsOn, false, nullptr);
+    deliver();
+    check (! toggle->getToggleState() && ! ed->tooltipGateOpen(),
+           "tooltipGate: …and switching them off closes it");
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0020 amendment 4 through the wrapper (audit VIS-001 / VIS-009). A
+// realtime BYPASS audition of an input that peaks well above the ceiling
+// stays out of the session figures — the TP and SP holds, the integrated
+// reading and the session duration — while an OFFLINE render measures the
+// bypassed audio like everything else, because it is part of the file. The
+// rolling readings follow what plays either way.
+static void testABypassAuditionStaysOutOfTheSessionFigures()
+{
+    struct R { float tp, sp, i, secs, sDuring; };
+    auto run = [] (bool offline, bool audition) -> R
+    {
+        AnabasisAudioProcessor proc;
+        proc.setNonRealtime (offline);
+        proc.prepareToPlay (48000.0, 512);
+        auto* ceil = proc.apvts.getParameter (pid::ceiling);
+        ceil->setValueNotifyingHost (ceil->getNormalisableRange().convertTo0to1 (-6.0f));
+        auto* bypass = proc.apvts.getParameter (pid::bypass);
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        R r {};
+        long t = 0;
+        for (int b = 0; b < 480; ++b)                      // 5.1 s: 2 s, 1.1 s audition, 2 s
+        {
+            if (audition && b == 188) bypass->setValueNotifyingHost (1.0f);
+            if (audition && b == 290) bypass->setValueNotifyingHost (0.0f);
+            for (int n = 0; n < 512; ++n, ++t)
+            {
+                const float v = 0.95f * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                  * 997.0f * (float) t / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+            if (b == 280) r.sDuring = proc.meterLufsM();   // 400 ms, all inside the audition
+        }
+        r.tp = proc.meterDbTpMax();
+        r.sp = proc.meterPeakMaxDb();
+        r.i = proc.meterLufsI();
+        r.secs = proc.meterSessionSeconds();
+        return r;
+    };
+    const auto plain = run (false, false), live = run (false, true), bounce = run (true, true);
+    std::printf ("       sessionScope: M during %.2f / %.2f, SP %.2f / %.2f / %.2f, TP %.2f / %.2f, I %.2f / %.2f / %.2f, secs %.3f / %.3f / %.3f\n",
+                 plain.sDuring, live.sDuring, plain.sp, live.sp, bounce.sp, plain.tp, live.tp,
+                 plain.i, live.i, bounce.i, plain.secs, live.secs, bounce.secs);
+    check (plain.sp <= -6.0f + 0.01f && plain.sDuring > -12.0f,
+           "sessionScope: (premise) the processed programme sits at the -6 dB ceiling");
+    check (live.sDuring > plain.sDuring + 3.0f,
+           "sessionScope: the rolling momentary reading follows the bypassed input while it plays");
+    check (live.sp <= -6.0f + 0.01f && live.tp <= plain.tp + 0.01f,
+           "sessionScope: a realtime bypass audition leaves the SP and TP holds at the processed programme's");
+    check (std::abs (live.i - plain.i) < 0.3f,
+           "sessionScope: …and the integrated reading at the processed programme's");
+    check (bounce.sp > -1.0f && bounce.i > plain.i + 1.0f,
+           "sessionScope: offline, the bypassed audio is part of the file and is measured");
+    const float auditionSecs = 102.0f * 512.0f / 48000.0f;
+    check (std::abs ((plain.secs - live.secs) - auditionSecs) < 0.03f,
+           "sessionScope: the session duration stops for the audition (to within its 10 ms ramps)");
+    check (std::abs (bounce.secs - plain.secs) < 1.0e-3f,
+           "sessionScope: …and runs through a bypass in an offline render");
+}
+
+// The session duration's life cycle (VIS-009): it counts measured audio, is 0
+// after a reset with no audio flowing, after a state load and after a
+// prepare, and is NOT reset by the things that do not reset the session
+// figures either — an A/B switch or a preset apply.
+static void testTheSessionDurationFollowsTheSessionFigures()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    auto feed = [&] (int blocks)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                buf.setSample (0, n, 0.1f);
+                buf.setSample (1, n, -0.1f);
+            }
+            proc.processBlock (buf, midi);
+        }
+    };
+    feed (375);                                        // 4.0 s
+    check (std::abs (proc.meterSessionSeconds() - 4.0f) < 1.0e-3f,
+           "sessionTime: counts the processed seconds (375 blocks of 512 at 48 kHz = 4.0 s)");
+    proc.switchToSlot (1);
+    feed (1);
+    proc.applyFactoryPreset (2);
+    feed (1);
+    check (proc.meterSessionSeconds() > 4.0f,
+           "sessionTime: an A/B switch and a preset apply do not reset it (nor the session figures)");
+    proc.requestMeterReset();
+    check (juce::exactlyEqual (proc.meterSessionSeconds(), 0.0f),
+           "sessionTime: a reset publishes 0 with no audio flowing");
+    feed (47);
+    check (std::abs (proc.meterSessionSeconds() - 47.0f * 512.0f / 48000.0f) < 1.0e-3f,
+           "sessionTime: …and counts from the reset");
+    juce::MemoryBlock state;
+    proc.getStateInformation (state);
+    proc.setStateInformation (state.getData(), (int) state.getSize());
+    check (juce::exactlyEqual (proc.meterSessionSeconds(), 0.0f),
+           "sessionTime: a state load publishes 0");
+    feed (10);
+    proc.prepareToPlay (48000.0, 512);
+    check (juce::exactlyEqual (proc.meterSessionSeconds(), 0.0f),
+           "sessionTime: a prepare publishes 0");
+
+    check (LoudnessMeterView::sessionTimeText (0.0f) == "0:00"
+             && LoudnessMeterView::sessionTimeText (59.99f) == "0:59"
+             && LoudnessMeterView::sessionTimeText (61.0f) == "1:01"
+             && LoudnessMeterView::sessionTimeText (3599.9f) == "59:59"
+             && LoudnessMeterView::sessionTimeText (3725.5f) == "1:02:05"
+             && LoudnessMeterView::sessionTimeText (-3.0f) == "0:00",
+           "sessionTime: whole seconds, never rounded up; m:ss, then h:mm:ss from an hour");
+}
+
+// The PUBLISHED session length — `pubSessionSecs`, which the STATISTICS header
+// shows through `sessionTimeText` — is the engine's open-frame count at the
+// wrapper's own rate, exactly: every frame at which no part of a realtime
+// bypass was audible, from the first open frame after a resume or a RESET,
+// and every frame of an offline render (ADR-0020 amendment 4 item 3). It is
+// NOT the audio the integrated reading has admitted: after a resume, as after
+// a reset, the first gating block starts 100-200 ms in (the meter's
+// watermark), and the published length counts those frames — the review item
+// "Session clock includes unmeasured return audio" (LoudnessMeter.h:205),
+// kept by design and stated in USER_MANUAL.md §3.4. Driven through
+// processBlock in lockstep with a second processor that never bypasses; the
+// audible bypass frames are read off the two outputs (MATCH and DELTA are
+// off, so the buffer is the render tap). The engine-level twin, to the frame,
+// is AnabasisTests' `testTheSessionClockCountsTheOpenFramesNotTheAdmittedAudio`.
+static void testThePublishedSessionLengthIsTheOpenFrames()
+{
+    const double sr = 44100.0;
+    const int B = 512, L = 4410, N = 441;                // 100 ms sub-block, 10 ms bypass ramp at 44.1 kHz
+    struct Pair
+    {
+        AnabasisAudioProcessor a, b;
+        juce::MidiBuffer midi;
+        int64_t t = 0, open = 0, pauseStart = -1, lastResume = -1, lastPause = 0;
+        float spModel = 0.0f;
+        bool prevOpen = true;
+    };
+    auto setUp = [&] (Pair& q, bool offline)
+    {
+        for (auto* proc : { &q.a, &q.b })
+        {
+            proc->setNonRealtime (offline);
+            proc->prepareToPlay (sr, B);
+            auto* ceil = proc->apvts.getParameter (pid::ceiling);
+            ceil->setValueNotifyingHost (ceil->getNormalisableRange().convertTo0to1 (-6.0f));
+        }
+    };
+    auto bypass = [] (Pair& q, bool on) { q.a.apvts.getParameter (pid::bypass)->setValueNotifyingHost (on ? 1.0f : 0.0f); };
+    auto blocks = [&] (Pair& q, int count, const std::function<void()>& afterEach)
+    {
+        for (int k = 0; k < count; ++k)
+        {
+            juce::AudioBuffer<float> x (2, B), y (2, B);
+            for (int n = 0; n < B; ++n)
+            {
+                const double w = juce::MathConstants<double>::twoPi * (double) (q.t + n) / sr;
+                const float l = 0.62f * (float) std::sin (997.0 * w) + 0.27f * (float) std::sin (61.7 * w);
+                const float r = 0.55f * (float) std::sin (1499.0 * w + 0.3) + 0.3f * (float) std::sin (83.1 * w);
+                x.setSample (0, n, l); x.setSample (1, n, r);
+                y.setSample (0, n, l); y.setSample (1, n, r);
+            }
+            q.a.processBlock (x, q.midi);
+            q.b.processBlock (y, q.midi);
+            for (int n = 0; n < B; ++n, ++q.t)
+            {
+                const bool same = juce::exactlyEqual (x.getSample (0, n), y.getSample (0, n))
+                               && juce::exactlyEqual (x.getSample (1, n), y.getSample (1, n));
+                const bool isOpen = q.a.isNonRealtime() || same;
+                if (isOpen)
+                {
+                    ++q.open;
+                    q.spModel = juce::jmax (q.spModel, std::abs (x.getSample (0, n)), std::abs (x.getSample (1, n)));
+                }
+                if (! isOpen && q.prevOpen)
+                    q.pauseStart = q.t;
+                if (isOpen && ! q.prevOpen)
+                {
+                    q.lastResume = q.t;
+                    q.lastPause  = q.t - q.pauseStart;
+                }
+                q.prevOpen = isOpen;
+            }
+            if (afterEach)
+                afterEach();
+        }
+    };
+    auto secs = [sr] (int64_t frames) { return (float) ((double) frames / sr); };
+
+    auto q = std::make_unique<Pair>();
+    setUp (*q, false);
+    blocks (*q, 173, {});                                           // ~2.0 s
+    check (juce::exactlyEqual (q->a.meterSessionSeconds(), secs (q->t)) && q->open == q->t,
+           "publishedClock: normal processing publishes every processed frame, exactly");
+
+    // A realtime audition: the published length does not move in any block
+    // of it, the opening ramp's included.
+    const int64_t onAt = q->t;
+    const float atOn = q->a.meterSessionSeconds();
+    bool frozen = true;
+    bypass (*q, true);
+    blocks (*q, 86, [&] { frozen = frozen && juce::exactlyEqual (q->a.meterSessionSeconds(), atOn); });
+    check (frozen, "publishedClock: the published length stands still in every block of a realtime audition");
+    const int64_t offAt = q->t;
+    bypass (*q, false);
+    blocks (*q, 130, {});
+    const int64_t rampOut = q->lastResume - offAt;
+    check (rampOut >= N - 1 && rampOut <= N && q->lastPause == (offAt - onAt) + rampOut,
+           "publishedClock: (premise) the audible run is the toggle span plus the ~10 ms release ramp, read off the audio");
+    check (juce::exactlyEqual (q->a.meterSessionSeconds(), secs (q->open)) && q->open == q->t - q->lastPause,
+           "publishedClock: after the resume it is the open frames, exactly — the audition and its ramps are not on it");
+    check (LoudnessMeterView::sessionTimeText (q->a.meterSessionSeconds())
+             == LoudnessMeterView::sessionTimeText ((float) std::floor ((double) q->open / sr)),
+           "publishedClock: the header shows the whole seconds of the open frames");
+    check (juce::exactlyEqual (q->a.meterPeakMaxDb(), juce::Decibels::gainToDecibels (q->spModel, -144.0f))
+             && q->a.meterPeakMaxDb() < -5.99f,
+           "publishedClock: the published SP hold is the peak of exactly the frames the length counts");
+
+    // A RESET inside an audition, then the resume: the length is 0 at once
+    // and through the audition, then counts every open frame — including the
+    // 100-200 ms before the integrated reading admits its first block.
+    bypass (*q, true);
+    blocks (*q, 20, {});
+    q->a.requestMeterReset();
+    const bool zeroAtOnce = juce::exactlyEqual (q->a.meterSessionSeconds(), 0.0f);
+    bool zeroThrough = true;
+    blocks (*q, 20, [&] { zeroThrough = zeroThrough && juce::exactlyEqual (q->a.meterSessionSeconds(), 0.0f); });
+    check (zeroAtOnce && zeroThrough, "publishedClock: a reset inside an audition publishes 0, and 0 it stays while the audition lasts");
+    const int64_t openAtReset = q->open;
+    bypass (*q, false);
+    bool exactThroughout = true;
+    int64_t lastSilent = -1, firstLive = -1;
+    blocks (*q, 130, [&]
+    {
+        const int64_t sinceReset = q->open - openAtReset;
+        exactThroughout = exactThroughout && juce::exactlyEqual (q->a.meterSessionSeconds(), secs (sinceReset));
+        const bool live = q->a.meterLufsI() > anabasis::LoudnessMeter::kSilentLufs;
+        if (! live) lastSilent = sinceReset;
+        else if (firstLive < 0) firstLive = sinceReset;
+    });
+    const int64_t res = q->lastResume;
+    const int64_t fc = res / L + (res % L != 0 ? 1 : 0) + 1;       // LoudnessMeter::firstCleanSubBlock
+    const int64_t expectI = (fc + 4) * L - res;
+    check (exactThroughout, "publishedClock: after the resume it publishes the open frames since the reset, exactly, every block");
+    check (lastSilent >= 0 && lastSilent < expectI && firstLive >= expectI && firstLive - B < expectI,
+           "publishedClock: I reads nothing until the block holding the resume watermark's first admitted frame");
+    check (secs (lastSilent) > 0.4f,
+           "publishedClock: …so the header had counted more than the 400 ms a gating block covers before I read anything");
+
+    // OFFLINE: the bypass is part of the file, so every frame is published.
+    auto o = std::make_unique<Pair>();
+    setUp (*o, true);
+    blocks (*o, 86, {});
+    bypass (*o, true);
+    blocks (*o, 43, {});
+    bypass (*o, false);
+    blocks (*o, 86, {});
+    check (juce::exactlyEqual (o->a.meterSessionSeconds(), secs (o->t)) && o->a.meterPeakMaxDb() > -1.5f,
+           "publishedClock: an offline render publishes every frame, the bypassed ones included, and measures them");
+
+    std::printf ("       publishedClock: 44.1 kHz/512: release ramp %lld frames; after a reset in an audition the header "
+                 "counted %.3f s with I still empty (first I block at %.3f s of clock)\n",
+                 (long long) rampOut, (double) lastSilent / sr, (double) expectI / sr);
+}
+
+// UX-002: the STATISTICS panel's body is inert and RESET is the one control.
+// Until 0.2.14 any mouse-down anywhere on the panel — a right-click, the start
+// of a drag, a click on the empty glass under the rows — discarded the
+// session. Driven on a constructed view (no editor, no message loop): the
+// events are the ones a click delivers, and a JUCE Button fires on the
+// mouse-up of a press that began on it, synchronously.
+static void testTheStatisticsPanelResetsOnlyFromItsResetControl()
+{
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    auto feed = [&] (float amp, int blocks)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n)
+            {
+                const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi
+                                                * 997.0f * (float) (b * 512 + n) / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+        }
+    };
+    feed (0.5f, 600);                                   // 6.4 s: the session figures exist
+    const float tp0 = proc.meterDbTpMax(), i0 = proc.meterLufsI(), lra0 = proc.meterLra();
+    check (tp0 > -10.0f && i0 > -20.0f, "statsReset: (premise) the session holds are raised");
+
+    auto source = juce::Desktop::getInstance().getMainMouseSource();
+    auto event = [&] (juce::Component& c, juce::Point<float> pos, juce::ModifierKeys mods, int clicks, bool dragged)
+    {
+        const auto now = juce::Time::getCurrentTime();
+        return juce::MouseEvent (source, pos, mods, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c,
+                                 now, pos, now, clicks, dragged);
+    };
+    for (const auto size : { juce::Point<int> (292, 530), juce::Point<int> (300, 254) })
+    {
+        LoudnessMeterView view (proc);
+        view.setBounds (0, 0, size.x, size.y);
+        view.setVisible (true);                          // hit-testing skips an invisible component
+        const juce::String where = size.y > 300 ? "Simple" : "Advanced";
+
+        auto* reset = findButtonByText (view, "RESET");
+        check (reset != nullptr && reset == &view.resetControl(),
+               ("statsReset: (" + where + ") the panel carries a RESET button").toRawUTF8());
+        if (reset == nullptr)
+            return;
+        check (reset->getBottom() <= 28 && reset->getRight() <= size.x - 12 && reset->getY() >= 0,
+               ("statsReset: (" + where + ") RESET sits on the header line, above the first row").toRawUTF8());
+        check (reset->getTitle() == "Reset statistics" && reset->getWantsKeyboardFocus(),
+               ("statsReset: (" + where + ") RESET is named for assistive tech and focusable").toRawUTF8());
+        check (view.getComponentAt (reset->getBounds().getCentre()) == reset,
+               ("statsReset: (" + where + ") a click on RESET reaches RESET, not the panel").toRawUTF8());
+
+        // The body: a row point and the empty glass below the rows.
+        const juce::Point<int> body[] = { { 150, 60 }, { 150, size.y - 12 } };
+        const auto left  = juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier);
+        const auto right = juce::ModifierKeys (juce::ModifierKeys::rightButtonModifier);
+        for (const auto pt : body)
+        {
+            check (view.getComponentAt (pt) == &view,
+                   ("statsReset: (" + where + ") the body is the panel itself, not a control").toRawUTF8());
+            const auto p = pt.toFloat();
+            view.mouseDown (event (view, p, left, 1, false));
+            view.mouseUp (event (view, p, {}, 1, false));
+            view.mouseDown (event (view, p, right, 1, false));
+            view.mouseUp (event (view, p, {}, 1, false));
+            view.mouseDown (event (view, p, left, 2, false));
+            view.mouseDoubleClick (event (view, p, left, 2, false));
+            view.mouseDown (event (view, p, left, 1, false));
+            view.mouseDrag (event (view, p + juce::Point<float> (0.0f, 30.0f), left, 1, true));
+            view.mouseUp (event (view, p + juce::Point<float> (0.0f, 30.0f), {}, 1, true));
+        }
+        // The panel's own tip must not send the user to a body that is inert.
+        // A truth about the text, not its words: those are OQ-018's.
+        check (view.getTooltip().isNotEmpty() && ! view.getTooltip().containsIgnoreCase ("click"),
+               ("statsReset: (" + where + ") the panel's tooltip does not tell the user to click it").toRawUTF8());
+        feed (0.5f, 2);                                  // a block top would consume a pending reset
+        check (proc.meterDbTpMax() >= tp0 - 0.01f && proc.meterLufsI() > i0 - 0.5f
+                 && proc.meterLra() >= lra0 - 0.5f,
+               ("statsReset: (" + where + ") clicks, right-clicks, double-clicks and drags on the body reset nothing").toRawUTF8());
+    }
+
+    // The control does reset — pressed the way a pointer presses it. Drained
+    // first, as in testMeterResetClearsSessionHolds: the lookahead line still
+    // holds ~10 ms of the loud tone, which is programme and would re-raise the
+    // holds after the reset.
+    feed (0.005f, 8);
+    LoudnessMeterView view (proc);
+    view.setBounds (0, 0, 292, 530);
+    auto& reset = view.resetControl();
+    const auto centre = reset.getLocalBounds().getCentre().toFloat();
+    auto& asComponent = static_cast<juce::Component&> (reset);   // Button's overrides are protected
+    asComponent.mouseDown (event (reset, centre, juce::ModifierKeys (juce::ModifierKeys::leftButtonModifier), 1, false));
+    asComponent.mouseUp (event (reset, centre, {}, 1, false));
+    check (proc.meterDbTpMax() < -100.0f && juce::exactlyEqual (proc.meterLufsI(), anabasis::LoudnessMeter::kSilentLufs)
+             && juce::exactlyEqual (proc.meterSessionSeconds(), 0.0f),
+           "statsReset: pressing RESET clears the holds, the integrated reading and the session duration");
+    feed (0.005f, 400);
+    check (proc.meterDbTpMax() < -40.0f,
+           "statsReset: …and the session then describes only what followed");
+}
+
+// The review case the test above drains away (the PR #42 review of 0.2.15):
+// RESET pressed straight after a loud passage, NOT drained, then silence. The
+// processor's own request/consume path and its published dBTP hold, TP on and
+// off: the loud programme ends at the OUTPUT exactly at the reset (its input
+// stops one reported latency earlier), and the old peak must not come back
+// into the new session — the only reading a post-reset position may carry is
+// the real waveform's tail there, at most 0.2504 of the old sample peak.
+static void testResetRightAfterALoudPassageKeepsTheOldPeakOut()
+{
+    for (const bool tpOn : { false, true })
+    {
+        AnabasisAudioProcessor proc;
+        proc.apvts.getParameter (pid::truePeakMode)->setValueNotifyingHost (tpOn ? 1.0f : 0.0f);
+        proc.prepareToPlay (48000.0, 512);
+        juce::MidiBuffer midi;
+        juce::AudioBuffer<float> buf (2, 512);
+        const int64_t resetAt = (int64_t) 188 * 512;
+        const int64_t lat     = proc.getLatencySamples();
+        auto run = [&] (int64_t from, int blocks)
+        {
+            for (int b = 0; b < blocks; ++b)
+            {
+                const int64_t base = from + (int64_t) b * 512;
+                for (int n = 0; n < 512; ++n)
+                {
+                    const int64_t i = base + n;
+                    const float v = i < resetAt - lat
+                                        ? 1.0f * std::sin (0.5f * juce::MathConstants<float>::pi * (float) i + 0.25f * juce::MathConstants<float>::pi)
+                                        : 0.0f;
+                    buf.setSample (0, n, v);
+                    buf.setSample (1, n, v);
+                }
+                proc.processBlock (buf, midi);
+            }
+        };
+        run (0, 188);
+        const float tpBefore = proc.meterDbTpMax(), spBefore = proc.meterPeakMaxDb();
+        check (tpBefore > -1.0f, "statsResetLoud: (premise) the loud passage raised the dBTP hold to the ceiling");
+        proc.requestMeterReset();                         // consumed at the next block top
+        run (resetAt, 96);                                // ~1 s of silence at the output
+        check (proc.meterDbTpMax() <= spBefore - 12.0f,
+               tpOn ? "statsResetLoud (TP on): RESET after a loud passage keeps the old peak out of the new dBTP hold"
+                    : "statsResetLoud (TP off): RESET after a loud passage keeps the old peak out of the new dBTP hold");
+        check (proc.meterPeakMaxDb() < -100.0f, "statsResetLoud: the sample-peak hold starts empty");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The numeric limiter GR readout (audit VIS-007 / VIS-003 step 1), on a
+// standalone ring first: "now" is the deepest entry over the last 0.3 s; the
+// max is the deepest entry of the history the GRAPH DRAWS at the reading's
+// head — `[buckets (head, windowEntries, cols).first, head)` on either well,
+// the still-collecting newest bucket included — both the brute-force minima
+// of their spans; an empty or cleared timeline reads "nothing measured"; a
+// scan the producer laps is never published and a scan it pushes into within
+// the margin still is, both pinned with a DETERMINISTIC producer (a ring
+// adaptor that pushes at one chosen peek: no thread, so no premise that
+// depends on the scheduler — valgrind serialises threads); the stall rule and
+// the formatter.
+namespace grReadoutFixture
+{
+    using Ring = anabasis::GrHistoryBuffer;
+
+    // Forwards to a real ring; at the scan's peek of absolute index `at` it
+    // first runs the producer for `burst` pushes of `value` — the interleaving
+    // a concurrent producer creates, at an exact entry. `lappedPeeks` counts
+    // peeks that returned a slot the producer had already overwritten.
+    struct PushingRing
+    {
+        Ring&   ring;
+        int64_t at    = -1;
+        int64_t burst = 0;
+        float   value = -40.0f;                         // deeper than the programme: a torn read shows
+        mutable bool    fired       = false;
+        mutable int64_t lappedPeeks = 0;
+        uint32_t       resetEpoch() const noexcept             { return ring.resetEpoch(); }
+        Ring::Prepared prepared()   const noexcept             { return ring.prepared(); }
+        int64_t        available()  const noexcept             { return ring.available(); }
+        bool           batchIntact (uint32_t e) const noexcept { return ring.batchIntact (e); }
+        Ring::Entry peek (int64_t n) const noexcept
+        {
+            if (n == at && ! fired)
+            {
+                fired = true;
+                for (int64_t i = 0; i < burst; ++i)
+                    ring.push (value, 0.1f);
+            }
+            if (ring.available() > n + (int64_t) Ring::kSize)
+                ++lappedPeeks;
+            return ring.peek (n);
+        }
+    };
+
+    inline float programme (int64_t i)                  // 0 … −11.99 dB, a hash of the index
+    {
+        uint32_t x = (uint32_t) i * 2654435761u + 12345u;
+        x ^= x >> 15; x *= 2246822519u; x ^= x >> 13;
+        return -(float) (x % 1200u) / 100.0f;
+    }
+    inline float minOver (int64_t from, int64_t to)
+    {
+        float m = 0.0f;
+        for (int64_t e = juce::jmax ((int64_t) 0, from); e < to; ++e)
+            m = juce::jmin (m, programme (e));
+        return m;
+    }
+    inline void refill (Ring& ring, double rate, int block, int64_t count, int64_t deepAt = -1)
+    {
+        ring.prepare (rate + 1.0, block);               // a changed pair: a clear
+        ring.prepare (rate, block);
+        for (int64_t i = 0; i < count; ++i)
+            ring.push (deepAt < 0 ? programme (i) : (i == deepAt ? -12.0f : 0.0f), 0.1f);
+    }
+}
+
+static void testTheGrReadoutReadsTheRingItNames()
+{
+    using namespace grReadoutFixture;
+    using V = GrHistoryView;
+    constexpr int kSimpleCols = 904, kAdvancedCols = 604;
+    check (V::plotColumns ({ 0, 0, 924, 108 }) == kSimpleCols && V::plotColumns ({ 0, 0, 624, 254 }) == kAdvancedCols,
+           "grReadout: (premise) the Simple and Advanced wells plot 904 and 604 columns");
+    auto ring = std::make_unique<Ring>();               // 2 MiB of slots: heap, as the other ring tests
+    {
+        ring->prepare (48000.0, 512);
+        const auto r = V::readingFrom (*ring, kSimpleCols);
+        check (r.taken && r.head == 0 && V::readoutStale (r.head, 0.0, r.period),
+               "grReadout: an empty timeline is read, and reads as nothing measured");
+    }
+    {
+        refill (*ring, 48000.0, 512, 0);
+        const int64_t nNow = V::readoutCurrentEntries (48000.0, 512);
+        check (nNow == 29, "grReadout: 'now' spans the last 0.3 s - 29 entries at 48 kHz / 512");
+        for (int i = 0; i < 100; ++i) ring->push (0.0f, 0.1f);
+        ring->push (-12.0f, 0.1f);
+        for (int64_t i = 0; i < nNow - 1; ++i) ring->push (0.0f, 0.1f);
+        auto r = V::readingFrom (*ring, kSimpleCols);
+        check (r.taken && juce::exactlyEqual (r.currentDb, -12.0f),
+               "grReadout: the oldest entry of the 0.3 s span is inside 'now'");
+        ring->push (0.0f, 0.1f);
+        r = V::readingFrom (*ring, kSimpleCols);
+        check (juce::exactlyEqual (r.currentDb, 0.0f) && juce::exactlyEqual (r.peakDb, -12.0f),
+               "grReadout: one entry later it has left 'now' and is still the window max");
+        ring->reset();
+        r = V::readingFrom (*ring, kSimpleCols);
+        check (r.taken && r.head == 0, "grReadout: a cleared ring reads as nothing measured");
+    }
+
+    // THE CONTRACT: the max is the deepest entry of what the graph draws. At
+    // every head residue of a bucket, a lone deep entry at the graph's OLDEST
+    // drawn index counts, one index older does not, and the NEWEST entry
+    // (still collecting, not yet drawn, inside 'now') counts. An ordinary
+    // pair, where the graph's lead buckets and alignment reach 9-11 entries
+    // past the 20 s the readout used to stop at, and a SATURATED one, where
+    // the graph reaches up to kSize - 1 entries back and the readout used to
+    // stop kReadoutLapMargin short.
+    {
+        struct Pair { double rate; int block; };
+        int cases = 0, oldest = 0, outside = 0, newest = 0;
+        for (const auto pr : { Pair { 48000.0, 512 }, Pair { 384000.0, 16 } })
+            for (const int cols : { kSimpleCols, kAdvancedCols })
+            {
+                const int64_t want   = V::windowEntries (pr.rate, pr.block);
+                const int64_t stride = V::buckets (1, want, cols).stride;
+                for (int64_t j = 0; j < stride; j += juce::jmax ((int64_t) 1, stride / 5))
+                {
+                    const int64_t head  = (int64_t) Ring::kSize + 1000 + j;
+                    const int64_t first = V::buckets (head, want, cols).first;
+                    const int64_t at[3] = { first, first - 1, head - 1 };
+                    for (int w = 0; w < 3; ++w)
+                    {
+                        refill (*ring, pr.rate, pr.block, head, at[w]);
+                        const auto r = V::readingFrom (*ring, cols);
+                        const bool counted = r.taken && juce::exactlyEqual (r.peakDb, -12.0f);
+                        ++cases;
+                        if (w == 0 && counted) ++oldest;
+                        if (w == 1 && r.taken && juce::exactlyEqual (r.peakDb, 0.0f)) ++outside;
+                        if (w == 2 && counted && juce::exactlyEqual (r.currentDb, -12.0f)) ++newest;
+                    }
+                }
+            }
+        check (cases == 3 * oldest && oldest == outside && oldest == newest,
+               "grReadout: the max counts the oldest entry the graph draws and the newest pushed, and nothing older, on both wells at 48 kHz / 512 and 384 kHz / 16");
+    }
+    {   // …and as a brute-force minimum, read as the ring fills and scrolls,
+        // across both wells and two other widths.
+        int reads = 0, exact = 0;
+        for (const int cols : { kSimpleCols, kAdvancedCols, 97, 1999 })
+        {
+            refill (*ring, 48000.0, 512, 0);
+            const int64_t want = V::windowEntries (48000.0, 512);
+            const int64_t nNow = V::readoutCurrentEntries (48000.0, 512);
+            for (int64_t i = 0; i < want + 3000; ++i)
+            {
+                ring->push (programme (i), 0.1f);
+                if (i % 37 != 0)
+                    continue;
+                const auto r = V::readingFrom (*ring, cols);
+                ++reads;
+                exact += r.taken
+                      && juce::exactlyEqual (r.peakDb, minOver (V::buckets (r.head, want, cols).first, r.head))
+                      && juce::exactlyEqual (r.currentDb, minOver (r.head - nNow, r.head)) ? 1 : 0;
+            }
+        }
+        check (reads > 400 && exact == reads,
+               "grReadout: 'now' and the max are the exact minima over their spans at every read, filling and scrolling");
+    }
+
+    // THE LAP DISCIPLINE, deterministic. A burst of pushes lands at a chosen
+    // peek of the scan: at the overhang's first entry (saturated pairs only),
+    // at the guarded span's first entry, mid-scan and at the newest. Sized
+    // around the two thresholds — the pushes each chunk can absorb before its
+    // closing re-read, which for the guarded span at a saturated pair IS
+    // kReadoutLapMargin. Every taken reading must be the exact minimum of the
+    // ORIGINAL programme over its range — a burst writes -40 dB, so a lapped
+    // slot that was published shows — and a lap must actually have been read
+    // (the premise that keeps this from passing vacuously).
+    {
+        struct Pair { double rate; int block; };
+        int cases = 0, lappedRead = 0, lappedTaken = 0, inexact = 0, liveUnderPushes = 0;
+        bool guardedBinds = true, overhangBinds = true, sawOverhang = false, marginIsTheSlack = false;
+        for (const auto pr : { Pair { 384000.0, 16 }, Pair { 48000.0, 512 } })
+            for (const int cols : { kSimpleCols, kAdvancedCols })
+            {
+                const int64_t head    = (int64_t) Ring::kSize + 777;
+                const int64_t first   = V::readoutFirst (head, pr.rate, pr.block, cols);
+                const int64_t guarded = juce::jmax (first, head - V::kReadoutGuardedSpan);
+                const int64_t oSlack  = (int64_t) Ring::kSize - 1 - (head - first);     // pushes the overhang absorbs
+                const int64_t gSlack  = (int64_t) Ring::kSize - 1 - (head - guarded);   // …and the guarded span
+                const int64_t nNow    = V::readoutCurrentEntries (pr.rate, pr.block);
+                sawOverhang      = sawOverhang || guarded > first;
+                marginIsTheSlack = marginIsTheSlack || (guarded > first && gSlack == V::kReadoutLapMargin);
+                for (const int64_t at : { first, guarded, (guarded + head) / 2, head - 1 })
+                    for (const int64_t burst : { (int64_t) 1, oSlack, oSlack + 1, oSlack + 2, gSlack, gSlack + 1,
+                                                 (int64_t) Ring::kSize })
+                    {
+                        if (burst < 1)
+                            continue;
+                        refill (*ring, pr.rate, pr.block, head);
+                        PushingRing lapping { *ring, at, burst };
+                        const auto r = V::readingFrom (lapping, cols);
+                        ++cases;
+                        lappedRead += lapping.lappedPeeks > 0 ? 1 : 0;
+                        if (r.taken)
+                        {
+                            lappedTaken     += lapping.lappedPeeks > 0 ? 1 : 0;
+                            liveUnderPushes += 1;
+                            inexact += r.head == head
+                                         && juce::exactlyEqual (r.peakDb, minOver (first, head))
+                                         && juce::exactlyEqual (r.currentDb, minOver (head - nNow, head)) ? 0 : 1;
+                        }
+                        if (at == guarded && ((burst == gSlack && ! r.taken) || (burst == gSlack + 1 && r.taken)))
+                            guardedBinds = false;
+                        if (guarded > first && at == first
+                            && ((burst == oSlack && oSlack >= 1 && ! r.taken) || (burst == oSlack + 1 && r.taken)))
+                            overhangBinds = false;
+                    }
+            }
+        check (sawOverhang && lappedRead > 0,
+               "grReadout: (premise) a saturated pair has an overhang, and a burst made the scan read an overwritten slot");
+        check (lappedTaken == 0 && inexact == 0,
+               "grReadout: a scan the producer lapped is never published; every taken reading is exact");
+        check (liveUnderPushes > 0 && guardedBinds && marginIsTheSlack,
+               "grReadout: the readout stays live with as many pushes during its scan as its range leaves room for - kReadoutLapMargin at a saturated pair - and not one more");
+        check (overhangBinds, "grReadout: the overhang is certified against its own slack, at the saturated pair");
+        juce::ignoreUnused (cases);
+    }
+    const double p512 = 512.0 / 48000.0, p16k = 16384.0 / 48000.0;
+    check (! V::readoutStale (10, 400.0, p512) && V::readoutStale (10, 600.0, p512)
+             && ! V::readoutStale (10, 1300.0, p16k) && V::readoutStale (10, 1400.0, p16k)
+             && V::readoutStale (0, 0.0, p512),
+           "grReadout: 'now' goes to no-data after max (500 ms, 4 entry periods) without movement, or with nothing measured");
+    check (V::grText (-0.04f) == "0.0" && V::grText (0.0f) == "0.0" && V::grText (-8.94f) == "-8.9"
+             && V::grText (-8.96f) == "-9.0" && V::grText (-60.0f) == "-60.0",
+           "grReadout: one decimal, rounded first, never \"-0.0\"");
+}
+
+// The readout through the editor tick (TEST-001's entry), on the real
+// processor: the compressor alone does not move it (it is the LIMITER's
+// figure), a pushed limiter does, to within 0.3 dB of the engine's own
+// per-block figure from the same tap; a stopped host turns "now" to "-" while
+// the window max stays; both views show it, outside the graph well and the
+// STATISTICS panel, and in Advanced inside the LIMITER panel.
+static void testTheTickShowsTheLimiterGrReadout()
+{
+    double fakeNow = 1.0e6;
+    AnabasisAudioProcessor proc;
+    proc.prepareToPlay (48000.0, 512);
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "grReadoutTick");
+    if (ed == nullptr)
+        return;
+    ed->setClockForTest ([&fakeNow] { return fakeNow; });
+    auto* nowV = dynamic_cast<juce::Label*> (ed->findChildWithID ("grNowValue"));
+    auto* maxV = dynamic_cast<juce::Label*> (ed->findChildWithID ("grMaxValue"));
+    check (nowV != nullptr && maxV != nullptr, "grReadoutTick: (premise) both value labels were found");
+    if (nowV == nullptr || maxV == nullptr)
+        return;
+    ed->refreshFromModel();
+    check (nowV->getText() == "-" && maxV->getText() == "-", "grReadoutTick: nothing processed reads \"-\"");
+
+    auto set = [&proc] (const char* id, float denorm)
+    {
+        auto* par = proc.apvts.getParameter (id);
+        par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (denorm));
+    };
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 512);
+    long t = 0;
+    auto feed = [&] (float amp, int blocks)
+    {
+        for (int b = 0; b < blocks; ++b)
+        {
+            for (int n = 0; n < 512; ++n, ++t)
+            {
+                const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi * 1000.0f * (float) t / 48000.0f);
+                buf.setSample (0, n, v);
+                buf.setSample (1, n, v);
+            }
+            proc.processBlock (buf, midi);
+        }
+    };
+    proc.apvts.getParameter (pid::loudness)->setValueNotifyingHost (0.0f);
+    proc.getMacroEngine().flushPendingMapping();
+    set (pid::limGain, 0.0f);
+    set (pid::compThreshold, -30.0f);
+    set (pid::compRatio, 4.0f);
+    feed (0.1f, 60);
+    fakeNow += 30.0;
+    ed->refreshFromModel();
+    check (proc.meterCompGrDb() < -3.0f && nowV->getText() == "0.0",
+           "grReadoutTick: the compressor's reduction alone does not move the limiter readout");
+
+    set (pid::compThreshold, 0.0f);
+    set (pid::limGain, 12.0f);
+    feed (0.7f, 80);
+    fakeNow += 30.0;
+    ed->refreshFromModel();
+    const float engineGr = proc.meterGrDb();
+    const float shown    = nowV->getText().getFloatValue();
+    check (engineGr < -3.0f && std::abs (shown - engineGr) <= 0.3f,
+           "grReadoutTick: a pushed limiter reads within 0.3 dB of the engine's own figure from the same tap");
+    check (maxV->getText().getFloatValue() <= shown + 0.05f,
+           "grReadoutTick: the window max is at least as deep as 'now'");
+
+    fakeNow += 600.0;                                    // the host stops: no block, time passes
+    ed->refreshFromModel();
+    check (nowV->getText() == "-" && maxV->getText() != "-",
+           "grReadoutTick: a stopped host turns 'now' to \"-\"; the window max stays with the history");
+
+    auto clearOf = [&] (juce::Component* c, const juce::Rectangle<int>& r)
+    { return c == nullptr || ! c->isVisible() || ! c->getBounds().intersects (r); };
+    auto* spec = findFirstChildOfType<SpectrumView> (*ed);
+    auto* gr   = findFirstChildOfType<GrHistoryView> (*ed);
+    auto* stats = findFirstChildOfType<LoudnessMeterView> (*ed);
+    const auto simpleNow = nowV->getBounds(), simpleMax = maxV->getBounds();
+    check (nowV->isVisible() && maxV->isVisible() && ! simpleNow.isEmpty()
+             && clearOf (gr, simpleNow) && clearOf (gr, simpleMax) && clearOf (spec, simpleMax)
+             && clearOf (stats, simpleNow) && clearOf (stats, simpleMax)
+             && ! simpleNow.intersects (ed->findChildWithID ("outLufsValue")->getBounds()),
+           "grReadoutTick: Simple shows it beside out LUFS, clear of the graph well and STATISTICS");
+    proc.apvts.getParameter (pid::advancedMode)->setValueNotifyingHost (1.0f);
+    ed->refreshFromModel();
+    auto* lane = dynamic_cast<juce::Component*> (ed->findChildWithID ("limGrMeter"));
+    check (nowV->isVisible() && lane != nullptr && nowV->getY() >= lane->getBottom()
+             && std::abs (nowV->getX() - lane->getX()) < 120 && clearOf (gr, maxV->getBounds())
+             && clearOf (stats, maxV->getBounds()),
+           "grReadoutTick: Advanced shows it in the LIMITER panel, under its GR lane");
+}
+
+// The tick's MAX is the deepest entry the GR graph DRAWS in the current layout
+// — from the oldest drawn bucket's own first entry, the lead buckets that reach
+// past the nominal 20 s included — and stays so with the SPECTRUM showing (the
+// GR view hidden, its bounds kept by both layouts) and in Advanced. One burst
+// is aged until it is the graph's oldest drawn entry; 0.37 s blocks and a
+// 10 ms release keep every entry of the nominal window clear of its tail, so
+// the case separates the two ranges (premise). Written against API that
+// predates the fix, so it compiles, and fails, on the code it replaces.
+static void testTheTickMaxIsTheDeepestEntryTheGraphDraws()
+{
+    using V = GrHistoryView;
+    double fakeNow = 1.0e6;
+    AnabasisAudioProcessor proc;
+    proc.setRateAndBufferSizeDetails (44100.0, 16384);
+    proc.prepareToPlay (44100.0, 16384);
+    std::unique_ptr<juce::AudioProcessorEditor> base;
+    auto* ed = openTickEditor (proc, base, "grMaxDrawn");
+    if (ed == nullptr)
+        return;
+    ed->setClockForTest ([&fakeNow] { return fakeNow; });
+    auto* maxV = dynamic_cast<juce::Label*> (ed->findChildWithID ("grMaxValue"));
+    auto* grV  = findFirstChildOfType<GrHistoryView> (*ed);
+    check (maxV != nullptr && grV != nullptr, "grMaxDrawn: (premise) the max label and the GR view were found");
+    if (maxV == nullptr || grV == nullptr)
+        return;
+    auto set = [&proc] (const char* id, float denorm)
+    {
+        auto* par = proc.apvts.getParameter (id);
+        par->setValueNotifyingHost (par->getNormalisableRange().convertTo0to1 (denorm));
+    };
+    proc.apvts.getParameter (pid::loudness)->setValueNotifyingHost (0.0f);
+    proc.getMacroEngine().flushPendingMapping();
+    set (pid::compThreshold, 0.0f);
+    set (pid::limGain, 12.0f);
+    set (pid::limRelease, 10.0f);
+    proc.apvts.getParameter (pid::limAutoRelease)->setValueNotifyingHost (0.0f);
+
+    const auto& ring = proc.grHistory();
+    juce::MidiBuffer midi;
+    juce::AudioBuffer<float> buf (2, 16384);
+    long t = 0;
+    auto block = [&] (int loudSamples)
+    {
+        for (int n = 0; n < 16384; ++n, ++t)
+        {
+            const float amp = n < loudSamples ? 0.9f : 0.001f;
+            const float v = amp * std::sin (2.0f * juce::MathConstants<float>::pi * 1000.0f * (float) t / 44100.0f);
+            buf.setSample (0, n, v);
+            buf.setSample (1, n, v);
+        }
+        proc.processBlock (buf, midi);
+    };
+    const int64_t want = V::windowEntries (44100.0, 16384);
+    auto drawnFirst = [&] (int64_t head)
+    {
+        const int cols = juce::jmax (1, (int) grV->getLocalBounds().toFloat().reduced (10.0f, 8.0f).getWidth());
+        return V::buckets (head, want, cols).first;
+    };
+    auto minOver = [&ring] (int64_t from, int64_t to)
+    {
+        float m = 0.0f;
+        for (int64_t e = juce::jmax ((int64_t) 0, from); e < to; ++e)
+            m = juce::jmin (m, ring.peek (e).grDb);
+        return m;
+    };
+    for (int b = 0; b < 4; ++b)
+        block (0);
+    block (4096);                                        // the burst: the first 93 ms of one block
+    const int64_t burst = ring.available() - 1;
+    while (drawnFirst (ring.available()) < burst)
+        block (0);
+    const int64_t head    = ring.available();
+    const float   drawn   = minOver (drawnFirst (head), head);
+    const float   nominal = minOver (head - want, head);
+    check (drawnFirst (head) == burst && burst < head - want && drawn < -3.0f
+             && V::grText (drawn) != V::grText (nominal),
+           "grMaxDrawn: (premise) the burst is the graph's oldest drawn entry, older than the nominal "
+           "window and deeper than all of it");
+
+    auto& tree = proc.internalState.state();
+    for (const bool spectrum : { false, true })
+    {
+        tree.setProperty (iid::spectrumOn, spectrum, nullptr);
+        fakeNow += 30.0;
+        ed->refreshFromModel();
+        check (grV->isVisible() == ! spectrum && maxV->getText() == V::grText (drawn),
+               spectrum ? "grMaxDrawn: with the SPECTRUM showing, the max is still the deepest entry the GR graph draws"
+                        : "grMaxDrawn: the max is the deepest entry the GR graph draws, past the nominal 20 s");
+    }
+    proc.apvts.getParameter (pid::advancedMode)->setValueNotifyingHost (1.0f);
+    fakeNow += 30.0;
+    ed->refreshFromModel();
+    check (maxV->getText() == V::grText (minOver (drawnFirst (head), head)),
+           "grMaxDrawn: Advanced reads the deepest entry of ITS graph's drawn history");
+}
+
 int main (int argc, char** argv)
 {
     // Unbuffered stdout: CI pipes are fully buffered, so a crash mid-suite
@@ -11783,8 +13507,28 @@ int main (int argc, char** argv)
         testFactoryPresets();
         testALockedCeilingSurvivesAPresetThatNamesIt();
         testMeterResetClearsSessionHolds();
+        testABypassAuditionStaysOutOfTheSessionFigures();
+        testTheSessionDurationFollowsTheSessionFigures();
+        testThePublishedSessionLengthIsTheOpenFrames();
+        testTheStatisticsPanelResetsOnlyFromItsResetControl();
+        testResetRightAfterALoudPassageKeepsTheOldPeakOut();
         testGrRingResetEpoch();
         testTheSettingsPanelFollowsAProjectLoad();
+        testTheTickAppliesAPendingModeSwitchAndTheComboHoverFlag();
+        testTheTickCallsTheSettingsAndCeilingRefreshes();
+        testTheTruePeakTipsFollowTheRateTheTruePeakPathEngagesAt();
+        testTheTickShowsThePresetNameAndItsDirtyMark();
+        testTheTickDimsTheEditorOnBypass();
+        testTheTickPrintsTheOutLufsReadout();
+        testTheTickDrivesTheLearnButton();
+        testTheTickEnablesUndoAndRedo();
+        testTheTickFeedsTheAdvancedGrLanes();
+        testTheTickFlipsTheGraphWell();
+        testTheTickShowsTheEditedDot();
+        testTheTooltipSwitchGatesEveryTip();
+        testTheGrReadoutReadsTheRingItNames();
+        testTheTickShowsTheLimiterGrReadout();
+        testTheTickMaxIsTheDeepestEntryTheGraphDraws();
         testAValueBoxClickIsNotAMacroGesture();
         testTheSettingsCallbacksReachTheLiveTree();
         testAFactoryApplyWritesEachParameterOnce();
@@ -11828,6 +13572,7 @@ int main (int argc, char** argv)
         testGrHistoryAndTheMeterLanesShareOneReductionSpan();
         testGrHistoryReaderStaysInsideTheRingAndSeesEveryReset();
         testMetersReadTheRenderNotTheMonitor();
+        testBypassPlaysTheInputAtUnityWithMatchOn();
         testModeSwitchIsSoundNeutral();
         testLearnCommitAndAdaptiveRoundTrip();
         testDrainInsideRestoreIsSuppressed();
@@ -11845,6 +13590,7 @@ int main (int argc, char** argv)
         testLatencyNotifyIsBatchedAcrossARead();
         testRawRoundTripIsIdempotent();
         testTheCeilingAdvertisesTheUnitItEnforces();
+        testTheCeilingUnitFollowsTheRateTheTruePeakPathEngagesAt();
         testCeilingIsQuantisedToTwoDecimals();
         testCachedParamsMapping();
     }

@@ -8,7 +8,13 @@
 > unchanged in both modes, but items 1, 2 and 7's "no other stage contributes", "the full 10 ms"
 > and the 0.5–10 ms engaged range then hold only with TP off — in TP mode the longest engaged
 > lookahead is 10 ms − D. Nothing below is rewritten. *(Filed 2026-09-27 as a proposed amendment
-> awaiting the owner; in effect since ADR-0041's acceptance the same day.)*
+> awaiting the owner; in effect since ADR-0041's acceptance the same day.)* *(Added 2026-09-29: D
+> is 46 samples at 48 kHz, and at every rate below 66 kHz, since
+> [ADR-0046](ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md) amended ADR-0041
+> decision 4's figures — "42 at 48 kHz" is ADR-0041's figure as accepted — and ADR-0046, ratified
+> at the Architecture Review Gate on 2026-09-29, is in effect: true-peak mode engages from 12 kHz,
+> and below it the limiter keeps the whole allowance. The reported figure is unchanged in both
+> modes, as above.)*
 
 ## Context
 

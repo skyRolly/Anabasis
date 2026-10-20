@@ -54,6 +54,9 @@ public:
     static constexpr int kMaxChannels = 2;
     static constexpr int kTaps        = 12;   // per phase
     static constexpr int kPhases      = 4;
+    // The REPORTING LAG as a constant (see the header comment): the reading
+    // returned at step n describes x[n-6] and the 4x points in (n-6, n-5).
+    static constexpr int kReportLag   = 6;
 
     TruePeakEstimator() = default;
 
@@ -94,7 +97,7 @@ public:
             auto& h = hist[ch];
             h[(size_t) writeIdx] = x[ch];
 
-            float best = std::abs (h[(size_t) ((writeIdx + kTaps - 6) % kTaps)]);
+            float best = std::abs (h[(size_t) ((writeIdx + kTaps - kReportLag) % kTaps)]);
             for (int p = 1; p < kPhases; ++p)
             {
                 float acc = 0.0f;

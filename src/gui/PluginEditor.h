@@ -75,6 +75,28 @@ public:
     // the CACHED label, which is what the user actually reads.
     void refreshCeilingUnit();
 
+    // The WHOLE 24 Hz tick body, in its shipped order: `timerCallback` is one
+    // line that calls it (audit finding TEST-001). PUBLIC for the reason the two
+    // hooks above are — no message loop runs in the headless suite, so the tick
+    // never fires there — and WHOLE rather than per direction, so a direction
+    // added to the tick later is reachable by a test the day it lands. Message
+    // thread only. Its pop-up housekeeping is inert with nothing open; that half
+    // stays under ADR-0025's disclosure.
+    void refreshFromModel();
+
+    // The tooltip switch's gate, as `GatedTooltipWindow::getTipFor` evaluates
+    // it. Read-only and PUBLIC for the suite: a check made through `getTipFor`
+    // itself would be vacuous headlessly, because JUCE's `TooltipWindow` returns
+    // no tip unless the process is in the foreground, which a test never is.
+    bool tooltipGateOpen() const { return tooltips.gateOpen(); }
+
+    // The editor tick's wall clock — the Learn button's 5 s minimum pass and
+    // empty-pass flash, and the GR readout's stall rule, all read it.
+    // Replaceable ONLY so the suite can step time instead of sleeping;
+    // production never calls this, and the default is the same
+    // `juce::Time::getMillisecondCounterHiRes` those reads used before.
+    void setClockForTest (std::function<double()> clock) { tickClockMs = std::move (clock); }
+
 private:
     using SliderAttachment   = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment   = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -207,6 +229,21 @@ private:
     {
         double resetValue = 0.0;
         juce::RangedAudioParameter* resetParam = nullptr;
+        // The value box carries its knob's tip. JUCE copies a Slider's tooltip
+        // into the box only when it BUILDS the box (`Slider::Pimpl::
+        // lookAndFeelChanged`, pinned tree), so a tip changed afterwards left
+        // the number on the old one — OQ-020's Ceiling tip, which follows the
+        // rate. Every other knob's tip is set once, in `setupRotary`, before
+        // `setTextBoxStyle` rebuilds its box from `getTooltip()`, so for them
+        // this forwards the string the rebuild copies anyway. The box is the
+        // Slider's only Label child.
+        void setTooltip (const juce::String& tip) override
+        {
+            juce::Slider::setTooltip (tip);
+            for (auto* c : getChildren())
+                if (auto* box = dynamic_cast<juce::Label*> (c))
+                    box->setTooltip (tip);
+        }
         void doReset()
         {
             getProperties().set ("vpos", (double) valueToProportionOfLength (getValue()));
@@ -436,9 +473,10 @@ private:
     {
         using juce::TooltipWindow::TooltipWindow;
         std::function<bool()> tooltipsAllowed;      // unset ⇒ allowed, as JUCE behaves by default
+        bool gateOpen() const { return tooltipsAllowed == nullptr || tooltipsAllowed(); }
         juce::String getTipFor (juce::Component& c) override
         {
-            if (tooltipsAllowed != nullptr && ! tooltipsAllowed())
+            if (! gateOpen())
                 return {};
             return juce::TooltipWindow::getTipFor (c);
         }
@@ -505,6 +543,13 @@ private:
     juce::ToggleButton tpSimpleToggle;
     juce::TextButton   learnButton { "LEARN" };    // §5.4 explicit start/end
     juce::Label outLufsCaption, outLufsValue;      // live render short-term
+    // The numeric limiter GR (audit VIS-007): "now" and the history window's
+    // max, both views, placed by each layout. The head/epoch the readout last
+    // saw move, for its stall rule (`GrHistoryView::readoutStale`).
+    juce::Label grNowCaption, grNowValue, grMaxCaption, grMaxValue;
+    int64_t  grReadoutHead    = -1;
+    uint32_t grReadoutEpoch   = 0;
+    double   grReadoutMovedMs = -1.0e12;
 
     // §5.3 "edited" indicator + reset-to-macro affordance: an accent dot that
     // appears when any managed parameter is detached; clicking it re-engages
@@ -552,6 +597,18 @@ private:
     // indeterminate before that seed runs; it carries no meaning.
     bool shownTpMode = false;
 
+    // OQ-020 (2026-09-29): the TP switches' and the Ceiling knobs' TOOLTIPS
+    // follow the RATE the true-peak path engages at
+    // (`CeilingUnitSource::rateEngagesTruePeak`), never the switch — below
+    // 12 kHz no switch position makes their dBTP claim true. The same rule as
+    // `shownTpMode`: this caches the words ON SCREEN, seeded and applied in the
+    // constructor from that predicate before the timer is armed, then
+    // edge-gated on the tick. The initialiser carries no meaning. Message
+    // thread only.
+    bool shownTpRate = true;
+    void refreshTruePeakTips();
+    void applyTruePeakTips (bool rateEngages);
+
     // Learn UI state (§5.4 grammar): explicit start → minimum pass → explicit
     // end; an empty pass flashes the button in `warn` (wordless readout).
     double learnStartedMs   = 0.0;
@@ -559,6 +616,10 @@ private:
     float  refOnsetAtStop = 0.0f, refTiltAtStop = 0.0f;
     bool   hadLearnedAtStop = false;
     double emptyFlashUntilMs = 0.0;
+    // Both Learn reads (the click and the tick) and the GR readout's stall
+    // rule go through this one function; `setClockForTest` is its only other
+    // writer.
+    std::function<double()> tickClockMs { [] { return juce::Time::getMillisecondCounterHiRes(); } };
     juce::String lastMaskFingerprint;
 
     // -- overlays ------------------------------------------------------------

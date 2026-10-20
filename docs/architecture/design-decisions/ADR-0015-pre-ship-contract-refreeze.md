@@ -141,7 +141,17 @@ defaulting off, **the shipped default configuration no longer enforces a dBTP ce
    migration code exists, and none is owed — this is the read rule doing the job it was designed
    for, and it is the reason removal is cheap rather than the reason it is permitted.
 
-5. **The Ceiling advertises the unit it enforces.** Its value text is `" dBTP"` while
+5. > **Amended 2026-09-28 by [ADR-0046](ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md)
+   > (decision 5; ⊕ for review).** "While `truePeakMode` is engaged" now means while the true-peak
+   > PATH engages, not while the switch is on: the path runs from 12 kHz up (`truePeakPathEngages`),
+   > so `CeilingUnitSource` also reads the prepared sample rate the processor already publishes
+   > (the GR history ring's pair) and answers `" dB"` below 12 kHz. One predicate decides both the
+   > engine's rail and the unit. The mechanism below is otherwise unchanged.
+   > *(Ratified 2026-09-29: ADR-0046 cleared the Architecture Review Gate on the owner's explicit
+   > approval, so this amendment is in effect. The wording ⊕ on the unit's copy, kept by the gate
+   > banner above, is untouched by it.)*
+
+   **The Ceiling advertises the unit it enforces.** Its value text is `" dBTP"` while
    `truePeakMode` is engaged and `" dB"` otherwise. The mechanism is `CeilingUnitSource`
    (`src/PluginParameters.h:93`): the layout is a free function with no processor to ask, so the
    processor owns the holder, **declares it before `apvts`** so the layout's capture of its
@@ -257,7 +267,7 @@ defaulting off, **the shipped default configuration no longer enforces a dBTP ce
 - `src/PluginParameters.cpp:303` — `ceiling`, default −0.1, mode-aware value text
 - `src/PluginParameters.cpp:377` — `truePeakMode`, default off
 - `src/PluginParameters.h:93` — `CeilingUnitSource` (the unit source and its fallback)
-- `src/PluginProcessor.h:115` · `src/PluginProcessor.cpp:27-28` — the holder's placement and wiring
+- `src/PluginProcessor.h:116` · `src/PluginProcessor.cpp:27-28` — the holder's placement and wiring
 - `src/InternalState.h` — `setDefaults()` (nine `int_*` properties; `tpMeterOn` false), and
   `replaceFrom`'s defaults-first overlay (item 4's migration)
 - `src/dsp/EngineParameters.h:79` — the POD's `ceilingDbTp`/`truePeakMode` seeds
