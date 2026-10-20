@@ -13,7 +13,8 @@ Anabasis/
 │                           (VST3 [+AU on macOS] [+Standalone]), two test console apps.
 ├── README.md               Project façade (scope, status, quick start, docs nav).
 ├── CHANGELOG.md            Version history (Keep a Changelog; evidence-cited). Empty until 0.1.0.
-├── CLAUDE.md               AI/contributor entry point: mandatory policy pre-read + repo constraints.
+├── AGENTS.md               Primary contributor/agent entry point: mandatory policy pre-read + repo constraints.
+├── CLAUDE.md               Claude-compatible import of AGENTS.md.
 ├── src/                    Source (wrapper + GUI + DSP core) — P1 skeleton in place.
 ├── tests/                  Headless self-tests (DSP + state compatibility) and fixtures.
 ├── worklogs/               Session-local investigation records for future agents (NOT architecture
