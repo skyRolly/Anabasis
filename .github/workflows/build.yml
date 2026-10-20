@@ -907,7 +907,7 @@ jobs:
               && steps.repro.outcome == 'success'
               && steps.probe.outcome == 'success'
               && steps.stage.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Anabasis-Linux
           path: dist/Anabasis-Linux
@@ -918,7 +918,7 @@ jobs:
       # itself completed, which is what actually produced the .debug files.
       - name: Upload Linux debug symbols (crash symbolication)
         if: ${{ !cancelled() && steps.strip.outputs.debug_artifacts == 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Anabasis-Linux-debug
           path: dist/Anabasis-Linux-debug
@@ -1982,7 +1982,7 @@ jobs:
 
       - name: Upload Windows installer
         if: ${{ !cancelled() && steps.package_windows.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Anabasis-Windows-installer
           path: dist/Anabasis-*-Windows-Installer.exe
@@ -1990,7 +1990,7 @@ jobs:
 
       - name: Upload Windows artifacts
         if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.stage_windows.outputs.public_ok == 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Anabasis-Windows
           path: dist/Anabasis-Windows
@@ -1998,7 +1998,7 @@ jobs:
 
       - name: Upload Windows debug symbols (crash symbolication)
         if: ${{ !cancelled() && steps.stage_windows.outputs.debug_artifacts == 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Anabasis-Windows-debug
           path: dist/Anabasis-Windows-debug
@@ -2635,7 +2635,7 @@ jobs:
           ${{ !cancelled()
               && steps.tests_x86_64.outcome == 'success'
               && steps.package_macos.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Anabasis-macOS-installer
           path: dist/Anabasis-*-macOS.pkg
@@ -2651,7 +2651,7 @@ jobs:
               && steps.tests.outcome == 'success'
               && steps.tests_x86_64.outcome == 'success'
               && steps.package.outcome == 'success' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Anabasis-macOS
           path: dist/Anabasis-macOS
@@ -2662,7 +2662,7 @@ jobs:
       # the package step -- instead of failing on an empty directory.
       - name: Upload macOS debug symbols (dSYMs, crash symbolication)
         if: ${{ !cancelled() && steps.package.outcome != 'skipped' && steps.package.outputs.debug_artifacts == 'true' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Anabasis-macOS-debug
           path: dist/Anabasis-macOS-debug
