@@ -80,7 +80,7 @@ Before introducing any third-party code or asset, state its licence and get owne
 codebase. Competing products are behavioural and visual **benchmarks only** — no reverse
 engineering of any kind.
 
-## Inherited operational constraints (from `CLAUDE.md`)
+## Inherited operational constraints (from `AGENTS.md`) `CLAUDE.md` imports `AGENTS.md` for Claude-aware tooling; contributors should read `AGENTS.md` directly.
 
 The repository's `CLAUDE.md` operational constraints (no background tasks / no PR-webhook
 monitoring; output discipline; strict domain focus) remain in force and are not overridden by this
