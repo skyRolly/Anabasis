@@ -10,6 +10,15 @@ How to run and interpret the validation suite. Acceptance levels and the hard ga
 
 ## Headless self-tests
 
+## JUCE cache migration regression (ADR-0047)
+
+Run `python3 tests/juce_cache_tests.py` with CMake, Ninja and a C/C++ compiler available.
+The test configures the real top-level build with a local dependency stand-in and stops at
+that boundary: no JUCE download or compilation. It verifies fresh/repeated 9.0.4 selection,
+rejection of both old default pins (including mixed or partially reset fields), successful
+two-field reset, retained custom overrides and an intentional older local checkout. It also
+uses paths containing spaces. The `linux` CI job runs it before normal configuration.
+
 
 ## Realtime enforcement (0.2.0, ADR-0029)
 

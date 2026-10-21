@@ -197,6 +197,8 @@ actually uses).
 > has. Everything this paragraph and decision A5 actually decide about the dependency — acquisition
 > by `FetchContent`, a pin by immutable SHA and never a tag name, `GIT_SHALLOW` with the caveat
 > below, and the two cache variables that carry it — is what ADR-0028 *used*, not what it replaced.
+> **ADR-0047 subsequently moves the pin to 9.0.4 / `3fb5cbc…` and explicitly excludes the
+> unused MP3/Opus/WebP codecs on every consumer.**
 > The record is not rewritten, per the `ADR_INDEX.md` amendment convention: the two values above are
 > the decision as taken on 2026-07-31, and `CMakeLists.txt` is the live copy.
 

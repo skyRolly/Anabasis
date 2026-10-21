@@ -73,14 +73,39 @@ endif()
 set(ANABASIS_JUCE_PATH "" CACHE PATH "Local JUCE checkout (skips FetchContent — offline escape hatch)")
 set(ANABASIS_BUILD_NUMBER "0" CACHE STRING "CI build number (CI passes the run number)")
 
-# --- JUCE: version 9.0.1 pinned to the tag's IMMUTABLE COMMIT SHA -----------
+# --- JUCE: version 9.0.4 pinned to the tag's IMMUTABLE COMMIT SHA -----------
 # A tag NAME can be re-pointed upstream; the SHA cannot (ADR-0008 decision A5,
 # OQ-001). GIT_SHALLOW with a SHA is a documented CMake trap: if the fetch
 # misbehaves, drop GIT_SHALLOW, NEVER the SHA (ADR-0008's caveat carries the
 # sanctioned fix). Changing this pin is an Architecture Review Gate item
-# (DEPENDENCY_POLICY.md); 9.0.0 -> 9.0.1 is ADR-0028.
-set(ANABASIS_JUCE_VERSION "9.0.1" CACHE STRING "Human-readable JUCE version (README records this)")
-set(ANABASIS_JUCE_TAG "e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8" CACHE STRING "Immutable commit SHA of the JUCE tag")
+# (DEPENDENCY_POLICY.md); 9.0.1 -> 9.0.4 is ADR-0047.
+set(ANABASIS_JUCE_VERSION "9.0.4" CACHE STRING "Human-readable JUCE version (README records this)")
+set(ANABASIS_JUCE_TAG "3fb5cbc0340758596dac39f7c8de47d562b4896e" CACHE STRING "Immutable commit SHA of the JUCE tag")
+
+# CACHE defaults do not replace an existing build's pin. Refuse either stale
+# field from a previous Anabasis default before FetchContent can reuse it.
+# Custom pins remain supported; the local-path escape hatch also permits an
+# intentional old/new comparison (ADR-0047).
+if(NOT ANABASIS_JUCE_PATH AND
+   (ANABASIS_JUCE_VERSION STREQUAL "9.0.0" OR
+    ANABASIS_JUCE_VERSION STREQUAL "9.0.1" OR
+    ANABASIS_JUCE_TAG STREQUAL "f8f8864172464b9adf9eba6101e1f784838d1597" OR
+    ANABASIS_JUCE_TAG STREQUAL "e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8"))
+    message(FATAL_ERROR
+        "Anabasis: stale JUCE cache; this tree pins JUCE 9.0.4. "
+        "Reset BOTH cached fields, then rebuild:\n"
+        "  cmake -S \"${CMAKE_CURRENT_SOURCE_DIR}\" -B \"${CMAKE_BINARY_DIR}\" "
+        "-UANABASIS_JUCE_TAG -UANABASIS_JUCE_VERSION\n"
+        "For an intentional older-JUCE comparison, set -DANABASIS_JUCE_PATH=<checkout>.")
+endif()
+
+# These codecs became enabled by default in JUCE 9.0.2/9.0.3. Anabasis uses
+# none of them; keep the compiled component set at the 9.0.1 baseline on ALL
+# six consumers, including optional tools (ADR-0047, THIRD_PARTY_LICENSES.md).
+set(ANABASIS_JUCE_CODEC_DEFINITIONS
+    JUCE_USE_MP3AUDIOFORMAT=0
+    JUCE_USE_OPUS=0
+    JUCE_USE_WEBP=0)
 
 if(ANABASIS_JUCE_PATH)
     add_subdirectory(${ANABASIS_JUCE_PATH} ${CMAKE_BINARY_DIR}/juce)
@@ -347,6 +372,7 @@ set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/gui/PluginEditor.cpp
     PROPERTIES COMPILE_DEFINITIONS ANABASIS_BUILD_NUMBER="${ANABASIS_BUILD_NUMBER}")
 
 target_compile_definitions(Anabasis PUBLIC
+    ${ANABASIS_JUCE_CODEC_DEFINITIONS}
     ANABASIS_VERSION_STRING="${PROJECT_VERSION}"
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
@@ -379,6 +405,7 @@ if(ANABASIS_BUILD_TESTS)
     juce_add_console_app(AnabasisTests PRODUCT_NAME "AnabasisTests")
     target_sources(AnabasisTests PRIVATE tests/dsp_tests.cpp)
     target_compile_definitions(AnabasisTests PUBLIC
+        ${ANABASIS_JUCE_CODEC_DEFINITIONS}
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_STANDALONE_APPLICATION=1)
@@ -402,6 +429,7 @@ if(ANABASIS_BUILD_TESTS)
         ${ANABASIS_PLUGIN_SOURCES})
     target_include_directories(AnabasisStateTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_definitions(AnabasisStateTests PUBLIC
+        ${ANABASIS_JUCE_CODEC_DEFINITIONS}
         ANABASIS_VERSION_STRING="${PROJECT_VERSION}"
         # ANABASIS_BUILD_NUMBER is attached to src/gui/PluginEditor.cpp as a
         # source-file property instead -- see the set_source_files_properties()
@@ -438,6 +466,7 @@ if(ANABASIS_BUILD_BENCH)
     juce_add_console_app(AnabasisBench PRODUCT_NAME "AnabasisBench")
     target_sources(AnabasisBench PRIVATE tests/bench.cpp)
     target_compile_definitions(AnabasisBench PUBLIC
+        ${ANABASIS_JUCE_CODEC_DEFINITIONS}
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_STANDALONE_APPLICATION=1)
@@ -469,6 +498,7 @@ if(ANABASIS_BUILD_PROBE)
     juce_add_console_app(AnabasisChannelProbe PRODUCT_NAME "AnabasisChannelProbe")
     target_sources(AnabasisChannelProbe PRIVATE tools/channel_probe.cpp)
     target_compile_definitions(AnabasisChannelProbe PUBLIC
+        ${ANABASIS_JUCE_CODEC_DEFINITIONS}
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_PLUGINHOST_VST3=1
@@ -498,6 +528,7 @@ if(ANABASIS_BUILD_PROBE)
     juce_add_console_app(AnabasisEngineRepro PRODUCT_NAME "AnabasisEngineRepro")
     target_sources(AnabasisEngineRepro PRIVATE tools/engine_repro.cpp)
     target_compile_definitions(AnabasisEngineRepro PUBLIC
+        ${ANABASIS_JUCE_CODEC_DEFINITIONS}
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
         JUCE_STANDALONE_APPLICATION=1)

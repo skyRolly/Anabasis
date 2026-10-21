@@ -6,7 +6,7 @@ Repository Governance Policy. Third-party dependency locking and upgrade safety.
 
 | Dependency | Pin | Mechanism | Status |
 |---|---|---|---|
-| **JUCE** | **9.0.1**, pinned by the tag's **IMMUTABLE commit SHA** `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8` | CMake `FetchContent` (`GIT_SHALLOW`), overridable via `-DANABASIS_JUCE_PATH` | Decided (OQ-001, 2026-07-30) at **9.0.0** / `f8f8864…`, written into `CMakeLists.txt` as `ANABASIS_JUCE_VERSION` + `ANABASIS_JUCE_TAG` at P1; moved to 9.0.1 by **ADR-0028, 2026-08-16** (compliance log below) |
+| **JUCE** | **9.0.4**, pinned by the tag's **IMMUTABLE commit SHA** `3fb5cbc0340758596dac39f7c8de47d562b4896e` | CMake `FetchContent` (`GIT_SHALLOW`), overridable via `-DANABASIS_JUCE_PATH`; previous default caches fail before fetching until both fields are reset | Original pin: OQ-001 / ADR-0008; 9.0.1: ADR-0028; **9.0.4: ADR-0047**, on the owner's upgrade directive (compliance log below) |
 | **pluginval** | latest release (downloaded) | `scripts/run-pluginval.sh` / `.ps1` | pinning it is a tracked improvement, not yet done |
 | **C++ standard** | **C++23** | `CMAKE_CXX_STANDARD 23` (a hard `set()`, not a cache variable — an override must fail rather than configure), `CMAKE_CXX_STANDARD_REQUIRED ON`, `CMAKE_CXX_EXTENSIONS OFF` | `DEVELOPMENT_BRIEF.md` §2.1 set 20 with a canary; **ADR-0030, 2026-08-22** raised the baseline, removed the `ANABASIS_CXX_STANDARD` seam and retired the canary job, closing OQ-006 |
 | **Clang (Linux CI)** | **major 22**, the newest major apt.llvm.org ships as a RELEASE for noble | `ANABASIS_CLANG_VERSION` in `.github/workflows/build.yml`; installed by `scripts/setup-llvm-apt.sh` from apt.llvm.org, signing key pinned by identity | **ADR-0031, 2026-08-22.** **ADR-0037, 2026-08-30** examined 23 and HELD: LLVM 23.1.0 is released and every gate passes on it, but apt.llvm.org's noble suite builds `clang-23` from a `release/23.x` commit that still carries `LLVM_VERSION_SUFFIX -rc3` — an unreleased build whose reported version says `23.1.0`. `setup-llvm-apt.sh` now asserts the package was built from the release tag's commit, so this cannot pass unnoticed again. Not a Dependabot ecosystem; maintained by this row and those ADRs. Ubuntu's own archives stop two majors short and ship no `libclang_rt.rtsan`, which the `realtime` job cannot run without |
@@ -55,6 +55,11 @@ run without a major blocking them.
   reproducible and keeps audited behaviour stable.
   Two cache variables carry it: `ANABASIS_JUCE_VERSION` (human-readable) and `ANABASIS_JUCE_TAG`
   (the SHA).
+  Since ADR-0047, either cached field from the previous Anabasis defaults (9.0.0/9.0.1) is
+  rejected before fetching, because changing a CACHE default cannot migrate an existing
+  build directory. Reset both fields with
+  `cmake -S . -B build -UANABASIS_JUCE_TAG -UANABASIS_JUCE_VERSION`, then rebuild. Custom
+  revisions remain supported; the local-path escape hatch permits intentional comparisons.
 - **`GIT_SHALLOW` + a commit SHA needs verifying at P1 — it is a documented CMake trap.** CMake's
   own `ExternalProject`/`FetchContent` documentation states that `GIT_SHALLOW` expects `GIT_TAG` to
   name a **branch or tag**. Fetching an arbitrary SHA shallowly works only where the server permits
@@ -89,6 +94,9 @@ run without a major blocking them.
   between them is again impossible by construction, and the shared-audit and transferable-audition
   properties hold. The obligation ADR-0028 carried is discharged by the sibling's own move; the
   family rule stands for the next bump.
+  **Current family pin (ADR-0047):** Anabasis moves to 9.0.4 / `3fb5cbc…`, the revision already
+  pinned by the read-only Anamorph reference's `CMakeLists.txt`. The previous paragraphs are
+  dated history; this upgrade restores convergence after Anamorph's subsequent point upgrades.
 - **C++23 is the baseline since ADR-0030 (0.2.0), and modules are still not used** — they remain a
   build-system liability in plugin projects, which is the half of ADR-0008 decision B5 that ADR-0030
   did NOT supersede. The **library** rule is unchanged and still binds: a C++23 library feature
@@ -112,6 +120,9 @@ run without a major blocking them.
 4. Prefer the offline path (`-DANABASIS_JUCE_PATH`) for reproducibility in restricted CI.
 5. The `JUCE_*` compile definitions (no webview, no curl, no splash, strict ref-counted pointer)
    are part of the dependency contract; changing them is a build change.
+   **ADR-0047 adds explicit codec exclusions** `JUCE_USE_MP3AUDIOFORMAT=0`, `JUCE_USE_OPUS=0`
+   and `JUCE_USE_WEBP=0` on every plugin/test/tool consumer. These preserve the compiled
+   component set after JUCE changed its defaults; FLAC/Ogg Vorbis remain as before.
 6. **Re-verify third-party attribution after any JUCE bump** — the licence inventory is derived
    from the pinned tree, and components vendored inside JUCE's own dependencies do not all appear
    in JUCE's top-level licence file (`RELEASE_POLICY.md`).
@@ -120,6 +131,15 @@ run without a major blocking them.
    promises, and each cites `juce_*.cpp` by line against the pinned tree. A bump can move those
    lines without breaking a single call, so nothing fails and the reasoning quietly stops holding.
    The register, to be walked after every bump:
+
+   **Walked again for 9.0.4 (ADR-0047).** The component, mouse, modal-manager, tooltip, button,
+   look-and-feel, ComboBox and TextEditor implementation files remain byte-identical from
+   9.0.1. PopupMenu changes keyboard navigation and accessibility, while its parented
+   look-and-feel selection, child insertion, modal entry and deletion paths remain intact;
+   `preparePopupMenuWindow` now sits at line 515. The OpenGL render-frame try-lock still spans
+   component painting (`juce_OpenGLContext.cpp:405`); MessageManagerLock's fixes do not remove
+   it. The full source audit is in `worklogs/2026-10-21-juce-904-upgrade.md`. These source checks
+   do not replace the manual pointer/keyboard and macOS/Windows GL audition.
 
    > **Walked at the 9.0.1 bump (2026-08-16, ADR-0028), and every row survives for a stronger
    > reason than re-reading it.** `juce_PopupMenu.cpp`, `juce_Component.cpp`,
@@ -140,7 +160,7 @@ run without a major blocking them.
    | `PluginEditor.cpp` — `showPresetMenu` raises the shield BEFORE `showMenuAsync` | `addChildComponent` APPENDS, so a menu window created afterwards sits in FRONT of the already-raised shield even though both are always-on-top | **The worst one in this table.** If JUCE ever re-sorted always-on-top children on insert, the shield would sit in front of the preset menu and make it unclickable. No test covers it — a headless suite cannot open a modal menu — so this row IS the coverage |
    | `PluginEditor.cpp` — `dismissOrphanedPopupMenus` re-delivers nothing after `exitModalState` | JUCE re-delivers the mouse-down that exited a modal loop | A dismissal click could act twice, or not reach the control beneath |
    | `PluginEditor.cpp` — `timerCallback`'s `presetMenusOpen` ghost-heal | `PopupMenu::showWithOptionalCallback` calls `enterModalState` for EVERY menu, a parented one included, so "no modal child" really does mean "no preset menu on screen" | **The dangerous direction of this table.** If a parented menu ever stopped entering the modal state, the counter would be zeroed ~83 ms after the menu opened — two 24 Hz ticks — LOWERING THE SHIELD while the menu is still on screen, which re-exposes the exact defect the shield exists to close. The heal was added to stop a lost completion callback stranding the shield; this is its cost |
-   | `PluginEditor.cpp` — `healGhostTrackedPopupMenus` prunes a tracked window | A `MenuWindow` is hidden-then-DELETED, never hidden-then-re-shown: `showMenuAsync` enters the modal state with `deleteWhenDismissed = true`, so `ModalComponentManager` destroys it | The heal drops a window that is merely hidden and would be shown again — permanently, since it also detaches the component listener. The shield would not rise for it and `dismissTrackedPopupMenus` would not cancel it at teardown, leaving exactly the orphaned window the mechanism exists to remove. The two-tick grace does not help: a re-shown window is a ghost for both of them |
+   | `PluginEditor.cpp` — `healGhostTrackedPopupMenus` prunes a tracked window | A `MenuWindow` is hidden-then-DELETED, never hidden-then-re-shown: `PopupMenuCompletionCallback` owns the root window in a `unique_ptr` and resets it at modal completion, destroying its submenus too (re-checked at 9.0.4; the earlier `deleteWhenDismissed=true` explanation was wrong at 9.0.1 as well) | The heal drops a window that is merely hidden and would be shown again — permanently, since it also detaches the component listener. The shield would not rise for it and `dismissTrackedPopupMenus` would not cancel it at teardown, leaving exactly the orphaned window the mechanism exists to remove. The two-tick grace does not help: a re-shown window is a ghost for both of them |
    | `PluginEditor.cpp` — `popupShield` raised, and TOOLTIP/HOVER targeting | While the shield intercepts, `getComponentAt` resolves it for every pointer position. `TooltipWindow::getTipFor` therefore sees the shield and offers no tip; the 24 Hz `hov` sweep and the animation tick both go through `Component::isMouseOver`, which consults `cachedMouseInsideComponent` ONLY off the message thread and on it iterates the mouse sources asking `getComponentUnderMouse()` — a pointer `setComponentUnderMouse` re-points unconditionally, since the modality early-return sits in `internalMouseEnter/Exit` and skips the callbacks and the cached flag, not the source's tracking. So combo hover art DROPS for the life of the menu, by design, and eases back on the first tick after dismissal | This row asserted the opposite until 2026-08-14 — "hover art survives the raise" — which is a claim about the wrong one of two `isMouseOver` branches, so a bump that CHANGED the behaviour would have looked like agreement. What actually breaks it: `isMouseOver` reading the cached flag on the message thread too (hover would then stick ON, since nothing clears the flag for a blocked component), or `findComponentAt` learning to skip mouse-intercepting siblings (hover would never drop and the tooltip half of this row would go with it) |
    | `LookAndFeel.h` — `drawResizableFrame` suppresses the parented pop-up's doubled edge | `paintOverChildren` calls it with a UNIFORM border equal to `getPopupMenuBorderSize()`, and only when a parent component is set | A non-uniform or differently-sized border stops matching and the doubled edge returns |
    | `PluginEditor.h` — `GatedTooltipWindow` | `TooltipWindow::timerCallback`'s early-show branch ignores `millisecondsBeforeTipAppears` | Tips appear on a different schedule than the gate assumes |
@@ -166,6 +186,7 @@ ecosystem, and a JUCE bump is deliberately manual and review-gated.
 | Date | Bump | ADR | Rule-2 verification |
 |---|---|---|---|
 | **2026-08-16** | **JUCE 9.0.0 `f8f8864…` → 9.0.1 `e18f7f5…`** (owner directive; version 0.1.5) | [ADR-0028](../architecture/design-decisions/ADR-0028-juce-901-pin.md) | **Headless half done, audition half OWED.** Linux x86-64 / GCC 13.3 / Release, fresh build tree: both suites green at the same counts as the old pin (1141 checks, 0 failures) and pluginval at the `build.yml` strictness in both modes ×3 with the editor under xvfb. `AnabasisChannelProbe` printed per-channel output for 33 configurations against the built VST3 bundle at both pins and the two runs agree **digit for digit at nine decimal places**, the macro-with-editor scenario included. Also clean at the new pin: valgrind memcheck on both suites (0 errors from 0 contexts each) and the full Clang leg — build, first-party warning gate, the `SIMDRegister` compile canary, both suites, and the probe against the **Clang-LTO'd** bundle, which agrees with the GCC one digit for digit. The other two OSes are CI's half of rule 2 and land with this commit's run. **Rule 2's Level-5 manual audition has NOT been performed** — it is a human sign-off, it is what this rule exists to demand of a JUCE change, and no measurement above substitutes for it. Rules 3, 6 and 7 are discharged in ADR-0028 §Verification |
+| **2026-10-22** | **JUCE 9.0.1 `e18f7f5…` → 9.0.4 `3fb5cbc…`** (owner directive 2026-10-21; application version remains 0.2.17) | [ADR-0047](../architecture/design-decisions/ADR-0047-juce-904-upgrade.md) | **Linux headless checks complete; platform CI and Level-5 audition remain separate.** Rebuilt old/new pins on the same first-party implementation: 795 DSP + 1638 state checks each; 33 channel-probe scenarios agree to nine decimal places; the old session re-saves byte-identically and all six render hashes/latencies agree. Cache regression: six tests pass and both old defaults fail against the original CMake. pluginval at the workflow strictness, both modes ×3 under Xvfb; deterministic pass 2 used one documented Linux signal-crash retry (139), all other passes first-attempt. Attribution and internal assumptions re-verified. The local GCC-14 ABI is unchanged but exceeds the shipping CXXABI floor at both pins; the Clang-22 CI must verify release ABI. Details, reproduction source and limits: `worklogs/2026-10-21-juce-904-upgrade.md`. **No Level-5 audition claimed.** |
 
 Every future bump appends a row here with its ADR and the rule-2 verification result. A row whose
 rule-2 cell claims a Level-5 audition must name who performed it and when; the first row does not,

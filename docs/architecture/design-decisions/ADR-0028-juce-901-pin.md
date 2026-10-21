@@ -15,6 +15,9 @@
 
 **Status:** **Accepted — 2026-08-16**, on the owner's directive. Version 0.1.5.
 
+> **Pin superseded by [ADR-0047](ADR-0047-juce-904-upgrade.md):** the owner requested JUCE
+> 9.0.4 on 2026-10-21. This record retains the 9.0.1 decision and its measurements as history.
+
 ## Context
 
 The pin was decided at P0 as a **product-family** decision, not a per-repository one. OQ-001

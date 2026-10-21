@@ -2597,9 +2597,9 @@ void AnabasisAudioProcessorEditor::componentBeingDeleted (juce::Component& c)
 //
 // Unreachable today, and the reason is a JUCE INTERNAL rather than anything here:
 // every window that reaches `preparePopupMenuWindow` is created by
-// `PopupMenu::showMenuAsync`, which enters the modal state with
-// `deleteWhenDismissed = true`, so `ModalComponentManager` destroys it on a later
-// dispatch and the SafePointer nulls. A menu shown any other way — a future call
+// `PopupMenu::showMenuAsync`; its completion callback owns the root window and
+// resets that unique_ptr when the modal state ends, destroying its submenus too.
+// The SafePointer nulls then. A menu shown any other way — a future call
 // site, a `PopupMenu` served to a component this look-and-feel does not own —
 // carries no such promise.
 //

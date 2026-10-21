@@ -38,9 +38,9 @@ headless Linux machine, no IDE.
   suite COUNT, and this line used to imply it did. The count's home is `docs/HANDOVER.md`'s Test
   Status row, re-counted from the suites' own printed output — and `docs/policies/TESTING_POLICY.md`
   for the gate, which is deliberately stated in one place).
-- **Decided and frozen from the first build:** the JUCE pin (**9.0.1** at commit `e18f7f5…`;
-  9.0.0 at `f8f8864…` until ADR-0028 moved it on 2026-08-16, ahead of Anamorph — which has
-  since followed onto the same commit, so the two products are no longer split) and the
+- **Decided and frozen from the first build:** the JUCE pin (**9.0.4** at commit `3fb5cbc…`;
+  ADR-0047 upgrades 9.0.1 on the owner's directive and restores the shared pin with Anamorph)
+  and the
   plugin identity (**`RTec` / `Anbs` /
   `com.rollytech.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.
 - **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development) and
@@ -71,14 +71,13 @@ headless Linux machine, no IDE.
 ## Requirements
 
 - **CMake ≥ 3.22**, a **C++23** compiler (GCC 13+, Clang 17+, MSVC 19.35+, AppleClang 15+ — ADR-0030), **Ninja** (recommended).
-- **JUCE 9.0.1**, fetched automatically by CMake `FetchContent` and pinned to that tag's
-  **immutable commit SHA** `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`. OQ-001 pinned the
-  revision the sibling product Anamorph pins, so both plugins share one framework baseline.
-  **ADR-0028 (2026-08-16) moved Anabasis to 9.0.1 ahead of the sibling; Anamorph has since
-  followed, and as of 2026-08-30 both pin that same commit** — so a JUCE-attributable behaviour
-  difference between the two products is again impossible by construction.
+- **JUCE 9.0.4**, fetched automatically by CMake `FetchContent` and pinned to that tag's
+  **immutable commit SHA** `3fb5cbc0340758596dac39f7c8de47d562b4896e` (ADR-0047).
+  Anamorph's reference checkout pins the same commit. Existing 9.0.0/9.0.1 build caches are
+  rejected with a reset command; clear both fields before rebuilding:
+  `cmake -S . -B build -UANABASIS_JUCE_TAG -UANABASIS_JUCE_VERSION`.
   `docs/policies/DEPENDENCY_POLICY.md` carries the version-lock reasoning, the record of the
-  divergence and its re-convergence, and what the next bump owes the family; changing the pin is
+  divergence and re-convergence, and what the next bump owes the family; changing the pin is
   an Architecture Review Gate item.
 - Linux build deps install via `scripts/setup-linux.sh`. See `docs/procedures/BUILD.md`.
 
@@ -163,6 +162,8 @@ The full technical documentation lives in **[`docs/`](docs/)**:
 - **History & status:** [`CHANGELOG.md`](CHANGELOG.md) ·
   [`docs/HANDOVER.md`](docs/HANDOVER.md) · [`docs/KNOWN_ISSUES.md`](docs/KNOWN_ISSUES.md) ·
   [`docs/FUTURE_RISKS.md`](docs/FUTURE_RISKS.md) · [`docs/POSTMORTEMS.md`](docs/POSTMORTEMS.md)
+- **JUCE 9.0.4 upgrade:** [ADR-0047](docs/architecture/design-decisions/ADR-0047-juce-904-upgrade.md)
+  and [verification record](worklogs/2026-10-21-juce-904-upgrade.md).
 
 The documentation falls into **four classes**, kept deliberately separate — Developer, User
 (`docs/user/`), Internal/testing, Legal. `worklogs/` sits outside all four: session-local

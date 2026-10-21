@@ -589,6 +589,9 @@ jobs:
           key: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-release-${{ github.run_id }}
           restore-keys: ccache-ubuntu-clang${{ env.ANABASIS_CLANG_VERSION }}-release-
 
+      - name: JUCE cache migration regression (no network or JUCE build)
+        run: python3 tests/juce_cache_tests.py
+
       - name: Configure
         # ANABASIS_BUILD_BENCH is ON here and nowhere else. The bench stays OFF
         # by default (a benchmark that always builds gets run casually and

@@ -624,7 +624,7 @@ Beyond the inherited structure, Anabasis's Level-2/3 suites must additionally as
 | Area | Anamorph | Anabasis | Why |
 |---|---|---|---|
 | **C++ standard** | C++17 | **C++23** — §2.1 asked for C++20 plus a non-blocking C++23 canary, and that is what shipped from P1 through 0.1.6. **ADR-0030 (2026-08-22) ended it**: the baseline moved to 23 on the owner's directive, the `ANABASIS_CXX_STANDARD` seam and the canary workflow were removed, and OQ-006 is superseded. The two products are aligned again at 23. §2.1's other rule — no modules, and C++23 *library* features only behind feature-test macros and a first-party abstraction — is unchanged | §2.1; ADR-0030 |
-| **JUCE** | 9.0.0, SHA-pinned | **9.0.1**, SHA-pinned at `e18f7f5…` — §2 asked for the newest stable 9.x to be checked at P0; that check was made and resolved in favour of matching the sibling, so the line started on one framework baseline (**9.0.0** at `f8f8864…`, OQ-001). **ADR-0028 (2026-08-16) ended that**: Anabasis moved to 9.0.1 on the owner's directive and Anamorph did not, so this row is now a real delta rather than a shared value. The six modules that decide DSP, parameters, state and the format wrappers are byte-identical across the two tags, so the divergence cannot produce an audible or host-visible difference between the products | §2 |
+| **JUCE** | **9.0.4**, SHA-pinned | **9.0.4**, SHA-pinned at `3fb5cbc…` — ADR-0047 restores the shared framework commit on the owner's upgrade directive. OQ-001 originally chose the sibling's 9.0.0 pin; ADR-0028 moved Anabasis to 9.0.1 in 2026-08. The current build explicitly excludes the newly enabled MP3/Opus/WebP codecs. This Part II summary follows the build; the original Part I specification is unchanged | §2; ADR-0047 |
 | **Signal chain** | Input → engine → Mix → Mono Maker → Output → Solo | Input Gain → EQ → Comp → Clipper/Sat → Limiter → Ceiling → Dither → Output | §3 |
 | **Oversampling scope** | wraps the nonlinear stages only | must additionally serve **true-peak detection at ≥ 4×** (BS.1770-4) | §4.3 |
 | **Simple/Advanced** | Advanced *adds* modules; Advanced-only modules default-bypass | Simple is a **macro layer over the same parameter model**; switching must not change the sound | §5.3 — a new policy, `MODE_AND_ADAPTATION_POLICY.md` |
@@ -652,9 +652,9 @@ licence tier and whether to extract a shared `rollytech-ui` module (§1.2). **Do
 of them** (§13).
 
 Two are now **resolved** and are therefore *decisions*, not choices to revisit: the JUCE pin
-(OQ-001 resolved it at **9.0.0**, commit `f8f8864…`, the revision Anamorph pins; **ADR-0028 moved
-it to 9.0.1 at `e18f7f5…` on 2026-08-16**, through the Architecture Review Gate, and Anamorph
-stayed — so the pin is still a decision and no longer a shared one) and the plugin identity
+(OQ-001 originally resolved it at **9.0.0**, commit `f8f8864…`; ADR-0028 moved it to 9.0.1,
+and **ADR-0047 moves it to 9.0.4 at `3fb5cbc…`**, again matching Anamorph; the pin remains a
+decision under the Architecture Review Gate) and the plugin identity
 (**`RTec` / `Anbs` / `com.rollytech.anabasis`** — OQ-003; the vendor code spells RollyTech, and
 Anamorph moved to it in its 0.9.1 so the product line agrees from the start). Both must be written
 into `CMakeLists.txt` at P1 and are frozen from the first build that leaves the repository

@@ -15,11 +15,9 @@ inventory are adapted from `Anamorph:THIRD_PARTY_LICENSES.md`. The **findings ar
 copied**: every row below was re-verified against this repository's own pinned JUCE tree and
 its own build objects, exactly because "an inventory copied from another project is not
 evidence" (`RELEASE_POLICY.md`, constraint C7). The resulting component set still matches the
-sibling's — a result, not an assumption, and now one that carries more weight rather than less:
-**the two products stopped pinning the same JUCE commit on 2026-08-16** (ADR-0028 moved Anabasis
-to 9.0.1 while Anamorph stays at 9.0.0), so the match is no longer the arithmetic consequence of
-an identical tree. It survives because the 9.0.0 → 9.0.1 delta adds and removes no vendored
-component, which is stated with its evidence below.
+sibling's — a result, not an assumption. **ADR-0047 restores the shared JUCE 9.0.4 pin** with
+the read-only Anamorph reference. Anabasis explicitly disables the newly enabled MP3, Opus and
+WebP codecs on every plugin/test/tool consumer, preserving its previous compiled component set.
 
 ## How this inventory was produced
 
@@ -34,17 +32,26 @@ not from memory:
 
 | Question | How it was answered |
 |---|---|
-| Which components exist? | `LICENSE.md` at the root of the fetched JUCE checkout — JUCE's own authoritative dependency list — plus a walk of the compiled translation units for components that reach the build transitively (see the FreeType/stb note below) |
+| Which components exist? | `LICENSE.md` at the root of the fetched JUCE checkout now points to `JUCE.spdx.json`, JUCE's dependency inventory; inspect both, plus the compiled translation units for components that reach the build transitively (see the FreeType/stb note below) |
 | What licence does each carry? | the component's real licence file inside the JUCE tree (paths cited per row) |
 | Which are actually compiled into Anabasis? | `nm` symbol probes on the **per-TU object files** of a Release build (e.g. `FLAC__stream_decoder_init_stream` in `juce_audio_formats_flac_2.c.o`, `SBAlgorithmCreate` in `juce_graphics_Sheenbidi.c.o`, `jcopy_block_row` in `juce_graphics_libjpg_1.c.o`, `png_create_read_struct` in `juce_graphics_libpng.c.o`, `hb_buffer_create` in `juce_graphics_Harfbuzz.cpp.o`, `PVG_FT_*` in `juce_graphics_lunasvg.c.o`, `vorbis_synthesis` in `juce_audio_formats.cpp.o`). Probing the **linked** `.so` is unreliable here — this project builds with LTO and `--gc-sections` (`juce_recommended_lto_flags`, `AnabasisHardening`), which internalise or drop most static C symbols from the final image — so the objects, not the image, are the evidence |
 | Which are present but *not* built? | the compile-time gate that excludes them (`#if` guard, platform guard, or a `FORMATS` value Anabasis does not build), confirmed by the absence of their symbols from the same objects (e.g. `juce_audio_processors_headless_lv2_libs.cpp.o` contains zero `lilv_`/`serd_`/`sord_`/`sratom_`/`lv2_` symbols) |
 
-To re-verify after a JUCE bump, repeat exactly that: read the new `LICENSE.md`, then re-run
+To re-verify after a JUCE bump, repeat exactly that: read the new `LICENSE.md` and `JUCE.spdx.json`, then re-run
 the symbol probes against a fresh Release build's object files. See
 [`docs/policies/DEPENDENCY_POLICY.md`](docs/policies/DEPENDENCY_POLICY.md).
 
-Pinned version: **JUCE 9.0.1**, commit `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`. Paths below
+Pinned version: **JUCE 9.0.4**, commit `3fb5cbc0340758596dac39f7c8de47d562b4896e`. Paths below
 are relative to that checkout (`build/_deps/juce-src/` in a local build) unless stated otherwise.
+
+**9.0.4 re-verification (ADR-0047):** the SPDX inventory adds Opus/libwebp, which are excluded
+below. The FLAC licence file drops JUCE's introductory prose; its BSD grant is unchanged.
+Ogg/Vorbis move into separate `codecs/ogg` and `codecs/vorbis` directories; both `COPYING`
+files contain the same BSD text previously reproduced in `NOTICE`. The other compiled
+components' licence files are unchanged. The JUCE dual grant remains AGPLv3 or commercial;
+the new `LICENSE.md` explanatory text does not change that grant. Build-object verification
+and the compiled/excluded symbol probes are recorded in
+[`worklogs/2026-10-21-juce-904-upgrade.md`](worklogs/2026-10-21-juce-904-upgrade.md).
 
 **Re-verified at the 9.0.1 bump (2026-08-16, ADR-0028), by the procedure above rather than by
 inspection.** JUCE's own `LICENSE.md` is byte-identical between the two tags, and so is every
@@ -106,12 +113,12 @@ All of it arrives via JUCE modules; none of it is separately vendored by this re
 | **libjpeg (IJG)** | JPEG image decoding | Independent JPEG Group licence — **carries a mandatory acknowledgement** (see below) | `modules/juce_graphics/image_formats/jpglib/README` §LEGAL ISSUES (the condition-(2) wording sits at lines 129-131) |
 | **zlib** | Deflate/inflate used by JUCE's zip and PNG paths (compiled as `juce_core_zlib.c`) | zlib licence — © 1995-2026 Jean-loup Gailly and Mark Adler | `modules/juce_core/zip/zlib/README` (§"Copyright notice") |
 | **FLAC** | Audio-file reading via `juce_audio_formats` | BSD 3-clause — © Josh Coalson / Xiph.Org Foundation | `modules/juce_audio_formats/codecs/flac/Flac Licence.txt` |
-| **Ogg Vorbis** | Audio-file reading via `juce_audio_formats` (compiled inside the module's unity TU) | BSD 3-clause — © 2002-2020 Xiph.org Foundation | `modules/juce_audio_formats/codecs/oggvorbis/libvorbis-1.3.7/COPYING` |
+| **Ogg / Vorbis** | Audio-file reading via `juce_audio_formats` (Ogg in `juce_audio_formats_ogg.c`; Vorbis in the C++ module) | BSD 3-clause — © 2002-2020 Xiph.org Foundation | `modules/juce_audio_formats/codecs/ogg/COPYING` and `modules/juce_audio_formats/codecs/vorbis/COPYING` |
 | **GLEW / Mesa / Khronos OpenGL declarations** | The OpenGL entry points in `juce_gl.h`. `juce_opengl` is linked **unconditionally on every platform** (ADR-0008); only the context *attach* is gated at runtime — macOS/Windows yes, Linux/X11 never (`DESIGN.md` §6.1) | BSD (GLEW), MIT (Mesa), MIT (Khronos) | `modules/juce_opengl/opengl/juce_gl.h`, between the `BEGIN_GLEW_LICENSE` / `END_GLEW_LICENSE` markers |
 | **AudioUnitSDK** | The AU wrapper — **macOS builds only** (the `APPLE` gate in `CMakeLists.txt` is what adds `AU` to `FORMATS`) | Apache License 2.0 | `modules/juce_audio_plugin_client/AU/AudioUnitSDK/LICENSE.txt` |
 
 FLAC and Ogg Vorbis reach the binary because `JUCE_USE_FLAC` and `JUCE_USE_OGGVORBIS` both
-default to `1` (`modules/juce_audio_formats/juce_audio_formats.h:69-85`) and Anabasis does not
+default to `1` (`modules/juce_audio_formats/juce_audio_formats.h`) and Anabasis does not
 override them. Anabasis itself never reads audio files (presets are XML text); the codecs come
 along with the module.
 
@@ -147,7 +154,7 @@ anyone redistributing the binaries further must carry both files along:
 zlib and libpng ask for acknowledgement but explicitly do *not* require it; it is given anyway.
 **stb** is dual MIT/public-domain, so attribution is optional; it is listed for completeness.
 
-> **Two of these are not in JUCE's own `LICENSE.md` dependency list.** FreeType and stb reach the
+> **Two of these were not in JUCE's former `LICENSE.md` dependency list.** FreeType and stb reach the
 > build *transitively*, vendored inside PlutoVG rather than by JUCE directly, so reading JUCE's
 > list alone would have missed both. This is why the verification step above walks the actual
 > compiled translation units (`juce_graphics_lunasvg.c` `#include`s the three `plutovg-ft-*.c`
@@ -159,7 +166,7 @@ zlib and libpng ask for acknowledgement but explicitly do *not* require it; it i
 
 ## 3. Steinberg VST 3 — separate review required
 
-The VST 3 SDK **source code** bundled with JUCE 9.0.1 is under the **MIT licence**
+The VST 3 SDK **source code** bundled with JUCE 9.0.4 is under the **MIT licence**
 (`.../VST3_SDK/LICENSE.txt`, "Copyright (c) 2025, Steinberg Media Technologies GmbH").
 
 The MIT grant covers the code. It does **not** cover the "VST" name and logo, or the terms on
@@ -183,9 +190,11 @@ Listed for completeness so a future audit does not have to re-derive the exclusi
 confirmed excluded by the stated gate *and* by the absence of its symbols from this build's
 objects.
 
-| Component | Licence (per JUCE's `LICENSE.md` / its own file) | Why it is not in Anabasis |
+| Component | Licence (per JUCE's SPDX inventory / its own file) | Why it is not in Anabasis |
 |---|---|---|
-| **JUCE MP3 decoder** | JUCE's own terms, with an explicit patent/IP disclaimer | `JUCE_USE_MP3AUDIOFORMAT` defaults to **0** and Anabasis does not enable it, so the decoder's body is `#if`-ed out (zero MP3-named symbols in the build). JUCE's disclaimer warns the code is *"NOT guaranteed to be free from infringements of 3rd-party intellectual property"* — Anabasis therefore ships no MP3 decoder. |
+| **JUCE MP3 decoder** | JUCE's own terms | The default changed to **1** in 9.0.2 and the former IP disclaimer was removed upstream. Anabasis explicitly sets `JUCE_USE_MP3AUDIOFORMAT=0` on all six consumers, so the decoder remains excluded. |
+| **Opus / opusfile / libopusenc** | BSD 3-clause; `modules/juce_audio_formats/codecs/opus/{opus,opusfile,libopusenc}/COPYING` | New in 9.0.3 and enabled by default. `JUCE_USE_OPUS=0` on all six consumers excludes the codec. The two generated codec objects contain only JUCE's empty-unit placeholders. |
+| **libwebp** | BSD 3-clause with a separate patent grant; `modules/juce_graphics/image_formats/libwebp/COPYING` and `PATENTS` | New in 9.0.3 and enabled by default. `JUCE_USE_WEBP=0` on all six consumers excludes it. JUCE's host-side `juceaide` build helper uses its own defaults; it is not shipped with Anabasis. |
 | **LV2 SDK** (lv2, lilv, serd, sord, sratom) | ISC | `juce_audio_processors_headless_lv2_libs.cpp` is compiled but its content is behind `#if JUCE_INTERNAL_HAS_LV2`; the object contains no `lv2_`/`lilv_`/`serd_`/`sord_`/`sratom_` symbols. Anabasis neither builds an LV2 plug-in nor hosts plug-ins. |
 | **AAX SDK** | Proprietary Avid AAX licence / GPLv3 | AAX is **Not Supported** (`docs/policies/COMPATIBILITY_POLICY.md`, `DEVELOPMENT_BRIEF.md` §2); it is not in Anabasis's CMake `FORMATS`. |
 | **Steinberg ASIO SDK** | Proprietary Steinberg ASIO licence / GPLv3 | Only the licence file and headers are present (`modules/juce_audio_devices/native/asio/`); `JUCE_ASIO` is not enabled (no `ASIOInit` in the build). |

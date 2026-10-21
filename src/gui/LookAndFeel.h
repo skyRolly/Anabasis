@@ -219,7 +219,7 @@ public:
     // can know one is on screen without owning it.
     //
     // `PopupMenu::MenuWindow`'s constructor calls `preparePopupMenuWindow` on the
-    // MENU's own look-and-feel (juce_PopupMenu.cpp:500), and both of the widgets
+    // MENU's own look-and-feel (juce_PopupMenu.cpp:515), and both of the widgets
     // that open menus we did not write hand the menu OUR look-and-feel first:
     // `ComboBox::showPopup` (juce_ComboBox.cpp:561) and `TextEditor`'s context
     // menu (juce_TextEditor.cpp:1578). One hook therefore catches every drop-down

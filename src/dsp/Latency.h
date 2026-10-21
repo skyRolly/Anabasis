@@ -58,9 +58,9 @@ inline bool truePeakPathEngages (double sampleRate) noexcept
 //
 // The values are getLatencyInSamples() MEASURED against the JUCE tree pinned
 // when they were taken (9.0.0, f8f8864…) in that mode. They still describe the
-// current pin (9.0.1, e18f7f5…) because juce_dsp differs between those two tags
+// current pin (9.0.4, 3fb5cbc…) because juce_dsp differs between those tags
 // only in its module-declaration version string — no filter design moved
-// (ADR-0028). A JUCE bump that DOES change either design fails
+// (ADR-0028, ADR-0047). A JUCE bump that DOES change either design fails
 // testReportedLatencyMatchesImpulse across the OS matrix — that is
 // RISK-001's tripwire doing its job, not an inconvenience to suppress.
 // prepare() also asserts table == getLatencyInSamples() per instance, so a
