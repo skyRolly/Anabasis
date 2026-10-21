@@ -103,6 +103,12 @@ Lowering strictness below the phase value is a deliberate act that must be justi
     gate's whole value is its silence being meaningful. The same job runs `check-portability.py --compile-canary`, which
     verifies the pinned JUCE still HAS the hazard the lint guards.
 
+    **Since ADR-0047, before configuration:** `python3 tests/juce_cache_tests.py` must pass.
+    It configures the real top-level build against a local dependency stand-in and verifies
+    that previous default JUCE cache fields cannot reach FetchContent silently; fresh pins,
+    two-field resets, custom overrides and local comparisons are exercised without downloading
+    or building JUCE. CMake, Ninja and a C/C++ compiler are required.
+
     **The plugin half of this job is not optional, and INC-004 is why.** ADR-0008 puts
     `juce_recommended_lto_flags` on the plugin target ALONE — deliberately, so the suites measure
     the DSP rather than the optimiser. The consequence is that the product is the only artefact

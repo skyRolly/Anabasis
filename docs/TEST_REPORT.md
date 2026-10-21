@@ -17,6 +17,30 @@ version string, so no filter, oversampler or block primitive moved underneath th
 Deterministic stimuli (exact-bin sines, fixed seeds); FFT = `juce::dsp::FFT`, 8192-point,
 rectangular window on exact-bin content.
 
+## JUCE 9.0.4 upgrade comparison — 2026-10-22 (ADR-0047)
+
+Linux x86-64 / Debian 13, GCC 14.2.0, CMake 3.31.6, Ninja 1.12.1, C++23 Release, default
+LTO/hardening on the plugin; identical first-party implementation from `a3a8785`, built at
+JUCE 9.0.1 and 9.0.4. The full self-tests retain their existing non-LTO configuration.
+
+`AnabasisChannelProbe --assert-discriminating`, hosting the VST3 under Xvfb, agrees to nine
+decimal places across all 33 scenarios, including the macro with an editor. Both runs compare
+112 scenario pairs with four declared link collapses and zero undeclared collapses. The engine
+reproduction's full outputs also agree.
+
+A real-processor probe writes a 10,531-byte 9.0.1 session with differing A/B parameters,
+nondefault internal state and Unicode/XML-special preset metadata. The 9.0.4 reader re-saves
+it byte-identically, preserves all 50 parameter bit patterns in both slots and reproduces all
+six distinct offline-render hashes at 44.1/48/96 kHz. Reported latencies are 502/541/1021 samples
+at those rates with 4× linear-phase oversampling, identical at both pins. Repeated baseline
+reads are identical. Full method, source, hashes and execution limits:
+`worklogs/2026-10-21-juce-904-upgrade.md`.
+
+The local GCC-14 ABI report is unchanged between pins but exceeds the shipping CXXABI floor
+(1.3.15 versus 1.3.9). This local measurement does not establish the release ABI; that remains
+the pinned Clang-22 CI gate. Platform CI and Level-5 audition are separate from these figures.
+The dated measurements below retain their original environments.
+
 ## Aliasing (DSP_POLICY invariants 5/6) — 2026-08-01, P2
 
 Stimulus: exact-bin sine, hard-clip shape (w = 0), drive +12 dB — the worst-case memoryless

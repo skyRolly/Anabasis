@@ -47,6 +47,13 @@ read as data, so the sample heading immediately below is not mistaken for struct
 
 ## [Unreleased]
 
+### Changed
+- **Upgrade the JUCE framework from 9.0.1 to 9.0.4**, including upstream windowing,
+  OpenGL, message-lock and malformed-input fixes. Keep unused MP3/Opus/WebP codecs disabled;
+  existing CMake caches must reset both JUCE fields before rebuilding. Plugin identity,
+  parameter/state contracts and reported latency are unchanged; no migration is needed.
+  Evidence: commit `81137d8`; ADR-0047; `worklogs/2026-10-21-juce-904-upgrade.md`. [Verified]
+
 ### Fixed
 - **BYPASS no longer admits delayed audition peaks into the session TP hold.**
   TP eligibility now follows the estimator's six-frame reporting lag at both

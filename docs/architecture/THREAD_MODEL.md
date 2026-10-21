@@ -227,9 +227,9 @@ either, and both clauses now carry a dated by-exception amendment. Nothing on th
 changed.
 
 **A NUANCE THE ROW ABOVE HAS ALWAYS LEFT OUT, and round 11 measured it: JUCE paints components on
-the GL render thread UNDER THE MESSAGE-MANAGER LOCK.** At the ADR-0028-pinned JUCE 9.0.1,
+the GL render thread UNDER THE MESSAGE-MANAGER LOCK.** Re-checked at JUCE 9.0.4 (ADR-0047),
 `OpenGLContext::CachedImage::renderFrame` takes a `MessageManager::Lock::ScopedTryLockType`
-(`juce_OpenGLContext.cpp:372`, `scopedLock.emplace (mmLock)`), returns early if it cannot get it, and
+(`juce_OpenGLContext.cpp:405`, `scopedLock.emplace (mmLock)`), returns early if it cannot get it, and
 releases it only after `paintComponent` — which itself opens with
 `JUCE_ASSERT_MESSAGE_MANAGER_IS_LOCKED`. So a component paint on the render thread is mutually
 exclusive with the message thread, and the interleavings ADR-0027, ADR-0038 and ADR-0039 defend

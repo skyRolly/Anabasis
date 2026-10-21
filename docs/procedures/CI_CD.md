@@ -45,6 +45,14 @@ future `release.yml` can reuse the whole matrix with identical gates — tag pus
 
 ## Build matrix
 
+JUCE is pinned to **9.0.4** by ADR-0047. The `linux` job runs
+`python3 tests/juce_cache_tests.py` before its ordinary configure step; the test uses a local
+FetchContent stand-in to verify migration from old default caches without network access.
+The existing self-test, pluginval (both modes ×3), platform, sanitizer and realtime gates
+continue to apply. Their current execution results belong to the PR checks; local Linux
+upgrade evidence and remaining manual validation are in
+`worklogs/2026-10-21-juce-904-upgrade.md`.
+
 | Job | Runner | Builds | pluginval |
 |---|---|---|---|
 | **linux** | `ubuntu-latest`, **pinned Clang** (ADR-0032) | VST3 + Standalone (+ tests + bench + probe) — **the shipped Linux artifact**; runs the portability compile canary, both reproductions against the bundle it just built, the ABI floor assertion, and (last, after the uploads) the zero-first-party-warning gate | both modes ×3 — **blocking** |

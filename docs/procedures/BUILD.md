@@ -33,15 +33,19 @@ How to configure and build Anabasis. Headless, command-line only (CMake + JUCE; 
   ([ADR-0033](../architecture/design-decisions/ADR-0033-lto-validation-lane.md)), which is where "the
   tree still compiles under the other major toolchain" is checked. A local GCC build needs none of
   this — any g++ that supports C++23 will do; the pin is about what CI's compatibility claim means.
-- **JUCE 9.0.1** is fetched automatically (CMake `FetchContent`, pinned to that tag's **immutable
-  commit SHA** `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8`) — or pointed at a local checkout.
-  OQ-001 pinned the sibling product's revision; **ADR-0028 (2026-08-16) moved this repository to
-  9.0.1 while Anamorph stayed at 9.0.0**, so the two are a patch apart. See
+- **JUCE 9.0.4** is fetched automatically (CMake `FetchContent`, pinned to that tag's **immutable
+  commit SHA** `3fb5cbc0340758596dac39f7c8de47d562b4896e`) — or pointed at a local checkout.
+  **ADR-0047** upgrades this repository from 9.0.1 and restores the same pin as Anamorph. See
   `docs/policies/DEPENDENCY_POLICY.md` for the version-lock reasoning.
-  A tree configured against the previous pin does **not** pick this up: `ANABASIS_JUCE_TAG` is a
-  cache entry, and `set(... CACHE ...)` never overwrites one. Reconfiguring an existing `build/`
-  keeps fetching 9.0.0 silently. Delete the build directory, or pass
-  `-DANABASIS_JUCE_TAG=e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8` explicitly.
+  `set(... CACHE ...)` never overwrites an existing pin. Configuration now refuses either
+  cached field from the previous 9.0.0/9.0.1 defaults before fetching. Delete the build directory,
+  or reset **both** fields and rebuild:
+  `cmake -S . -B build -UANABASIS_JUCE_TAG -UANABASIS_JUCE_VERSION`.
+  Custom revisions remain supported; `ANABASIS_JUCE_PATH` bypasses the stale-cache guard for
+  an intentional old/new comparison.
+  All six plugin/test/tool consumers explicitly disable `JUCE_USE_MP3AUDIOFORMAT`,
+  `JUCE_USE_OPUS` and `JUCE_USE_WEBP`: their newer defaults add codecs Anabasis does not use.
+  Existing FLAC/Ogg Vorbis support and desktop OpenGL remain enabled as before.
 
 ## Linux dependencies (Ubuntu)
 
@@ -57,7 +61,7 @@ The package lists live in the script so there is one place that knows what a bui
 
 **`headless` (both profiles install these):** `cmake git ninja-build pkg-config ca-certificates
 python3`, ALSA/JACK/libcurl, FreeType/Fontconfig, X11
-(`libx11/xcomposite/xcursor/xext/xinerama/xrandr/xrender`), `libglu1-mesa-dev mesa-common-dev
+(`libx11/xcomposite/xcursor/xext/xi/xinerama/xrandr/xrender`), `libglu1-mesa-dev mesa-common-dev
 libegl-dev`.
 **`full` adds:** `build-essential`, `curl unzip`, `xvfb`, `lld`, `libwebkit2gtk-4.1-dev libgtk-3-dev`.
 
@@ -69,7 +73,7 @@ of the `gcc:16` container — and survives on Ubuntu only as a `Provides:` on th
 unsuffixed name is real on both.
 
 **The web-browser binding is a `full`-only extra and nothing here compiles it:** every target sets
-`JUCE_WEB_BROWSER=0`, JUCE gates the webkit include on that macro, and JUCE 9.0.1 declares no
+`JUCE_WEB_BROWSER=0`, JUCE gates the webkit include on that macro, and JUCE 9.0.4 declares no
 `linuxPackages` for `juce_gui_extra`. Where `libwebkit2gtk-4.1-dev` is absent the successor is
 `libwebkitgtk-6.0-dev` (Debian trixie and later); `libwebkit2gtk-4.0-dev` is the OLDER name and is
 already gone from trixie, so it is not a fallback there.
@@ -113,7 +117,7 @@ scripts/build.sh            # scripts/build.sh [Release|Debug]
 | `ANABASIS_BUILD_TESTS` | ON | Build the `AnabasisTests` + `AnabasisStateTests` console apps |
 | `ANABASIS_BUILD_STANDALONE` | ON | Add the Standalone target (debugging convenience) |
 | `ANABASIS_JUCE_PATH` | "" | Use a local JUCE checkout instead of fetching |
-| `ANABASIS_JUCE_TAG` | `e18f7f5…` (= tag 9.0.1) | JUCE git rev to fetch when no local path is given; `ANABASIS_JUCE_VERSION` (`9.0.1`) carries the human-readable version |
+| `ANABASIS_JUCE_TAG` | `3fb5cbc…` (= tag 9.0.4) | JUCE git rev to fetch when no local path is given; `ANABASIS_JUCE_VERSION` (`9.0.4`) carries the human-readable version. Reset both fields when migrating an old build cache |
 | `ANABASIS_BUILD_NUMBER` | 0 | CI build/dev number shown in the About box (`-DANABASIS_BUILD_NUMBER=${{ github.run_number }}`) |
 
 Offline build (no network) with a local JUCE:

@@ -6,6 +6,16 @@ documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.
 Coverage = how well the module/topic is documented. Confidence = strength of the evidence behind
 that documentation (Verified / Partially Verified / Unverified / Not Supported).
 
+**Last updated: 2026-10-22 — JUCE 9.0.4 upgrade (requested 2026-10-21, ADR-0047).** Synchronized the immutable pin,
+cache-reset procedure, codec exclusions, third-party inventory/NOTICE, dependency-internals
+citations, build/CI/testing procedures, compatibility matrix and developer-brief family pin.
+The cache regression is inventoried in `REPOSITORY_MAP.md`; ADR-0047 is registered and the
+earlier pin decisions are cross-linked. `SOURCE_OF_TRUTH.md` registers the new build regression among verified tests; its existing
+classes cover ADRs, procedure docs and legal attribution. No class was introduced. Runtime measurements,
+rejected alternatives and the boundary of local/platform/manual evidence are in
+`worklogs/2026-10-21-juce-904-upgrade.md`. C++23 remains the baseline; its separate canary
+remains retired (ADR-0030).
+
 **Review addendum (2026-10-21):** `worklogs/2026-10-21-devin-review-pr43.md`
 maps the four DSP findings to #42's later implementations, retains the
 unattributed state-restoration crash, and records the main merge's preservation
@@ -22,7 +32,7 @@ The metering trigger's `DSP_ALGORITHMS.md` is still a planned document; it was
 not generated for this repair. The #43 merge keeps this branch's later DSP
 code and Phase 1 records while retaining the Phase 0 review addendum above.
 
-**Last updated:** for the **AGENTS.md contributor-entry migration (2026-10-21)** — documentation-only: `AGENTS.md` is inventoried as the primary root contributor/agent guide, `CLAUDE.md` as its Claude-compatible import, and the README, repository map, source-of-truth class list, `AI_AGENT_POLICY.md`, `DEVELOPMENT.md` and `DEVELOPMENT_BRIEF.md` now identify the primary guide. The self-coverage row below is synchronized.
+**Previous update:** for the **AGENTS.md contributor-entry migration (2026-10-21)** — documentation-only: `AGENTS.md` is inventoried as the primary root contributor/agent guide, `CLAUDE.md` as its Claude-compatible import, and the README, repository map, source-of-truth class list, `AI_AGENT_POLICY.md`, `DEVELOPMENT.md` and `DEVELOPMENT_BRIEF.md` now identify the primary guide. The self-coverage row below is synchronized.
 Before that, for **the PR #43 split review, merged into this branch (2026-09-29)** — Phase 0's
 evidence re-run on PR #43's own head and the Phase 0 suite count re-counted (1977 = 548 + 1429; the
 addendum above the Phase 0 closure addenda), and the Phase 0 baseline in HANDOVER's count chain
