@@ -42,7 +42,7 @@
 //  ANNOTATE DELIBERATELY, NOT BROADLY. `-Wfunction-effects` verifies the
 //  contract at COMPILE time, but only for callees whose definitions the
 //  translation unit can see; every JUCE call is opaque to it and warns. JUCE
-//  9.0.1 carries no annotations of its own (measured: zero occurrences of
+//  9.0.4 carries no annotations of its own (re-checked at ADR-0047: zero occurrences of
 //  `clang::nonblocking`, `clang::nonallocating` or `__rtsan` in the pinned
 //  checkout), so annotating the call tree transitively produces warnings about
 //  correct code wherever a JUCE call appears. ADR-0029 records the resulting

@@ -141,7 +141,7 @@ public:
     // OpenGL-backed editor on the context's own render thread (macOS, Windows —
     // `THREAD_MODEL`, "Which context paints"), so the painter is a SECOND THREAD
     // reading state the message thread writes. JUCE happens to serialise the two
-    // with the message-manager lock on that path — measured at the pinned 9.0.1,
+    // with the message-manager lock on that path — re-checked at the pinned 9.0.4,
     // and recorded in `THREAD_MODEL` — which is a property of a vendored
     // renderer, not of this class: it is absent from the other callers of
     // `paint`, it can move with the pin, and "safe because something else holds
