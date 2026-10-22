@@ -623,7 +623,7 @@ jobs:
 
       - name: Upload logs, traces, symbolicated stacks and crash reports
         if: ${{ always() && env.LOGDIR != '' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ki028-${{ matrix.runner }}-${{ matrix.ref_label }}-logs
           path: ${{ env.LOGDIR }}
@@ -634,7 +634,7 @@ jobs:
       # captured: they let a human re-symbolicate the .ips crash reports.
       - name: Upload binaries and dSYMs (only when something was captured)
         if: ${{ always() && steps.runs.outputs.captured == '1' }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ki028-${{ matrix.runner }}-${{ matrix.ref_label }}-symbols
           path: |
