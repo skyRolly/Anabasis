@@ -46,7 +46,9 @@ python3 scripts/check-citations.py --check --base d5f227dd05ab26b44432ace590fced
 ```
 
 The portable self-test has three valid choices and 30 seeded snapshot failures,
-plus safe-uninstaller parser controls. Native CI must additionally compile the
+plus safe-uninstaller parser controls. Three independently executed mutants disabling
+missing-icon, native-resource and optional-Standalone checks are killed by their
+specific negative fixtures. Native CI must additionally compile the
 fault seed and fixed installer, test three initial choices and six laps each
 (same-choice repeat, both components, each single selection, return to initial),
 then uninstall. Actual registry missing-file mutations must be rejected and
@@ -66,3 +68,15 @@ remain manual. No DSP/state/GUI/parameter/latency source or existing test change
 No PR merge, ADR acceptance, direct-main write, release/tag, version change or
 installer deployment is part of this work. Windows installations occur only on
 the guarded disposable CI VM.
+
+## Native result at c14b98bb7477906a7cdb429194293d2204060a6c
+
+Windows job 120704412396, push run 40038702266, passed the real ISCC/runtime
+matrix, including the compiled old-target missing-icon reproduction, 18 fixed
+install/reinstall/component-change snapshots, three real missing-icon registry
+mutations and four uninstalls (old seed plus three fixed initial choices).
+Actual generic uninstaller icons extract successfully; sentinels and presets survive.
+Other CI jobs, including sanitizers, are recorded separately; this is a Windows
+result, not a full-matrix claim. The subsequent documentation-only follow-up
+corrects Unreleased subsection placement and records the three local killed mutants;
+installer/harness bytes remain identical to this tested head.
