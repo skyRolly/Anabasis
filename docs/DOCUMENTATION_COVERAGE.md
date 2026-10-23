@@ -7853,3 +7853,7 @@ The new identity checker has source/generated/package good/bad fixtures and same
 the repository map and source-of-truth class include its measurement worklog. Earlier audit
 entries in this file are historical records, including their then-current identifier spellings.
 No C++ source, existing tests, state/parameters/latency, product names, codes or AppId changed.
+
+Native package fixture correction (2026-10-23): productbuild may add metadata-only references.
+The identity gate now checks unique receipts and choice/archive/bundle namespaces separately;
+TESTING and the namespace worklog record the observed nine-reference shape and regression.

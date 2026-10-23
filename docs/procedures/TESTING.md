@@ -875,3 +875,7 @@ production selection/parsing functions. Only native Windows VERSIONINFO access i
 They reject incorrect bundle/package IDs and independent codes/GUIDs/CIDs; native CI separately
 checks actual artifacts. DAW session recall/rescan after CFBundleIdentifier changes remains a
 human validation gap; stable independent codes do not certify every host.
+
+The package identity self-test also covers productbuild normalization: six input references
+and nine generated references can name the same three components. Unique receipts, choice/
+payload membership, payload URI and bundle namespace are checked independently of total refs.
