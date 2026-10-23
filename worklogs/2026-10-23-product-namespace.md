@@ -117,3 +117,9 @@ results are recorded by exact PR head separately.
 
 The current brief's sibling comparison had still said `Anmf` despite current Anamorph using
 RTec. Reported before editing; corrected the documentation only, preserving both actual codes.
+
+Native resource premise correction: pinned `juce_ResourceRc.cpp` emits CompanyName,
+ProductName, FileDescription, FileVersion and ProductVersion; it does not emit InternalName
+or OriginalFilename. The new VERSIONINFO reader's API-boundary fixture failed on the
+incorrect InternalName requirement, then passed after querying only the five real fields.
+No production gate is relaxed for a resource that JUCE actually emits.
