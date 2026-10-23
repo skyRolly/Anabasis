@@ -1,5 +1,12 @@
 # HANDOVER.md
 
+**Namespace governance (record updated 2026-10-24, Asia/Shanghai):** ADR-0048 is Accepted
+under explicit final owner approval; its partial amendments of Accepted ADR-0008 and ADR-0021
+are effective. PR #51 is merged as inspected main `626eb9a04d8da37995eb66fcf2c8c1fe986f7989`.
+`architecture/design-decisions/ADR_INDEX.md` records provenance, ancestry and scoped CI evidence.
+The namespace architecture/owner blockers are closed. This does not close the unrelated fine
+review, audition, owner/legal questions, or unverified DAW/macOS receipt/Windows runtime tests.
+
 Operational status snapshot for technical handover. Update on every release and at every phase
 boundary (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.md`). Facts are Verified from the
 repository; fields with no repository evidence are marked `TODO` rather than invented

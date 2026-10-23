@@ -214,4 +214,5 @@ Contributors and AI agents: read **[`AGENTS.md`](AGENTS.md)** and
 serialization, threading, DSP order, latency) are hard-stop, human-review-required.
 
 Namespace inventory and validation: [product namespace worklog](worklogs/2026-10-23-product-namespace.md).
-ADR-0048 remains Proposed pending independent human review before merge.
+ADR-0048 is Accepted under explicit final owner approval; implementation is merged.
+Native DAW/receipt-installation validation remains unverified.

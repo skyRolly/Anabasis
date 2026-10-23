@@ -159,5 +159,8 @@ rather than banner-marked because, unlike `DESIGN.md`, this file is not a signed
 record: it is the navigation document every contributor reads first, and a wrong instruction in
 it is followed.)*
 
-The namespace measurement record `worklogs/2026-10-23-product-namespace.md` supports Proposed
-ADR-0048; owner implementation/testing permission is distinct from independent human acceptance.
+The namespace measurement record `worklogs/2026-10-23-product-namespace.md` supports Accepted
+ADR-0048. Its partial amendments of Accepted ADR-0008 and ADR-0021 are effective. The
+2026-10-24 reconciliation in `architecture/design-decisions/ADR_INDEX.md` records explicit
+final owner approval, cleared architecture blockers and verified #51 main ancestry. Earlier
+implementation permission remains history; unperformed runtime/manual validation remains unverified.

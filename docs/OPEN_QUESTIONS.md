@@ -522,7 +522,7 @@ it reports the plugin as **missing**.
 | `COMPANY_NAME` | `RollyTech` | same brand |
 | `PLUGIN_MANUFACTURER_CODE` | **`RTec`** | The manufacturer code identifies the **vendor**, so it is shared by every RollyTech plug-in. `Anmf` was rejected: it abbreviates *Anamorph*, the first product, which does not survive a product line. **Anamorph is changing to `RTec` in its 0.9.1** so the two products agree from the start (Anamorph ADR-0023). Also considered and rejected: `Roll` (a common English word — higher chance of colliding with another vendor's registered code), `RolT`, `RlyT`. AU requires ≥ 1 uppercase character; `RTec` satisfies it. |
 | `PLUGIN_CODE` | **`Anbs`** | Per-product and must be unique; `Anmr` is Anamorph's. |
-| `BUNDLE_ID` | **`tech.rolly.anabasis`** | Domain `rolly.tech`; dated namespace amendment ADR-0048 (2026-10-23). |
+| `BUNDLE_ID` | **`tech.rolly.anabasis`** | Domain `rolly.tech`; Accepted ADR-0048; namespace amendment effective under final owner approval (record updated 2026-10-24). |
 | `VST3_CATEGORIES` | **`"Fx" "Dynamics" "Mastering"`** | A maximizer, not a spatial effect (Anamorph uses `"Fx" "Spatial" "Stereo"`). |
 
 **Consequence — none, and that is the point.** Anabasis has never built, so it adopts the final

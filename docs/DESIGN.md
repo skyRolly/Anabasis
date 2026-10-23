@@ -3,7 +3,8 @@
 > Namespace amendment, 2026-10-23 (ADR-0048): the identity references below use the
 > current `tech.rolly.anabasis` implementation. The 2026-07-31 sign-off originally selected
 > `com.rollytech.anabasis`; that historical decision is retained in ADR-0008/ADR-0048.
-> No other part of the signed design is changed; independent review remains pending.
+> ADR-0048 is now Accepted under final owner approval (record updated 2026-10-24); its
+> namespace amendment is effective. The rest of the signed design and historical sign-off remain.
 
 **Status: `Accepted` — signed off by the owner on 2026-07-31.** This closed the P0 exit criterion
 (`DEVELOPMENT_BRIEF.md` §11); P1 implementation is unblocked.
