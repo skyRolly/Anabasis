@@ -84,6 +84,11 @@ never occupied, and omitted `MacroEngine` entirely.)*
 
 ## `scripts/`
 
+`test-windows-installer.ps1` validates actual ISCC installs on disposable Windows CI,
+with a preceding liveness self-test, old-target fault seed, registry/native icon checks,
+component changes and safe uninstallation. First-party copy-and-adapt provenance is in its header.
+
+
 | Path | Responsibility |
 |---|---|
 | `setup-linux.sh` | Ubuntu build dependencies (+ xvfb). |

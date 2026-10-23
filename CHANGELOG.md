@@ -47,6 +47,12 @@ read as data, so the sample heading immediately below is not mistaken for struct
 
 ## [Unreleased]
 
+### Fixed
+- Windows VST3-only installations register a real uninstall icon from the always-installed
+  uninstaller. Standalone remains optional; the icon is generic pending separate branding approval.
+  Evidence: `packaging/windows/Anabasis.iss`; `scripts/test-windows-installer.ps1`;
+  `worklogs/2026-10-24-windows-uninstall-icon.md`. [Verified — source; native CI recorded separately]
+
 ### Changed
 - **Use the domain namespace `tech.rolly.anabasis` for application bundles and macOS package receipts.**
   Previous development receipt identities are intentionally replaced without aliases; independent
@@ -59,7 +65,6 @@ read as data, so the sample heading immediately below is not mistaken for struct
   parameter/state contracts and reported latency are unchanged; no migration is needed.
   Evidence: commit `81137d8`; ADR-0047; `worklogs/2026-10-21-juce-904-upgrade.md`. [Verified]
 
-### Fixed
 - **BYPASS no longer admits delayed audition peaks into the session TP hold.**
   TP eligibility now follows the estimator's six-frame reporting lag at both
   bypass edges. Sample peak and the session clock retain their existing timing,

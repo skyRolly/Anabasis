@@ -91,6 +91,13 @@ Lowering strictness below the phase value is a deliberate act that must be justi
       Unavailable/skipped native checks are reported as such, never as passed. Portable
       fixtures and generated-package inspection do not establish installed receipts,
       installer runtime behavior or real-DAW session compatibility.
+  - **Windows installer runtime** (`scripts/test-windows-installer.ps1`): before installer
+    upload, the Windows job runs its liveness self-test and real ISCC install/reinstall/
+    component-change/uninstall checks on its disposable GitHub-hosted VM. All three initial
+    component choices must register an existing uninstaller with an extractable icon; a
+    VST3-only missing icon must fail. A compiled old-target fault seed and real registry
+    mutation exercise that failure. Cleanup must preserve unrelated files and presets.
+    This does not certify chooser UI, Explorer rendering or a user's machine.
   - `source-lint` — source/evidence lints sharing a job because they guard classes no build can see.
     - `scripts/check-portability.py` rejects an explicit template argument on
       `{jmin, jmax, snapToZero}`, the juce names `juce_dsp` also overloads for

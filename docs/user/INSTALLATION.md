@@ -194,3 +194,8 @@ with its status.
 ---
 
 *Anabasis is © 2026 RollyTech. All rights reserved.*
+
+Windows uninstall icon: the always-installed Inno uninstaller supplies the generic
+icon for all component choices, including VST3-only. No branded Anabasis artwork
+is introduced. Re-running Setup with fewer components does not remove previously
+installed components; use Uninstall to remove the product. Presets/settings are retained.
