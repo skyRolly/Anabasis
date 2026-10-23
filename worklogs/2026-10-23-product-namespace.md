@@ -151,3 +151,45 @@ The initial lane-specific transport correction at `bffde567` passed Clang 22.1.8
 dependency setup exposed why the transport choice should be consistent across hosted Ubuntu
 callers rather than conditional on a job name. This does not change either dependency profile
 or any test/timeout. Current-head native CI re-verifies all callers, including the Debian container.
+
+
+## Review closure — 2026-10-24 (Asia/Shanghai)
+
+Reported drift: the package gate compared only the receipt-ID set, while Distribution's
+correct mapping could conceal exchanged PackageInfo owners. At inspected head `d73eba11ff244ec06f2b329c8b3e3156462a28d1`,
+retained native artifact **12518747335**, ZIP SHA-256 `e8aa93f4157d07e9d2471ce4ac6a5ded21a0b0708565b9a7e1af09b3778d55ca`,
+passes with VST3/AU receipt IDs swapped and Distribution untouched. Read-only XAR extraction
+confirmed the real direct named `.pkg/PackageInfo` layout; no installed receipt was modified.
+
+The corrected production parser binds each named AnabasisVST3/AU/App.pkg to its exact
+`.vst3/.au/.app` receipt and cross-checks Distribution choice IDs, outline and payload URI.
+Unknown/nested/extra component directories fail closed. Committed fixtures use meaningful
+component names, cover all three receipt transpositions, duplicate/missing components,
+wrong payload/choice/outline references and six-/nine-reference valid normalization.
+The original swapped native fixture is now rejected specifically for receipt ownership;
+unmodified retained metadata still passes. New self-tests transplanted onto the old checker
+fail on that swap. Four mutants disabling ownership, directory validation, payload mapping
+or choice ownership are each killed by their own specific negative fixture.
+
+Targeted validation: checker self-test/source, actual generated local Linux metadata,
+retained native PKG metadata, paired old/new and mutation controls, docs/citation/source
+lints. No local DSP rebuild is needed for a metadata-gate correction. Fresh native package
+and all required matrix jobs run on the pushed head; their exact outcome belongs to that
+head's PR/CI report, not to an inherited green claim. Existing local GCC14 ABI-floor limits
+are unchanged and are not described as passing. Audio/state/GUI/latency/parameter sources,
+JUCE pin, version, plugin codes/CIDs/AppId, B0 bytes and installer destinations/UI are unchanged.
+
+Independent inspection reproduced the same concrete package defect here, so this PR includes
+its own correction and fixtures (adapted with provenance from Anamorph #171), without any
+Anamorph writes or shared module. TESTING_POLICY now formally states the existing blocking
+identity checks: universal source, applicable generated/native metadata, macOS packaging and
+same-job malformed-fixture liveness. Runtime receipt/DAW coverage is not invented.
+
+Registry decision: ADR_POLICY permits Proposed records and does not require pretending a
+proposal is effective. ADR_INDEX therefore keeps its existing effective-amendment table and
+adds a distinct **Proposed, not yet effective** table for 0008→0048 and 0021→0048, with an
+explicit promotion/banner/status obligation on formal human acceptance. Original historical
+bundle/receipt values are preserved in the earlier decisions; their banners identify the
+owner-authorized implementation in this unmerged PR. ADR-0048 stays Proposed. Implementation
+permission, independent architecture review, ADR acceptance and merge authorization remain
+separate events. The policy paragraph documents existing gates rather than weakening them.

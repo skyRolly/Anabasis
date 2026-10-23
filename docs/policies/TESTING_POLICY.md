@@ -71,7 +71,27 @@ Lowering strictness below the phase value is a deliberate act that must be justi
   a silent skip: a gate that quietly does nothing is worse than no gate, because it reports green.
 - **The cross-platform gates below are blocking too**, and they exist because a green Linux build
   is not evidence about another platform:
-  - `source-lint` — TWO lints, sharing a job because both guard classes no build can see.
+  - **Product identity is a blocking gate** (`scripts/check-product-identity.py`):
+    - Universally required source checks validate the canonical bundle/package namespace,
+      manufacturer/plugin codes, product/vendor names and preserved Windows installer AppId.
+      `source-lint` runs the checker self-test before this source contract; local preflight does too.
+    - After each applicable native build, validate actual generated JUCE Info/Defs and the
+      independent VST3 audio/controller class UIDs. Linux checks its generated build metadata
+      (ELF has no CFBundleIdentifier); Windows also reads native EXE/VST3 VERSIONINFO;
+      both macOS jobs check the built VST3/AU and enabled Standalone Info.plists, including
+      the AU manufacturer/subtype/type. Native Intel builds with Standalone disabled do not
+      claim Standalone coverage.
+    - macOS packaging additionally validates the real expanded PKG: each named VST3/AU/App
+      component must own its exact receipt ID, and Distribution choices/payload filenames
+      must refer to the same components. Genuine productbuild normalization is accepted;
+      swapped, duplicate, missing, unknown or inconsistent ownership must fail closed.
+    - Each use must follow its self-test in the same job, under rule 5 below. Positive and
+      malformed synthetic source/generated/package fixtures must exercise production parsing
+      and reject bad identities/ownership; a disabled check must be caught by those fixtures.
+      Unavailable/skipped native checks are reported as such, never as passed. Portable
+      fixtures and generated-package inspection do not establish installed receipts,
+      installer runtime behavior or real-DAW session compatibility.
+  - `source-lint` — source/evidence lints sharing a job because they guard classes no build can see.
     - `scripts/check-portability.py` rejects an explicit template argument on
       `{jmin, jmax, snapToZero}`, the juce names `juce_dsp` also overloads for
       `dsp::SIMDRegister`, and requires the Linux installer's scratch names to match the

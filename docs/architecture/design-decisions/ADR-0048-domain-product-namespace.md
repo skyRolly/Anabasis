@@ -10,7 +10,8 @@ Independent human architecture review remains required before merging this PR.
 The owner controls `rolly.tech` and directs all future products to `tech.rolly.<product>`.
 The historical starting tree `1a40afd190d6994e33cfa12ae3fca0f375d4687c` used
 `com.rollytech.anabasis`. ADR-0008 froze that bundle ID and ADR-0021 specified receipts below it.
-Both are partially amended by this proposal; their other decisions and dated evidence remain.
+Both have pending partial amendments recorded in ADR_INDEX.md; those amendments are not yet
+effective. Their other decisions and dated evidence remain.
 The product is pre-release; the owner explicitly accepts the development package-identity break.
 
 ## Problem
@@ -43,6 +44,8 @@ That claim is corrected against the pinned JUCE code, not repeated as a compatib
 - Generated unused AAX/ARA/AU-framework defaults inherit the base too; this enables no new format.
 - Update only the namespace clauses of ADR-0008/ADR-0021 with dated notes. They stay in the
   record; the new ADR stays Proposed pending independent human review.
+- Enforce the existing source/generated/package identity gates through TESTING_POLICY.md,
+  including same-job positive/negative checker fixtures and exact component receipt ownership.
 
 ## Independent identities and consequences
 

@@ -12,10 +12,11 @@ Anamorph's — e.g. NOT containing NOTICE / THIRD_PARTY_LICENSES.md")
 > directive quoted above, under the round's standing sign-off instruction. No serialization,
 > parameter, threading, DSP-order or latency contract is touched.
 
-**Dated namespace amendment — 2026-10-23:** [ADR-0048](ADR-0048-domain-product-namespace.md)
-updates the package receipt namespace; Windows GUID and packaging behavior remain unchanged. The owner approved implementation/testing;
-ADR-0048 remains Proposed pending independent human review. Earlier old-namespace values in
-the options/evidence are historical. The current value is `tech.rolly.anabasis`.
+**Pending namespace amendment — implementation/testing approved 2026-10-23; clarified 2026-10-24:**
+[ADR-0048](ADR-0048-domain-product-namespace.md) proposes changing the receipt namespace.
+Its partial amendment is **not yet effective**: independent human review/acceptance remains
+pending. The unmerged PR #51 uses the owner-authorized `tech.rolly.anabasis`; Windows GUID
+and packaging behavior stay unchanged. The original receipt values below remain historical.
 
 ## Context
 
@@ -62,7 +63,7 @@ staging trees.
    substituted: `linux/{INSTALL.txt,install.sh,uninstall.sh}` (VST3 → `/usr/lib/vst3`,
    standalone → `/usr/local/bin`, root-checked), `windows/{INSTALL.txt,Anabasis.iss}` and
    `macos/{INSTALL.txt,build-pkg.sh}` (three `pkgbuild` components →
-   `tech.rolly.anabasis.{vst3,au,app}` (namespace amended 2026-10-23, ADR-0048), an explicit `distribution.xml` with
+   `com.rollytech.anabasis.{vst3,au,app}` (historical decision; Proposed ADR-0048 records the unmerged namespace change), an explicit `distribution.xml` with
    `customize="allow"` and all three `start_selected="true"`, plus the sibling's own
    post-build self-checks). **The Inno `AppId` is a NEW GUID**, never the sibling's: Inno keys
    upgrade and uninstall on it, so a shared AppId would make either product's installer

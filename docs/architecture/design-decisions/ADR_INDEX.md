@@ -94,6 +94,21 @@ ADR-0015, ADR-0016, ADR-0017.** They were kept as three records rather than one 
 sentence can be true — a single record would have made the second and third clearances look like
 extensions of the first, which is the widening this index exists to make visible.
 
+## Pending ADR amendments — not yet effective
+
+ADR_POLICY.md permits Proposed records; this separate registry records their dependencies
+without adding them to the effective-amendment table below. Implementation/testing permission
+is not acceptance. These two relationships remain **Proposed, not yet effective**:
+
+| Earlier ADR | Proposed amendment | Scope |
+|---|---|---|
+| **0008** | **0048 — Proposed, not yet effective** | Bundle namespace and the identity-derivation claims; independent plugin codes/UIDs stay fixed. |
+| **0021** | **0048 — Proposed, not yet effective** | macOS component receipt namespace; Windows AppId and installer behavior stay fixed. |
+
+On formal human acceptance of ADR-0048, promote both entries to the effective registry and
+update its status, index row and earlier-record banners together. Until then the unmerged
+implementation uses the owner-authorized namespace, while ADR-0048 remains Proposed.
+
 ## ADRs amended by a later ADR
 
 An ADR is a historical record and is **not** rewritten when a later decision moves one of its

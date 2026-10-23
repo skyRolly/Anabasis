@@ -1,5 +1,18 @@
 # DOCUMENTATION_COVERAGE.md
 
+
+**Review closure (2026-10-24):** the retained native PKG's correct ID set still passed with
+VST3/AU receipt ownership swapped. The identity gate now binds named component directories,
+receipts, Distribution choices/outlines and payload filenames, retaining six-/nine-reference
+normalization. All three swaps and malformed membership cases have regressions and an
+ownership-disabled mutant. TESTING, CI_CD, RELEASE_PROCESS and the namespace worklog record
+the correction; no product/audio/installer payload or identity value changes.
+TESTING_POLICY now states the existing blocking identity contract beside the cross-platform
+gates. ADR_INDEX uses a separate **Proposed, not yet effective** amendment registry for
+ADR-0008/ADR-0021 → ADR-0048; the banners preserve historical decisions and explicitly separate
+implementation permission from acceptance. ADR-0048 remains Proposed. This corrects reported
+policy/registry drift, without claiming human approval or installed-receipt/DAW coverage.
+
 Permanent documentation-coverage audit. **Future contributors/AI must update this on every
 documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.md`).
 

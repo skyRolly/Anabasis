@@ -2,10 +2,11 @@
 
 **Status:** Accepted (2026-07-31 — owner sign-off on `docs/DESIGN.md`)
 
-**Dated namespace amendment — 2026-10-23:** [ADR-0048](ADR-0048-domain-product-namespace.md)
-updates the bundle ID; all independent codes and build decisions remain unchanged. The owner approved implementation/testing;
-ADR-0048 remains Proposed pending independent human review. Earlier old-namespace values in
-the options/evidence are historical. The current value is `tech.rolly.anabasis`.
+**Pending namespace amendment — implementation/testing approved 2026-10-23; clarified 2026-10-24:**
+[ADR-0048](ADR-0048-domain-product-namespace.md) proposes changing the bundle namespace and
+qualifies the historical identity-derivation claims. Its partial amendment is **not yet
+effective**: independent human review/acceptance remains pending. The unmerged PR #51 uses
+the owner-authorized `tech.rolly.anabasis`; independent codes/build decisions stay unchanged.
 
 ## Context
 
@@ -295,7 +296,7 @@ plus a fixture-directory definition and `JUCE_STANDALONE_APPLICATION=1`.
 | `COMPANY_NAME` | `RollyTech` |
 | `PLUGIN_MANUFACTURER_CODE` | **`RTec`** (vendor-wide; the sibling moved to it in its 0.9.1 / its ADR-0023) |
 | `PLUGIN_CODE` | **`Anbs`** |
-| `BUNDLE_ID` | **`tech.rolly.anabasis`** (2026-10-23 amendment, ADR-0048) |
+| `BUNDLE_ID` | **`com.rollytech.anabasis`** (historical 2026-07-31 decision; the unmerged namespace implementation is recorded by Proposed ADR-0048) |
 | `VST3_CATEGORIES` | **`"Fx" "Dynamics" "Mastering"`** |
 
 Supporting `juce_add_plugin` flags: `PRODUCT_NAME "Anabasis"`, `IS_SYNTH FALSE`,

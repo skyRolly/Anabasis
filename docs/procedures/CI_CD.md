@@ -658,11 +658,16 @@ scripts/run-pluginval.ps1 -Strictness $Strictness -Mode randomise
 
 ## Product namespace and independent identity gates
 
+The binding requirements are in `docs/policies/TESTING_POLICY.md` under the blocking cross-platform
+gates; this section describes their workflow wiring, not a separate acceptance policy.
+
 `scripts/check-product-identity.py --self-test` precedes every use: source-lint checks
 CMake/package/Windows GUID declarations; Linux, Windows and both macOS jobs inspect actual
 generated metadata and VST3 class IDs. macOS additionally checks all built plists/AU component
 triples; Windows reads VERSIONINFO without executing code. `build-pkg.sh` checks expanded
 PackageInfo/Distribution receipt IDs after a same-job self-test. Reports live under build/.
+Named component ownership, choice references and payload filenames are checked together; an
+unordered receipt-ID set is insufficient. Six-/nine-reference normalization stays supported.
 
 
 ### Hosted Ubuntu dependency transport — 2026-10-23
