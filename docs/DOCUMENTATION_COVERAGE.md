@@ -7841,3 +7841,15 @@ On any change, set this file's "Last updated" to the new HEAD (or the change des
 the first tag) and adjust the affected rows. A new module → add a row; a new doc → add to
 self-coverage; new measured data → upgrade the confidence. Never upgrade a confidence level
 without the evidence that justifies it.
+
+## Domain namespace migration — 2026-10-23
+
+CMake and package receipts/references/probes now use `tech.rolly.anabasis`. ADR-0048 remains
+Proposed with explicit owner implementation/testing permission and independent human review
+pending. ADR-0008/ADR-0021 have dated partial amendments; other decisions are preserved.
+BUILD/CI_CD/TESTING/RELEASE_PROCESS/dependency policy, README/brief/OQ resolution and DESIGN
+namespace references are synchronized; DESIGN preserves the old sign-off value in a dated note.
+The new identity checker has source/generated/package good/bad fixtures and same-job self-tests;
+the repository map and source-of-truth class include its measurement worklog. Earlier audit
+entries in this file are historical records, including their then-current identifier spellings.
+No C++ source, existing tests, state/parameters/latency, product names, codes or AppId changed.

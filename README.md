@@ -42,7 +42,7 @@ headless Linux machine, no IDE.
   ADR-0047 upgrades 9.0.1 on the owner's directive and restores the shared pin with Anamorph)
   and the
   plugin identity (**`RTec` / `Anbs` /
-  `com.rollytech.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.
+  `tech.rolly.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.
 - **Still open** — the JUCE licence tier (OQ-002, blocks distribution not development) and
   **the remaining entries in
   [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)** — which is the list of record, so this
@@ -212,3 +212,6 @@ carried them (ADR-0021; `docs/policies/RELEASE_POLICY.md` §"Third-party attribu
 Contributors and AI agents: read **[`AGENTS.md`](AGENTS.md)** and
 `docs/policies/AI_AGENT_POLICY.md` before changing code. `CLAUDE.md` is a Claude-compatible import of `AGENTS.md`. — some changes (parameter IDs,
 serialization, threading, DSP order, latency) are hard-stop, human-review-required.
+
+Namespace inventory and validation: [product namespace worklog](worklogs/2026-10-23-product-namespace.md).
+ADR-0048 remains Proposed pending independent human review before merge.

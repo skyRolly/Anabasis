@@ -412,6 +412,11 @@ jobs:
       # hazard?". This answers "does the CHECKER still find it?" -- a question
       # about ~200 lines of hand-written lexing in that file, and the half that
       # can silently stop working without anything going red.
+      - name: Product identity self-test and source contract
+        run: |
+          python3 scripts/check-product-identity.py --self-test
+          python3 scripts/check-product-identity.py
+
       - name: Portability lint self-test (the lint still fires, and still stays quiet)
         run: python3 scripts/check-portability.py --self-test
       - name: Citation-gate self-test (recognition, mapping and rewriting)
@@ -652,6 +657,11 @@ jobs:
         run: |
           set -o pipefail
           cmake --build build --config Release 2>&1 | tee clang-build.log
+
+      - name: Verify generated product identities
+        run: |
+          python3 scripts/check-product-identity.py --self-test
+          python3 scripts/check-product-identity.py --build-dir build --platform linux --report build/product-identity-linux.json
 
       # A cache hit changes where the .o files came from, never what they
       # contain, so the link is fed identical input. Note what the strip step
@@ -1642,6 +1652,11 @@ jobs:
         id: build
         run: cmake --build build --config Release
 
+      - name: Verify generated product identities
+        run: |
+          python scripts/check-product-identity.py --self-test
+          python scripts/check-product-identity.py --build-dir build --platform windows --report build/product-identity-windows.json
+
       - name: Self-tests (DSP + state)
         id: tests
         shell: pwsh
@@ -2203,6 +2218,11 @@ jobs:
       - name: Build (VST3 + AU + Standalone + tests)
         id: build
         run: cmake --build build --config Release
+
+      - name: Verify generated product identities
+        run: |
+          python3 scripts/check-product-identity.py --self-test
+          python3 scripts/check-product-identity.py --build-dir build --platform macos --report build/product-identity-macos.json
 
       # Cached objects are real .o files at the paths the linker recorded, so the
       # packaging step's `dsymutil` walk is unaffected -- it reads the same object
@@ -2797,6 +2817,11 @@ jobs:
       - name: Build (VST3 + AU + Standalone + tests + probe)
         id: build
         run: cmake --build build --config Release
+
+      - name: Verify generated product identities
+        run: |
+          python3 scripts/check-product-identity.py --self-test
+          python3 scripts/check-product-identity.py --build-dir build --platform macos --report build/product-identity-macos-intel.json
 
       # THE SINGLE-ARCH CONTROL, and the reason this step exists at all. When a
       # review asked whether ccache really caches the UNIVERSAL build -- older

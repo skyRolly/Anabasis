@@ -865,3 +865,13 @@ Anabasis frame on any thread; the control never aborted). Wiring and triggers: `
 
 These are Level 5 (`TESTING_POLICY.md`) and are a **required release precondition**, not an
 optional extra. A green build + pluginval pass means "ready to audition," not "shipped."
+
+## Product identity regression (ADR-0048)
+
+Run `python3 scripts/check-product-identity.py --self-test` then the source check; after a
+Release build add `--build-dir build --report build/product-identity.json`. Synthetic good/bad
+source, generated Linux/Windows/macOS, AU/VST3 and expanded-package fixtures exercise the
+production selection/parsing functions. Only native Windows VERSIONINFO access is stubbed.
+They reject incorrect bundle/package IDs and independent codes/GUIDs/CIDs; native CI separately
+checks actual artifacts. DAW session recall/rescan after CFBundleIdentifier changes remains a
+human validation gap; stable independent codes do not certify every host.

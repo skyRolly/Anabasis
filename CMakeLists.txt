@@ -12,7 +12,7 @@
 #                             (compiles the REAL wrapper + GUI sources)
 #
 #  Identity is FROZEN (ADR-0008 §Identity): RollyTech / RTec / Anbs /
-#  com.rollytech.anabasis / VST3 "Fx" "Dynamics" "Mastering" / PRODUCT_NAME
+#  tech.rolly.anabasis / VST3 "Fx" "Dynamics" "Mastering" / PRODUCT_NAME
 #  "Anabasis" (an identity field too — the VST3 UID derives from it).
 # ============================================================================
 cmake_minimum_required(VERSION 3.22)
@@ -317,7 +317,7 @@ endif()
 
 juce_add_plugin(Anabasis
     COMPANY_NAME                "RollyTech"
-    BUNDLE_ID                   "com.rollytech.anabasis"
+    BUNDLE_ID                   "tech.rolly.anabasis"
     PLUGIN_MANUFACTURER_CODE    RTec        # vendor-wide — host IDENTITY, frozen (ADR-0008)
     PLUGIN_CODE                 Anbs        # frozen (ADR-0008)
     FORMATS                     ${ANABASIS_FORMATS}

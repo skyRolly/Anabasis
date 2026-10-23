@@ -2,6 +2,11 @@
 
 **Status:** Accepted (2026-07-31 — owner sign-off on `docs/DESIGN.md`)
 
+**Dated namespace amendment — 2026-10-23:** [ADR-0048](ADR-0048-domain-product-namespace.md)
+updates the bundle ID; all independent codes and build decisions remain unchanged. The owner approved implementation/testing;
+ADR-0048 remains Proposed pending independent human review. Earlier old-namespace values in
+the options/evidence are historical. The current value is `tech.rolly.anabasis`.
+
 ## Context
 
 `ADR_POLICY.md` makes an ADR mandatory for two of the things this file settles independently:
@@ -290,7 +295,7 @@ plus a fixture-directory definition and `JUCE_STANDALONE_APPLICATION=1`.
 | `COMPANY_NAME` | `RollyTech` |
 | `PLUGIN_MANUFACTURER_CODE` | **`RTec`** (vendor-wide; the sibling moved to it in its 0.9.1 / its ADR-0023) |
 | `PLUGIN_CODE` | **`Anbs`** |
-| `BUNDLE_ID` | **`com.rollytech.anabasis`** |
+| `BUNDLE_ID` | **`tech.rolly.anabasis`** (2026-10-23 amendment, ADR-0048) |
 | `VST3_CATEGORIES` | **`"Fx" "Dynamics" "Mastering"`** |
 
 Supporting `juce_add_plugin` flags: `PRODUCT_NAME "Anabasis"`, `IS_SYNTH FALSE`,
@@ -315,11 +320,11 @@ P6 as CI-invoked scripts (OQ-007), and `COPY_PLUGIN_AFTER_BUILD` stays `FALSE`.
   sibling ADR** — the sibling's own 9.0.0 SHA-pin ADR is still `Proposed` upstream. Nothing about
   Anabasis's pin is contingent on that status; it is noted so a reader following the precedent
   citation is not surprised by it.
-- **Identity is unrecoverable after the first escaped build.** A later change to `RTec`, `Anbs`,
-  `Anabasis` (the product name) or `com.rollytech.anabasis` changes the VST3 class UID and the AU
-  component identity, and every host session referencing the old one reports the plugin as missing.
-  There is no exception left to spend. In exchange, Anabasis never carries an identity it has to
-  change — the sibling absorbed that disruption once, for the family.
+- **Independent plugin identities remain frozen.** Technical correction, 2026-10-23
+  (ADR-0048): on the pinned 9.0.4 path with VST2 replacement disabled, RTec/Anbs determine
+  the VST3 class UID and AU component triple; BUNDLE_ID does not. Product name remains frozen
+  as host-facing identification. The bundle/receipt namespace change is separately owner-authorized;
+  native host recall/rescan remains a human validation requirement.
 - `DSP_POLICY.md` invariant 13's build-level invariant→test row becomes writable at P1 exactly as
   stated, because `AnabasisTests` links the core with no wrapper present.
 - The INTERFACE core means DSP sources are compiled once per consuming final target (VST3, AU,

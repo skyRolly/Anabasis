@@ -1,5 +1,10 @@
 # DESIGN.md — Anabasis P0 Design Document
 
+> Namespace amendment, 2026-10-23 (ADR-0048): the identity references below use the
+> current `tech.rolly.anabasis` implementation. The 2026-07-31 sign-off originally selected
+> `com.rollytech.anabasis`; that historical decision is retained in ADR-0008/ADR-0048.
+> No other part of the signed design is changed; independent review remains pending.
+
 **Status: `Accepted` — signed off by the owner on 2026-07-31.** This closed the P0 exit criterion
 (`DEVELOPMENT_BRIEF.md` §11); P1 implementation is unblocked.
 
@@ -1023,7 +1028,7 @@ matrix, ns/sample + worst-block, median of ≥5 runs, machine recorded — resul
 | 0005 | Macro-layer architecture: message-thread mapper, non-automatable macros, detach/re-engage coexistence, adaptive trims engine-internal | §5; resolves OQ-004 |
 | 0006 | Ceiling guarantee: separate final clamp, ≤0.1 dBTP, monitoring never in render path | §2.6–2.7 |
 | 0007 | State schema v1: explicit `schemaVersion`, raw-exact sessions, snapped presets, global `ADAPTIVE` child for learned targets, and **per-A/B-slot detach mask + frozen trim vector inside each `AB` slot**; **presets carry the detach mask** | §4.4, §5.3 |
-| 0008 | **Build architecture and plugin identity**: CMake structure (INTERFACE `AnabasisDSP`, hardening target, one shared source list), **JUCE 9.0.0 pinned by commit `f8f8864…`**, **C++20** baseline + the C++23 feature-test-macro strategy, formats VST3 / AU / Standalone, and the frozen identity `RTec` / `Anbs` / `com.rollytech.anabasis` / categories Fx-Dynamics-Mastering | §11 P1, §1.1; **mandatory** — `ADR_POLICY.md` requires an ADR for build architecture *and* format support, and OQ-001's standing obligation names "the P0 build-decision ADR"; closes OQ-001 + OQ-003 |
+| 0008 | **Build architecture and plugin identity**: CMake structure (INTERFACE `AnabasisDSP`, hardening target, one shared source list), **JUCE 9.0.0 pinned by commit `f8f8864…`**, **C++20** baseline + the C++23 feature-test-macro strategy, formats VST3 / AU / Standalone, and the frozen identity `RTec` / `Anbs` / `tech.rolly.anabasis` / categories Fx-Dynamics-Mastering | §11 P1, §1.1; **mandatory** — `ADR_POLICY.md` requires an ADR for build architecture *and* format support, and OQ-001's standing obligation names "the P0 build-decision ADR"; closes OQ-001 + OQ-003 |
 | 0009 | **Code reuse from Anamorph — all of it, not just UI**: the GUI idioms (LookAndFeel, glass, FrameClock, Backdrop), the wrapper/state machinery (InternalState, StateSet A/B + undo, PresetManager, raw-exact serialization) **and the DSP-source adaptations** (K-weighting coefficients and the Measure+Predict structure from `LoudnessMatch`, the `ScopeBuffer` SPSC ring, the duck/crossfade transition taxonomy, the `driveTanh` peak-preserving makeup formulation) — copy-and-adapt with provenance headers, **no shared module for v1**; revisit extraction after v0.1.0 | §8, §2.4, §2.7–2.9, §7; **mandatory** — `CLAUDE.md` §3 requires code reuse across the two products to be recorded in an ADR, not an ad-hoc copy; resolves OQ-005 |
 | 0010 | **Parameter surface**: the 49 IDs, types, ranges, defaults and choice orderings; the two **exclusion tiers**; the **lockable set** `{ceiling}`; macro automatability | §4.2–4.3; **mandatory** — `ADR_POLICY.md` requires an ADR for parameter semantics, and `PARAMETER_COMPATIBILITY_POLICY.md` rule 6 makes exclusion lists and the lockable set contract |
 | 0011 | **Threading model**: two threads, no workers; POD snapshot per block; relaxed-atomic + SPSC publication; message-thread-only MacroEngine and PDC updates | §1.4, §5.2; **mandatory** — `ADR_POLICY.md` lists the threading model |
@@ -1052,7 +1057,7 @@ Anabasis-local, no reserved blocks.
   `procedures/TESTING.md`, added in the same unit of work as the test itself
   (`DOCUMENTATION_LIFECYCLE_POLICY.md`'s new/changed-test trigger).
 - **P1 skeleton** (after sign-off): CMake per brief §18 (identity `RTec`/`Anbs`/
-  `com.rollytech.anabasis` frozen — OQ-003; JUCE 9.0.0 @ `f8f8864…` — OQ-001; C++20), the §4
+  `tech.rolly.anabasis` frozen — OQ-003; JUCE 9.0.0 @ `f8f8864…` — OQ-001; C++20), the §4
   parameter surface + registry snapshot, pass-through chain + basic limiter, state harness,
   pluginval L5. OQ-011 (macOS deployment target) is checked and set at P1 as planned.
 - **P2–P6** follow brief §11 unchanged; the §10 ADRs gate their areas.

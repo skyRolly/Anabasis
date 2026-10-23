@@ -48,6 +48,11 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ## [Unreleased]
 
 ### Changed
+- **Use the domain namespace `tech.rolly.anabasis` for application bundles and macOS package receipts.**
+  Previous development receipt identities are intentionally replaced without aliases; independent
+  plugin codes, VST3 class IDs, Windows AppId and saved state are preserved. Host rescan/recall
+  remains a human validation requirement.
+  Evidence: [namespace migration diff](https://github.com/skyRolly/Anabasis/compare/main...codex/namespace-tech-rolly-anabasis); ADR-0048. [Verified — source; native gates reported separately]
 - **Upgrade the JUCE framework from 9.0.1 to 9.0.4**, including upstream windowing,
   OpenGL, message-lock and malformed-input fixes. Keep unused MP3/Opus/WebP codecs disabled;
   existing CMake caches must reset both JUCE fields before rebuilding. Plugin identity,

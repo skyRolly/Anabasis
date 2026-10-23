@@ -655,3 +655,11 @@ $Strictness = $m.Matches[0].Groups[1].Value
 scripts/run-pluginval.ps1 -Strictness $Strictness -Mode deterministic
 scripts/run-pluginval.ps1 -Strictness $Strictness -Mode randomise
 ```
+
+## Product namespace and independent identity gates
+
+`scripts/check-product-identity.py --self-test` precedes every use: source-lint checks
+CMake/package/Windows GUID declarations; Linux, Windows and both macOS jobs inspect actual
+generated metadata and VST3 class IDs. macOS additionally checks all built plists/AU component
+triples; Windows reads VERSIONINFO without executing code. `build-pkg.sh` checks expanded
+PackageInfo/Distribution receipt IDs after a same-job self-test. Reports live under build/.

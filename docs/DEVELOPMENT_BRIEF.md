@@ -633,7 +633,7 @@ Beyond the inherited structure, Anabasis's Level-2/3 suites must additionally as
 | **Compatibility legacy paths** | three frozen legacy formats | **none yet** — the contract begins at v0.1.0; freeze a fixture the moment the first format ships | §9 |
 | **Presets** | `.anamorph` | `.anabasis`, ≥ 12 factory presets, **parameter lock (Ceiling at minimum)** | §9 |
 | **Packaging/installers** | shipped (Inno Setup / `.pkg` / Linux scripts) | added at **P6** | §11 |
-| **Plugin identity** | `Anmf` / `Anmr` / `com.rollytech.anamorph`; VST3 categories Fx, Spatial, Stereo | **`RTec`** (shared vendor code — Anamorph moved to it in its 0.9.1) / **`Anbs`** / `com.rollytech.anabasis`; VST3 categories Fx, **Dynamics, Mastering** | OQ-003, resolved — `docs/procedures/BUILD.md` §Plugin identity |
+| **Plugin identity** | `RTec` / `Anmr` / `tech.rolly.anamorph`; VST3 categories Fx, Spatial, Stereo | **`RTec`** (shared vendor code — Anamorph moved to it in its 0.9.1) / **`Anbs`** / `tech.rolly.anabasis`; VST3 categories Fx, **Dynamics, Mastering** | OQ-003, resolved — `docs/procedures/BUILD.md` §Plugin identity |
 
 ### 23.1 Shared with Anamorph (do NOT diverge)
 
@@ -655,7 +655,7 @@ Two are now **resolved** and are therefore *decisions*, not choices to revisit: 
 (OQ-001 originally resolved it at **9.0.0**, commit `f8f8864…`; ADR-0028 moved it to 9.0.1,
 and **ADR-0047 moves it to 9.0.4 at `3fb5cbc…`**, again matching Anamorph; the pin remains a
 decision under the Architecture Review Gate) and the plugin identity
-(**`RTec` / `Anbs` / `com.rollytech.anabasis`** — OQ-003; the vendor code spells RollyTech, and
+(**`RTec` / `Anbs` / `tech.rolly.anabasis`** — OQ-003; the vendor code spells RollyTech, and
 Anamorph moved to it in its 0.9.1 so the product line agrees from the start). Both must be written
 into `CMakeLists.txt` at P1 and are frozen from the first build that leaves the repository
 (`docs/procedures/BUILD.md` §Plugin identity).
