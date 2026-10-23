@@ -7906,3 +7906,13 @@ The initial lane-specific transport correction at `bffde567` passed Clang 22.1.8
 dependency setup exposed why the transport choice should be consistent across hosted Ubuntu
 callers rather than conditional on a job name. This does not change either dependency profile
 or any test/timeout. Current-head native CI re-verifies all callers, including the Debian container.
+
+## 2026-10-24 installed macOS receipts
+
+Added native installed-receipt validation in the existing Mac packaging job, with
+same-job positive/negative parser fixtures, strict disposable-host guard and retained
+logs. CI/testing/release procedures and script map are synchronized. No audio invariant
+mapping changes apply. No product source, existing tests, namespace, version or build
+architecture change. Evidence: `scripts/test-macos-receipts.py`, `build.yml` and
+`worklogs/2026-10-24-installed-macos-receipts.md`. Prior unperformed-runtime statements
+remain dated baseline; current native results are recorded by exact CI head.

@@ -687,3 +687,20 @@ The initial lane-specific transport correction at `bffde567` passed Clang 22.1.8
 dependency setup exposed why the transport choice should be consistent across hosted Ubuntu
 callers rather than conditional on a job name. This does not change either dependency profile
 or any test/timeout. Current-head native CI re-verifies all callers, including the Debian container.
+
+## Native installed-receipt smoke test
+
+The macOS packaging job runs `scripts/test-macos-receipts.py --self-test` before
+`--package <actual.pkg> --staged-dir <validated tree>` on this repository's disposable
+GitHub-hosted Mac only. Existing product receipts or system bundles cause refusal.
+The real installer targets `/`; no receipt is forgotten and no plug-in folder is
+deleted. VM disposal is cleanup. Installer upload requires this gate and its evidence
+artifact retains the native installer log, raw pkgutil metadata and JSON result.
+
+The check measures `.vst3`/`.au`/`.app` receipt IDs, version, volume, destination and
+file ownership, actual installed CFBundleIdentifier/AU codes and staged/installed
+payload hashes. Pre-existing receipts and sibling metadata/payloads must be unchanged;
+an empty sibling snapshot is not proof of both-products co-installation. Portable
+fixtures prove parser liveness, not OS installation. Default full installation is the
+smoke-test scope; component permutations, upgrades, Finder/Dock and DAW recall remain
+manual/separate. See `worklogs/2026-10-24-installed-macos-receipts.md` for exact evidence.

@@ -110,3 +110,20 @@ migration handling. ADR-0048 is Accepted under final owner approval and #51 is m
 its ADR-0008/ADR-0021 amendments are effective. Architecture review is cleared. Actual receipt
 installation, DAW recall and Windows runtime installation remain unverified; release authorization
 is separate.
+
+## Native installed-receipt smoke test
+
+The macOS packaging job runs `scripts/test-macos-receipts.py --self-test` before
+`--package <actual.pkg> --staged-dir <validated tree>` on this repository's disposable
+GitHub-hosted Mac only. Existing product receipts or system bundles cause refusal.
+The real installer targets `/`; no receipt is forgotten and no plug-in folder is
+deleted. VM disposal is cleanup. Installer upload requires this gate and its evidence
+artifact retains the native installer log, raw pkgutil metadata and JSON result.
+
+The check measures `.vst3`/`.au`/`.app` receipt IDs, version, volume, destination and
+file ownership, actual installed CFBundleIdentifier/AU codes and staged/installed
+payload hashes. Pre-existing receipts and sibling metadata/payloads must be unchanged;
+an empty sibling snapshot is not proof of both-products co-installation. Portable
+fixtures prove parser liveness, not OS installation. Default full installation is the
+smoke-test scope; component permutations, upgrades, Finder/Dock and DAW recall remain
+manual/separate. See `worklogs/2026-10-24-installed-macos-receipts.md` for exact evidence.
