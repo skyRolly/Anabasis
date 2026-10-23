@@ -1,5 +1,18 @@
 # DOCUMENTATION_COVERAGE.md
 
+
+**Review closure (2026-10-24):** the retained native PKG's correct ID set still passed with
+VST3/AU receipt ownership swapped. The identity gate now binds named component directories,
+receipts, Distribution choices/outlines and payload filenames, retaining six-/nine-reference
+normalization. All three swaps and malformed membership cases have regressions and an
+ownership-disabled mutant. TESTING, CI_CD, RELEASE_PROCESS and the namespace worklog record
+the correction; no product/audio/installer payload or identity value changes.
+TESTING_POLICY now states the existing blocking identity contract beside the cross-platform
+gates. ADR_INDEX uses a separate **Proposed, not yet effective** amendment registry for
+ADR-0008/ADR-0021 → ADR-0048; the banners preserve historical decisions and explicitly separate
+implementation permission from acceptance. ADR-0048 remains Proposed. This corrects reported
+policy/registry drift, without claiming human approval or installed-receipt/DAW coverage.
+
 Permanent documentation-coverage audit. **Future contributors/AI must update this on every
 documentation-affecting change** (`docs/policies/DOCUMENTATION_LIFECYCLE_POLICY.md`).
 
@@ -7841,3 +7854,38 @@ On any change, set this file's "Last updated" to the new HEAD (or the change des
 the first tag) and adjust the affected rows. A new module → add a row; a new doc → add to
 self-coverage; new measured data → upgrade the confidence. Never upgrade a confidence level
 without the evidence that justifies it.
+
+## Domain namespace migration — 2026-10-23
+
+CMake and package receipts/references/probes now use `tech.rolly.anabasis`. ADR-0048 remains
+Proposed with explicit owner implementation/testing permission and independent human review
+pending. ADR-0008/ADR-0021 have dated partial amendments; other decisions are preserved.
+BUILD/CI_CD/TESTING/RELEASE_PROCESS/dependency policy, README/brief/OQ resolution and DESIGN
+namespace references are synchronized; DESIGN preserves the old sign-off value in a dated note.
+The new identity checker has source/generated/package good/bad fixtures and same-job self-tests;
+the repository map and source-of-truth class include its measurement worklog. Earlier audit
+entries in this file are historical records, including their then-current identifier spellings.
+No C++ source, existing tests, state/parameters/latency, product names, codes or AppId changed.
+
+Native package fixture correction (2026-10-23): productbuild may add metadata-only references.
+The identity gate now checks unique receipts and choice/archive/bundle namespaces separately;
+TESTING and the namespace worklog record the observed nine-reference shape and regression.
+
+
+### Hosted Ubuntu dependency transport — 2026-10-23
+
+The starting-main run 39839766743 and namespace run 39978295519 timed out before compilation
+while downloading packages from the hosted image's HTTP Azure Ubuntu mirror. Hosted Ubuntu
+callers now substitute the official HTTPS archive in the disposable runner's apt mirror list.
+This is restricted to GITHUB_ACTIONS=true, RUNNER_ENVIRONMENT=github-hosted and an existing
+Ubuntu apt-mirrors.txt file; Debian toolchain containers and developer machines are unchanged.
+The full dependency list, normal apt signature verification, Clang major, build flags,
+assertions and 30-minute job limit are unchanged. The existing native compiler/version and
+LTO test gates still run; no failed test is skipped or reclassified as successful.
+Actual source/transport and test results are collected on the new PR head.
+
+The initial lane-specific transport correction at `bffde567` passed Clang 22.1.8 LTO:
+795 DSP / 1638 state checks, zero first-party warnings. The sanitizer lane's prolonged shared
+dependency setup exposed why the transport choice should be consistent across hosted Ubuntu
+callers rather than conditional on a job name. This does not change either dependency profile
+or any test/timeout. Current-head native CI re-verifies all callers, including the Debian container.

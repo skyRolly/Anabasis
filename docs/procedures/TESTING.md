@@ -865,3 +865,22 @@ Anabasis frame on any thread; the control never aborted). Wiring and triggers: `
 
 These are Level 5 (`TESTING_POLICY.md`) and are a **required release precondition**, not an
 optional extra. A green build + pluginval pass means "ready to audition," not "shipped."
+
+## Product identity regression (ADR-0048)
+
+Run `python3 scripts/check-product-identity.py --self-test` then the source check; after a
+Release build add `--build-dir build --report build/product-identity.json`. Synthetic good/bad
+source, generated Linux/Windows/macOS, AU/VST3 and expanded-package fixtures exercise the
+production selection/parsing functions. Only native Windows VERSIONINFO access is stubbed.
+They reject incorrect bundle/package IDs and independent codes/GUIDs/CIDs; native CI separately
+checks actual artifacts. DAW session recall/rescan after CFBundleIdentifier changes remains a
+human validation gap; stable independent codes do not certify every host.
+
+The package identity self-test also covers productbuild normalization: six input references
+and nine generated references can name the same three components. Named component directories
+must own their exact receipt (VST3/.vst3, AU/.au, App/.app); choice IDs, their receipt references
+and payload filenames must agree. All three receipt transpositions, duplicate/missing/unknown
+components, wrong payloads/choices/outlines and malformed namespaces are rejected. Fixtures use
+real component names, not numeric enumeration. A mutation disabling receipt ownership must fail
+the self-test specifically on a swapped receipt. Native `build-pkg.sh` validates freshly expanded
+metadata; retained CI metadata supplies a separate read-only check without installing receipts.

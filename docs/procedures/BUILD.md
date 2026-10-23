@@ -160,7 +160,7 @@ one exists because of a specific failure mode:
 | Field | Value | Note |
 |---|---|---|
 | `COMPANY_NAME` | `RollyTech` | |
-| `BUNDLE_ID` | `com.rollytech.anabasis` | |
+| `BUNDLE_ID` | `tech.rolly.anabasis` | |
 | `PLUGIN_MANUFACTURER_CODE` | **`RTec`** | The **vendor** code — identical in every RollyTech plug-in. Anamorph moved from `Anmf` to `RTec` in its 0.9.1 for this reason (its ADR-0023). |
 | `PLUGIN_CODE` | **`Anbs`** | Per-product, unique. `Anmr` is Anamorph's. |
 | `PRODUCT_NAME` | `Anabasis` | |
@@ -190,3 +190,8 @@ retention as separate `Anabasis-<OS>-debug` artifacts, happens only in CI packag
 - Ubuntu apt mirrors (`archive.ubuntu.com` / `ports.ubuntu.com`) — `setup-linux.sh`.
 - `github.com` — JUCE source (pinned commit SHA via `FetchContent`).
 - `github.com` — pluginval release (only for `scripts/run-pluginval.sh`).
+
+Current namespace (ADR-0048): JUCE generates the base `tech.rolly.anabasis` for macOS
+Standalone/VST3/AU CFBundleIdentifier; pkg receipts separately use `.app/.vst3/.au`.
+Independent RTec/Anbs, VST3 class IDs and the Windows AppId are preserved. Verify actual
+outputs with `scripts/check-product-identity.py --self-test` then `--build-dir build`.

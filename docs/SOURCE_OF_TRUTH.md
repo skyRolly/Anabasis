@@ -158,3 +158,6 @@ P6 and past the 0.1.1 release round, ordering every runtime claim in the reposit
 rather than banner-marked because, unlike `DESIGN.md`, this file is not a signed-off historical
 record: it is the navigation document every contributor reads first, and a wrong instruction in
 it is followed.)*
+
+The namespace measurement record `worklogs/2026-10-23-product-namespace.md` supports Proposed
+ADR-0048; owner implementation/testing permission is distinct from independent human acceptance.

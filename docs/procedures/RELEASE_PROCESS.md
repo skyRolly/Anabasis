@@ -100,3 +100,11 @@ recalled release.
 - Record the Level-5 audition result — it is a human sign-off and is not reproducible from CI.
 - Freeze the compatibility baseline for the shipped format: the registry snapshot and a session
   fixture (`RELEASE_COMPATIBILITY_CHECKLIST.md` §Notes).
+
+## Current pre-release package namespace (ADR-0048)
+
+The base is `tech.rolly.anabasis`; macOS receipts are `.vst3`, `.au` and `.app` below it.
+`build-pkg.sh` validates expanded metadata. Exact named component-to-receipt, choice and payload ownership must agree; a correct ID set alone does not pass. The Windows AppId stays
+`{19AAA915-4527-4BA2-B6A7-06068E527C54}`. Older unpublished receipts have no aliases or
+migration handling. Independent human architecture review of ADR-0048 is required before merge;
+this identifier change is not release authorization.

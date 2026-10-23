@@ -197,3 +197,7 @@ estimates (constraint C2).
 
 Evidence [Verified]: the file tree of this repository at the bootstrap commit. Every **[P*n*]**
 row is a *plan*, not a claim about existing files.
+
+`scripts/check-product-identity.py` verifies the domain namespace and independent plugin/GUID
+identities in source and generated/package metadata. The before-edit inventory, comparison
+commands and native-test limits are in `worklogs/2026-10-23-product-namespace.md` (ADR-0048).

@@ -93,6 +93,18 @@ runs:
         EXTRA_PACKAGES: ${{ inputs.extra-packages }}
       run: |
         set -euo pipefail
+        # Hosted Ubuntu HTTP Azure downloads exhausted Clang LTO's unchanged
+        # budget, also on main; other callers share this dependency transport.
+        # Use the official HTTPS archive only on disposable hosted Ubuntu.
+        # Package lists, apt signature verification, pins and gates stay intact.
+        ci_ubuntu_mirrors=/etc/apt/apt-mirrors.txt
+        if [ "${GITHUB_ACTIONS:-}" = "true" ] &&
+           [ "${RUNNER_ENVIRONMENT:-}" = "github-hosted" ] &&
+           [ -f "$ci_ubuntu_mirrors" ]; then
+          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$ci_ubuntu_mirrors"
+          cat "$ci_ubuntu_mirrors"
+        fi
+
         chmod +x scripts/*.sh
         ./scripts/setup-linux.sh "$DEPENDENCY_PROFILE"
 

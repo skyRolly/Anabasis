@@ -104,7 +104,7 @@ exit 0
 POST
   chmod +x "$scripts/postinstall"
 
-  pkgbuild --root "$root" --identifier "com.rollytech.anabasis.$id" \
+  pkgbuild --root "$root" --identifier "tech.rolly.anabasis.$id" \
            --version "$VERSION" --install-location "$dest" \
            --component-plist "$plist" --scripts "$scripts" "$out"
 
@@ -141,19 +141,19 @@ cat > "$WORK/distribution.xml" <<EOF
     </choices-outline>
     <choice id="vst3" title="VST3 Plug-in" start_selected="true"
             description="Installs Anabasis.vst3 into /Library/Audio/Plug-Ins/VST3 (REAPER, Ableton Live, Cubase, Bitwig, ...).">
-        <pkg-ref id="com.rollytech.anabasis.vst3"/>
+        <pkg-ref id="tech.rolly.anabasis.vst3"/>
     </choice>
     <choice id="au" title="AU Plug-in" start_selected="true"
             description="Installs Anabasis.component into /Library/Audio/Plug-Ins/Components (Logic Pro, GarageBand, ...).">
-        <pkg-ref id="com.rollytech.anabasis.au"/>
+        <pkg-ref id="tech.rolly.anabasis.au"/>
     </choice>
     <choice id="app" title="Standalone Application" start_selected="true"
             description="Installs Anabasis.app into /Applications.">
-        <pkg-ref id="com.rollytech.anabasis.app"/>
+        <pkg-ref id="tech.rolly.anabasis.app"/>
     </choice>
-    <pkg-ref id="com.rollytech.anabasis.vst3" version="${VERSION}">AnabasisVST3.pkg</pkg-ref>
-    <pkg-ref id="com.rollytech.anabasis.au" version="${VERSION}">AnabasisAU.pkg</pkg-ref>
-    <pkg-ref id="com.rollytech.anabasis.app" version="${VERSION}">AnabasisApp.pkg</pkg-ref>
+    <pkg-ref id="tech.rolly.anabasis.vst3" version="${VERSION}">AnabasisVST3.pkg</pkg-ref>
+    <pkg-ref id="tech.rolly.anabasis.au" version="${VERSION}">AnabasisAU.pkg</pkg-ref>
+    <pkg-ref id="tech.rolly.anabasis.app" version="${VERSION}">AnabasisApp.pkg</pkg-ref>
 </installer-gui-script>
 EOF
 productbuild --distribution "$WORK/distribution.xml" --package-path "$WORK" "$OUT"
@@ -166,9 +166,12 @@ productbuild --distribution "$WORK/distribution.xml" --package-path "$WORK" "$OU
 # so the citation is dropped rather than transplanted.)
 installer -pkginfo -pkg "$OUT"
 pkgutil --expand "$OUT" "$WORK/expanded"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+python3 "$SCRIPT_DIR/../../scripts/check-product-identity.py" --self-test
+python3 "$SCRIPT_DIR/../../scripts/check-product-identity.py" --expanded-package "$WORK/expanded"
 for id in vst3 au app; do
-  grep -Rq "com.rollytech.anabasis.$id" "$WORK/expanded" \
-    || { echo "error: component com.rollytech.anabasis.$id missing from $OUT" >&2; exit 1; }
+  grep -Rq "tech.rolly.anabasis.$id" "$WORK/expanded" \
+    || { echo "error: component tech.rolly.anabasis.$id missing from $OUT" >&2; exit 1; }
 done
 grep -q 'customize="allow"' "$WORK/expanded/Distribution" \
   || { echo "error: $OUT lost customize=\"allow\" (component selection disabled)" >&2; exit 1; }
@@ -219,7 +222,7 @@ grep -q 'customize="allow"' "$WORK/expanded/Distribution" \
 # payload is what makes this a controlled comparison.
 probe_info() {                  # $1 = component id, $2 = tag; rest -> pkgbuild
   _id=$1; _tag=$2; shift 2
-  pkgbuild --root "$WORK/root-$_id" --identifier com.rollytech.anabasis.probe \
+  pkgbuild --root "$WORK/root-$_id" --identifier tech.rolly.anabasis.probe \
            --version "$VERSION" --install-location "/Applications" \
            "$@" "$WORK/probe-$_id-$_tag.pkg" >/dev/null
   pkgutil --expand "$WORK/probe-$_id-$_tag.pkg" "$WORK/probe-$_id-$_tag-x"

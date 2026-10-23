@@ -655,3 +655,35 @@ $Strictness = $m.Matches[0].Groups[1].Value
 scripts/run-pluginval.ps1 -Strictness $Strictness -Mode deterministic
 scripts/run-pluginval.ps1 -Strictness $Strictness -Mode randomise
 ```
+
+## Product namespace and independent identity gates
+
+The binding requirements are in `docs/policies/TESTING_POLICY.md` under the blocking cross-platform
+gates; this section describes their workflow wiring, not a separate acceptance policy.
+
+`scripts/check-product-identity.py --self-test` precedes every use: source-lint checks
+CMake/package/Windows GUID declarations; Linux, Windows and both macOS jobs inspect actual
+generated metadata and VST3 class IDs. macOS additionally checks all built plists/AU component
+triples; Windows reads VERSIONINFO without executing code. `build-pkg.sh` checks expanded
+PackageInfo/Distribution receipt IDs after a same-job self-test. Reports live under build/.
+Named component ownership, choice references and payload filenames are checked together; an
+unordered receipt-ID set is insufficient. Six-/nine-reference normalization stays supported.
+
+
+### Hosted Ubuntu dependency transport — 2026-10-23
+
+The starting-main run 39839766743 and namespace run 39978295519 timed out before compilation
+while downloading packages from the hosted image's HTTP Azure Ubuntu mirror. Hosted Ubuntu
+callers now substitute the official HTTPS archive in the disposable runner's apt mirror list.
+This is restricted to GITHUB_ACTIONS=true, RUNNER_ENVIRONMENT=github-hosted and an existing
+Ubuntu apt-mirrors.txt file; Debian toolchain containers and developer machines are unchanged.
+The full dependency list, normal apt signature verification, Clang major, build flags,
+assertions and 30-minute job limit are unchanged. The existing native compiler/version and
+LTO test gates still run; no failed test is skipped or reclassified as successful.
+Actual source/transport and test results are collected on the new PR head.
+
+The initial lane-specific transport correction at `bffde567` passed Clang 22.1.8 LTO:
+795 DSP / 1638 state checks, zero first-party warnings. The sanitizer lane's prolonged shared
+dependency setup exposed why the transport choice should be consistent across hosted Ubuntu
+callers rather than conditional on a job name. This does not change either dependency profile
+or any test/timeout. Current-head native CI re-verifies all callers, including the Debian container.
