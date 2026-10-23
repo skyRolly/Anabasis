@@ -7916,3 +7916,7 @@ Windows INSTALL.txt and the script map. No audio invariant/test mapping changes 
 all `src/`, existing DSP/state tests and CMake identities remain untouched.
 Evidence: `packaging/windows/Anabasis.iss`, `scripts/test-windows-installer.ps1` and
 `worklogs/2026-10-24-windows-uninstall-icon.md`. Native results are scoped to the PR checks.
+
+ADR-0049 is registered as Proposed for the Windows runtime TESTING_POLICY addition,
+per ADR_POLICY's policy-change recording rule. Updated README/map/source-of-truth
+navigation; no accepted status or architecture clearance is invented.

@@ -206,3 +206,7 @@ row is a *plan*, not a claim about existing files.
 `scripts/check-product-identity.py` verifies the domain namespace and independent plugin/GUID
 identities in source and generated/package metadata. The before-edit inventory, comparison
 commands and native-test limits are in `worklogs/2026-10-23-product-namespace.md` (ADR-0048).
+
+Proposed ADR-0049 records the Windows optional-component uninstall icon and new runtime
+gate in TESTING_POLICY. Its implementation is owner-requested; formal acceptance and
+merge review remain pending. The existing ADR index is the decision-status authority.

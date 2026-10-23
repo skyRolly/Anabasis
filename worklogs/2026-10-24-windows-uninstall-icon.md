@@ -80,3 +80,8 @@ Other CI jobs, including sanitizers, are recorded separately; this is a Windows
 result, not a full-matrix claim. The subsequent documentation-only follow-up
 corrects Unreleased subsection placement and records the three local killed mutants;
 installer/harness bytes remain identical to this tested head.
+
+Proposed ADR-0049 records the added testing-policy enforcement requirement under
+ADR_POLICY's policy-change rule. No listed architecture hard-stop item is introduced;
+formal ADR acceptance and independent human merge review are still pending. This is
+not an automatic widening of Accepted ADR-0021/0048 or predecessor owner approval.
