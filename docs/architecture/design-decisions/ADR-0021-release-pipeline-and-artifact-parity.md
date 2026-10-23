@@ -12,11 +12,11 @@ Anamorph's — e.g. NOT containing NOTICE / THIRD_PARTY_LICENSES.md")
 > directive quoted above, under the round's standing sign-off instruction. No serialization,
 > parameter, threading, DSP-order or latency contract is touched.
 
-**Pending namespace amendment — implementation/testing approved 2026-10-23; clarified 2026-10-24:**
-[ADR-0048](ADR-0048-domain-product-namespace.md) proposes changing the receipt namespace.
-Its partial amendment is **not yet effective**: independent human review/acceptance remains
-pending. The unmerged PR #51 uses the owner-authorized `tech.rolly.anabasis`; Windows GUID
-and packaging behavior stay unchanged. The original receipt values below remain historical.
+**AMENDED BY [ADR-0048](ADR-0048-domain-product-namespace.md) — effective; record updated
+2026-10-24 (Asia/Shanghai):** explicit final owner approval accepts receipt identifiers
+`tech.rolly.anabasis.{vst3,au,app}`, implemented in merged PR #51 at
+`626eb9a04d8da37995eb66fcf2c8c1fe986f7989`. The original final-approval date is not recorded.
+This ADR remains Accepted; Windows GUID/packaging behavior and original receipt values remain historical.
 
 ## Context
 
@@ -63,7 +63,7 @@ staging trees.
    substituted: `linux/{INSTALL.txt,install.sh,uninstall.sh}` (VST3 → `/usr/lib/vst3`,
    standalone → `/usr/local/bin`, root-checked), `windows/{INSTALL.txt,Anabasis.iss}` and
    `macos/{INSTALL.txt,build-pkg.sh}` (three `pkgbuild` components →
-   `com.rollytech.anabasis.{vst3,au,app}` (historical decision; Proposed ADR-0048 records the unmerged namespace change), an explicit `distribution.xml` with
+   `com.rollytech.anabasis.{vst3,au,app}` (historical decision; Accepted ADR-0048 now amends the namespace to `tech.rolly.anabasis`), an explicit `distribution.xml` with
    `customize="allow"` and all three `start_selected="true"`, plus the sibling's own
    post-build self-checks). **The Inno `AppId` is a NEW GUID**, never the sibling's: Inno keys
    upgrade and uninstall on it, so a shared AppId would make either product's installer

@@ -1,17 +1,19 @@
 # ADR-0048 — Domain product namespace for pre-release packages
 
-**Status:** Proposed — owner namespace decision and pre-implementation Architecture Review
-permission recorded on 2026-10-23: **“Approve B, C, and E for implementation and testing.”**
-This clears the implementation stop for the concrete proposal, not ADR acceptance or merge.
-Independent human architecture review remains required before merging this PR.
+**Status:** Accepted — explicit final owner approval of ADR-0048 and the completed
+namespace implementation. **Architecture Review Gate: CLEARED; owner decision: APPROVED.**
+Approval provenance and verified merge ancestry are recorded in [ADR_INDEX.md](ADR_INDEX.md#owner-approval-reconciliation--record-updated-2026-10-24).
+The original final-approval date is not recorded; this status update is dated 2026-10-24
+(Asia/Shanghai). The earlier 2026-10-23 permission, **“Approve B, C, and E for
+implementation and testing,”** is retained as implementation-stage history.
 
 ## Context
 
 The owner controls `rolly.tech` and directs all future products to `tech.rolly.<product>`.
 The historical starting tree `1a40afd190d6994e33cfa12ae3fca0f375d4687c` used
 `com.rollytech.anabasis`. ADR-0008 froze that bundle ID and ADR-0021 specified receipts below it.
-Both have pending partial amendments recorded in ADR_INDEX.md; those amendments are not yet
-effective. Their other decisions and dated evidence remain.
+Both partial amendments are now effective and registered in ADR_INDEX.md. ADR-0008 and
+ADR-0021 remain Accepted; their other decisions and dated evidence remain.
 The product is pre-release; the owner explicitly accepts the development package-identity break.
 
 ## Problem
@@ -24,7 +26,7 @@ That claim is corrected against the pinned JUCE code, not repeated as a compatib
 ## Options
 
 - Keep the previous namespace: contradicts the domain decision.
-- **Use `tech.rolly.anabasis` and unique package suffixes: chosen for implementation.**
+- **Use `tech.rolly.anabasis` and unique package suffixes: accepted.**
 - Add legacy aliases/receipt support: explicitly rejected for unpublished development builds.
 - Change manufacturer/plugin codes, product name or Windows AppId: unnecessary independent
   identity breaks and outside the authorized namespace change.
@@ -42,8 +44,9 @@ That claim is corrected against the pinned JUCE code, not repeated as a compatib
   Simple/Advanced/adaptive behavior, parameter IDs, state, serialization and latency.
 - No old-identifier aliases, fallback paths, receipt handling or package migration machinery.
 - Generated unused AAX/ARA/AU-framework defaults inherit the base too; this enables no new format.
-- Update only the namespace clauses of ADR-0008/ADR-0021 with dated notes. They stay in the
-  record; the new ADR stays Proposed pending independent human review.
+- Partially amend ADR-0008's bundle namespace/identity-derivation statements and ADR-0021's
+  receipt namespace. These amendments are effective; earlier records remain Accepted with
+  dated forward pointers and historical values, rather than pretending the namespace never changed.
 - Enforce the existing source/generated/package identity gates through TESTING_POLICY.md,
   including same-job positive/negative checker fixtures and exact component receipt ownership.
 

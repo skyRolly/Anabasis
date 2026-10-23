@@ -59,7 +59,7 @@ Status values: Proposed · Accepted · Deprecated · Superseded.
 | [ADR-0045](ADR-0045-true-peak-mode-answers-to-the-ceiling-in-force-at-emission.md) | **True-peak mode answers to the ceiling in force when a sample is emitted** — the PR #42 review of 0.2.14: the true-peak path delays its audio by D and judged every frame against the ceiling it carried IN, so while the 20 ms linear glide descended the output read up to 20·log10(1 + (D/R)(c0/c1 − 1)) dB over the live smoothed ceiling (+2.7 dB for −1 → −20 dB at 44.1 kHz; sample peaks too), where the TP-off clip holds it bit-exactly. Each frame now answers to the smoother's value at its EMISSION — the glide run ahead exactly (no `skip()`), the frames in flight revised downward at a retarget with their requirements re-derived (`CeilingClamp::lowerInFlightCeilings`) — and the limiter plays to the same value in TP mode, as it does in TP-off. No latency, parameter, state, signal-order or TP-off change; a static ceiling is bit-identical. Amends ADR-0041 decision 3; adds the automation guard to DSP_POLICY invariant 4 and invariant 8's second place of yielding to invariant 4 — a bounded one-sample clamp step at a downward retarget with the output at the ceiling (prescribed text) | **Accepted — 2026-09-28, on the owner's direction** (the third PR #42 review round: every emitted sample obeys the live ceiling, no latency increase without an ADR); ⊕ flagged for the owner's review of the carrying PR — Architecture Review Gate items: conflict with ADR-0041 decision 3, a ceiling-stage and limiter-threshold timing change in TP mode. Decisions 1, 2's mechanism and 5's figure amended by ADR-0046 (ratified 2026-09-29, in effect); this record itself stays ⊕ | Verified at engine level — `testTruePeakModeHoldsTheCeilingUnderAutomation` fails on the unfixed engine (64 of 100 renders over, worst +2.44 / +2.57 dB) and each mechanism removed fails it, `testTruePeakModeBoundsTheStepAtACeilingCut` pins the step; a four-candidate head-to-head over 14440 configurations (0 over 0.1 dB) and an adversarial review in the 2026-09-28 worklog. Not heard; not run in a host under automation |
 | [ADR-0046](ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md) | **The true-peak clamp eases in, and true-peak mode engages from 12 kHz** — the fourth PR #42 review round and KI-025: the clamp's requirement bounds a segment's reading only while the gains its interpolation reads are equal, and the boxcar attack ramp at its 8-sample floor put its steepest slope beside segments at the ceiling, so a worst-case burst read up to +0.157 dB (Annex 2) over the live ceiling below 44.1 kHz; a Ceiling reversal mid-ascent read +0.30 dB at 48 kHz at clamp level (ADR-0045's stamping). The attack is a geometrically weighted mean that eases in (λ·A = 4.8, floor 16 samples, so D = 46 below 66 kHz), the release rises at most 1 % per sample, a revision reaches only what a revised reading defines (the retarget step 22.5 → 4.9 glide steps), a TP frame answers to min(entry, predicted emission ceiling), and the path engages from 12 kHz — the lowest common rate a derived bound supports (`truePeakPathEngages`, one predicate for the engine's rail and the Ceiling's unit, which reads the prepared rate the GR ring already publishes). Two-stage verify-and-correct and a longer attack floor built, measured and rejected. Amends ADR-0041 decisions 3–4 (figures), ADR-0045 decisions 1, 2 and 5, ADR-0015 item 5, and DSP_POLICY invariants 4 and 8 (prescribed text) | **Accepted — 2026-09-28, on the owner's direction; ratified 2026-09-29** (Architecture Review Gate — the ceiling clamp's gain law, the TP delay composition's figures, conflict with Accepted ADR-0045, the supported-rate contract (3901–11999 Hz, 8 and 11.025 kHz among them, no longer engages TP), a new cross-thread READ of an existing published scalar — cleared on the owner's explicit approval; taken in the fourth PR #42 review round to close KI-025 without widening the tolerance, flagged ⊕ for the owner's review of the carrying PR, and held there until answered; the brief's "from Proposed" read as this ratification, the record having been filed `Accepted` ⊕). Its amendments to ADR-0041, ADR-0045 and ADR-0015 are in effect; ADR-0045 itself stays ⊕. A dated ratification note records the re-verification, that below 12 kHz the TP switch still moves the limiter's detector at Oversampling Off / 2× (no dBTP guarantee), the unit at a host rate ≤ 0, and invariant 3's prescribed text | Verified at engine and clamp level at every engaged rate — `testTruePeakModeHoldsTheCeilingBelow44k` fails 12 checks on 0.2.15; a 24 167-render engine matrix per tree (worst +0.0426 / +0.0380 dB; 0.2.15 over 0.1 dB in 378 renders, the integrated tree in none outside a Force Max offline-entry splice identical in both, KI-024), 1.1 million renders of engine climbs, 77 clamp-level searches (nothing over 0.1 dB; reversals ≤ +0.0454 where 0.2.15 read up to +0.60); derived retarget-step bounds for inputs not already under reduction (+0.0672 dB at 12 kHz, +0.1008 at 8 kHz — hence the rail); TP-off and latency identity; `testTheCeilingUnitFollowsTheRateTheTruePeakPathEngagesAt`. A dated implementation note (not an amendment) records the round's own review: decision 1's float weights summing just over 1 clipped an astronomical input to the ceiling at 88.2 / 384 / 768 kHz (fixed: normalised by their own float sum; `testTheClampSilencesAnAstronomicalInput`), and decisions 2 and 4 pinned (`testTheClampReleaseRiseIsCapped`, `testTruePeakModeLagsAnAscentByTheEntryCeiling`). No all-input bound; not heard; not run in a host at a low rate |
 | [ADR-0047](ADR-0047-juce-904-upgrade.md) | **JUCE 9.0.1 → 9.0.4**, immutable pin `3fb5cbc…`; reject previous default caches before fetching, retain custom/local comparisons, explicitly exclude the newly enabled MP3/Opus/WebP codecs on all six consumers, and re-verify attribution and dependency internals | **Accepted — owner's 2026-10-21 upgrade directive** | Pin and source audit verified; build/comparison evidence and remaining platform/Level-5 checks: `worklogs/2026-10-21-juce-904-upgrade.md` |
-| [ADR-0048](ADR-0048-domain-product-namespace.md) | Domain namespace `tech.rolly.anabasis`; partially amends ADR-0008 bundle identity and ADR-0021 receipts, preserves independent codes/GUID | **Proposed** — implementation/testing approved 2026-10-23; independent human review before merge | Source and synthetic gates verified; native evidence and limits in the namespace worklog |
+| [ADR-0048](ADR-0048-domain-product-namespace.md) | Domain namespace `tech.rolly.anabasis`; partially amends ADR-0008 bundle identity and ADR-0021 receipts, preserves independent codes/GUID | **Accepted** — explicit final owner approval; record updated 2026-10-24; Architecture Review cleared | Source and synthetic gates verified; native evidence and limits in the namespace worklog |
 
 ADR-0028 is the **first entry in `DEPENDENCY_POLICY.md`'s compliance log**, which had stood empty
 with the note "no dependency bump has occurred". Its rule-2 cell is deliberately half-empty: the
@@ -94,20 +94,43 @@ ADR-0015, ADR-0016, ADR-0017.** They were kept as three records rather than one 
 sentence can be true — a single record would have made the second and third clearances look like
 extensions of the first, which is the widening this index exists to make visible.
 
-## Pending ADR amendments — not yet effective
+## Owner approval reconciliation — record updated 2026-10-24
 
-ADR_POLICY.md permits Proposed records; this separate registry records their dependencies
-without adding them to the effective-amendment table below. Implementation/testing permission
-is not acceptance. These two relationships remain **Proposed, not yet effective**:
+The owner explicitly confirmed that all five predecessor PRs were merged and that
+their human architecture reviews, ADR decisions and associated owner-decision items
+were approved, in **“Priority P0 — Record Final Owner Approvals and Close Outstanding
+Governance Decisions.”** This is final approval of the completed scope, including the
+pre-release namespace/package-identifier break without legacy compatibility code.
+The original final-approval date is **NOT RECORDED**; **2026-10-24 (Asia/Shanghai)** is
+the record-update date, not an invented date of the earlier approval. Implementation/
+testing permission recorded on 2026-10-23 remains historical provenance.
 
-| Earlier ADR | Proposed amendment | Scope |
-|---|---|---|
-| **0008** | **0048 — Proposed, not yet effective** | Bundle namespace and the identity-derivation claims; independent plugin codes/UIDs stay fixed. |
-| **0021** | **0048 — Proposed, not yet effective** | macOS component receipt namespace; Windows AppId and installer behavior stay fixed. |
+| Decision | Previous status | Current status | Merged implementation / evidence |
+|---|---|---|---|
+| ADR-0048 / domain namespace and pre-release package break | Proposed | Accepted; Architecture Review cleared | [#51](https://github.com/skyRolly/Anabasis/pull/51), `626eb9a04d8da37995eb66fcf2c8c1fe986f7989` |
+| ADR-0008 → ADR-0048 | Pending / not yet effective | Effective partial amendment; ADR-0008 remains Accepted | ADR-0048 Accepted; effective registry below |
+| ADR-0021 → ADR-0048 | Pending / not yet effective | Effective partial amendment; ADR-0021 remains Accepted | ADR-0048 Accepted; effective registry below |
 
-On formal human acceptance of ADR-0048, promote both entries to the effective registry and
-update its status, index row and earlier-record banners together. Until then the unmerged
-implementation uses the owner-authorized namespace, while ADR-0048 remains Proposed.
+Fetched main is merge `626eb9a04d8da37995eb66fcf2c8c1fe986f7989`, with first parent
+`1a40afd190d6994e33cfa12ae3fca0f375d4687c` and implemented head
+`b382d6c301e84dec7ae069da252500da655e052d`. Both namespace amendments are promoted
+from the former pending table into the effective registry. The earlier ADRs retain their
+Accepted status and historical bundle/receipt values.
+
+Implementation evidence: [full matrix 40010327915](https://github.com/skyRolly/Anabasis/actions/runs/40010327915)
+and [merge check 40010335815](https://github.com/skyRolly/Anabasis/actions/runs/40010335815)
+passed at `b382d6c301e84dec7ae069da252500da655e052d`; [main matrix 40021060768](https://github.com/skyRolly/Anabasis/actions/runs/40021060768)
+passed at the merge above. Artifact 12527575543 (ZIP SHA-256
+`9b2d1832242fcd928a0938a23a5846bf1b956245a0123cbf9bef609ce07d4e9d`)
+confirms native package receipt/destination/bundle ownership. The namespace worklog retains
+the receipt-swap reproduction, rejected alternatives and the local GCC14 ABI-floor limitation.
+
+**Approval and empirical validation are separate.** Real DAW recall, AU/VST3 discovery/cache behavior, human audition, actual macOS
+package installation/receipt registration and native shell appearance remain unverified.
+Anabasis Windows runtime installation also remains unverified. No unrelated fine-review,
+brand/audition, legal or other owner decision is closed by this namespace approval.
+The corresponding architecture/owner-acceptance blockers are closed. Release approval and
+unrelated future architecture decisions are outside this reconciliation.
 
 ## ADRs amended by a later ADR
 
@@ -119,6 +142,8 @@ moved:
 
 | Amended | By | What moved |
 |---|---|---|
+| **0008** | **0048** | **Effective under explicit final owner approval, recorded 2026-10-24 (original approval date not recorded).** Bundle namespace is `tech.rolly.anabasis`; pinned identity-derivation claims are qualified. Independent RTec/Anbs, VST3 UIDs and build decisions remain fixed. ADR-0008 stays Accepted with its historical values. |
+| **0021** | **0048** | **Effective under the same approval.** macOS receipts are `tech.rolly.anabasis.{vst3,au,app}`; Windows AppId and packaging behavior remain fixed. ADR-0021 stays Accepted with original receipt evidence. |
 | **0008**, **0028** | **0047** | Current JUCE pin moves to **9.0.4 / `3fb5cbc…`**; both earlier decisions retain their historical values. Cache migration rejects previous default fields rather than silently reusing them. The compile-definition contract explicitly excludes newly default-enabled MP3/Opus/WebP codecs on every consumer. FetchContent, immutable pinning, the local path, target graph, identity and C++23 remain as before. |
 | **0006** | **0015** | The `ceiling` (⊕ −1.0) and `truePeakMode` (⊕ on) defaults quoted in its Context and option E. The clamp mechanism, the stage placement and the monitoring decisions are untouched. |
 | **0010** | **0015** | The ten-field host-hidden inventory in its Decision — `int_meterTargets` was removed, so the set is nine — and the same two defaults. The IDs, the exclusion tiers and the lockable set are untouched. |

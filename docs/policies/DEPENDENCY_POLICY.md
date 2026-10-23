@@ -192,7 +192,7 @@ Every future bump appends a row here with its ADR and the rule-2 verification re
 rule-2 cell claims a Level-5 audition must name who performed it and when; the first row does not,
 because nobody has.
 
-Namespace generation audit (2026-10-23, proposed ADR-0048): the JUCE pin is unchanged.
+Namespace generation audit (2026-10-23, Accepted ADR-0048; final approval recorded 2026-10-24): the JUCE pin is unchanged.
 BUNDLE_ID controls CFBundleIdentifier and unused framework/AAX/ARA defaults; AU component codes
 and the configured non-VST2-compatible VST3 class IDs are independent. Generated/native gates
 verify that distinction; no dependency or format is added.
