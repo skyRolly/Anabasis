@@ -663,3 +663,16 @@ CMake/package/Windows GUID declarations; Linux, Windows and both macOS jobs insp
 generated metadata and VST3 class IDs. macOS additionally checks all built plists/AU component
 triples; Windows reads VERSIONINFO without executing code. `build-pkg.sh` checks expanded
 PackageInfo/Distribution receipt IDs after a same-job self-test. Reports live under build/.
+
+
+### Clang LTO dependency transport — 2026-10-23
+
+The starting-main run 39839766743 and namespace run 39978295519 timed out before compilation
+while downloading packages from the hosted image's HTTP Azure Ubuntu mirror. The Clang LTO
+lane now substitutes the official HTTPS archive in that disposable runner's apt mirror list.
+This is restricted to GITHUB_ACTIONS=true, RUNNER_ENVIRONMENT=github-hosted and
+GITHUB_JOB=linux-lto-clang; other jobs, containers and developer machines are unchanged.
+The full dependency list, normal apt signature verification, Clang major, build flags,
+assertions and 30-minute job limit are unchanged. The existing native compiler/version and
+LTO test gates still run; no failed test is skipped or reclassified as successful.
+Actual source/transport and test results are collected on the new PR head.

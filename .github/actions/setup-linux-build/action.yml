@@ -93,6 +93,19 @@ runs:
         EXTRA_PACKAGES: ${{ inputs.extra-packages }}
       run: |
         set -euo pipefail
+        # The Clang LTO lane repeatedly exhausted its unchanged 30-minute
+        # budget downloading from the hosted image's HTTP Azure mirror, also
+        # on main. Change only that disposable runner's mirror transport;
+        # packages, signed apt metadata, compiler pin and test gates stay intact.
+        if [ "${GITHUB_ACTIONS:-}" = "true" ] &&
+           [ "${RUNNER_ENVIRONMENT:-}" = "github-hosted" ] &&
+           [ "${GITHUB_JOB:-}" = "linux-lto-clang" ]; then
+          ci_ubuntu_mirrors=/etc/apt/apt-mirrors.txt
+          test -f "$ci_ubuntu_mirrors"
+          sudo sed -i 's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' "$ci_ubuntu_mirrors"
+          cat "$ci_ubuntu_mirrors"
+        fi
+
         chmod +x scripts/*.sh
         ./scripts/setup-linux.sh "$DEPENDENCY_PROFILE"
 
