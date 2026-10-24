@@ -901,3 +901,17 @@ an empty sibling snapshot is not proof of both-products co-installation. Portabl
 fixtures prove parser liveness, not OS installation. Default full installation is the
 smoke-test scope; component permutations, upgrades, Finder/Dock and DAW recall remain
 manual/separate. See `worklogs/2026-10-24-installed-macos-receipts.md` for exact evidence.
+
+
+Review-closure enforcement (2026-10-24): native `install-location` fixtures are
+under `scripts/fixtures/macos-receipts`; the alternative `location` field is rejected.
+Ownership covers all payload files and symlinks, not just plist/executable. Resource,
+signature and symlink omission regressions leave both trees identical; bypass mutants
+must fail specifically on missing receipt ownership. Content equality remains independent.
+
+`receipt_liveness` explicitly gates native installation and PKG upload. Run
+`python3 scripts/test-macos-receipt-gates.py` for production-condition fault replay,
+including `!cancelled()` overriding implicit success. Failed/skipped liveness runs no
+installer and yields no PKG; failed installation yields retained diagnostics and no PKG.
+The separate bundle ZIP keeps its existing independent gate; this changes no release policy.
+Raw native evidence also retains host/head/package digest and actual choice XML.

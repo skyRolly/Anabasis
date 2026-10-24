@@ -1,0 +1,8 @@
+{
+  "repository": "skyRolly/Anabasis",
+  "head": "4bfd040f54dc8639a5f97e151cdc8c68985ca3d6",
+  "run": 40045096731,
+  "artifact": 12542367336,
+  "zip_sha256": "fabd74e90af3266380d1b6fa986c095ecfb181b001e8348eb843d21185d64377",
+  "scope": "Unedited raw pkgutil --pkg-info-plist and --files from this product's real default-full install. Historical fixtures, not approval or a new installation."
+}

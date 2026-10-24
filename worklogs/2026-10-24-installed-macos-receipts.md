@@ -57,3 +57,21 @@ CFBundleIdentifier tech.rolly.anabasis, AU codes and installed/staged hash equal
 Existing receipts survive; sibling count is zero, so co-installation is not claimed.
 The active release-procedure gap is narrowed accordingly. This final documentation
 follow-up changes no script/workflow/product bytes; fresh combined-head CI still applies.
+
+
+## Review closure — 2026-10-24 (Asia/Shanghai)
+
+Confirmed omissions: resource/signature/symlink receipt ownership, explicit workflow
+liveness dependency and binding TESTING_POLICY coverage. Refuted field-name advice:
+retained raw native plists use install-location, not location. Raw fixture provenance
+records the original artifact digest/head; those historical bytes are unchanged.
+
+Old validate_component accepts omitted leaves while trees match. Enriched fixtures
+make that old validator and a disabled ownership gate fail specifically on payload
+ownership. Failed/skipped liveness and failed-installation artifact boundaries are
+proved against actual workflow expressions with harmless temporary execution/upload
+markers; this is scheduler-expression evidence, not an actual failed PKG publication.
+The native step now captures measured choice XML, host/head and package digest.
+
+Proposed ADR-0050 records policy enforcement; formal review/acceptance and all merges
+remain pending. No product identity/version/audio/GUI/state or signing policy change.

@@ -7921,3 +7921,14 @@ Final native-evidence sync: the installed-receipt worklog now records the succes
 ff0f422 matrix/artifact and exact pkgutil fields. The active release procedure closes
 the default-full receipt gap while keeping component/co-installation/DAW gaps explicit;
 Windows remains the separate PR #53. No historical release evidence is rewritten.
+
+
+## 2026-10-24 installed-receipt review closure
+
+Proposed ADR-0050 records the TESTING_POLICY addition; independent human acceptance
+remains pending. Raw native fixtures, complete payload ownership, explicit liveness
+dependency and production-condition fault replay replace the incomplete check.
+CI/testing/release procedures and navigation are synchronized. The ZIP gate stays
+independent. Earlier native results remain dated evidence, not new-head validation.
+See `scripts/test-macos-receipts.py`, `scripts/test-macos-receipt-gates.py` and the
+installed-receipt worklog; no DSP/state/identity/version or release policy change.

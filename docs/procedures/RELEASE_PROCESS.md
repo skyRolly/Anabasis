@@ -130,3 +130,9 @@ an empty sibling snapshot is not proof of both-products co-installation. Portabl
 fixtures prove parser liveness, not OS installation. Default full installation is the
 smoke-test scope; component permutations, upgrades, Finder/Dock and DAW recall remain
 manual/separate. See `worklogs/2026-10-24-installed-macos-receipts.md` for exact evidence.
+
+
+Installed-receipt review closure: PKG CI artifacts require successful named liveness
+and real installed-receipt verification, including every payload file/symlink. The
+macOS bundle ZIP retains its independent gate; its availability is not evidence of
+registered receipts or permission to publish a release. No release-policy change.
