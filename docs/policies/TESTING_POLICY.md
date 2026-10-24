@@ -284,7 +284,7 @@ The strictness itself is **not restated here**, not even parenthetically: see th
 under *Phase-escalating strictness* above. A number copied into prose is a number that goes stale
 — this sentence carried "8 at P3–P5" in the present tense for a day after CI had moved past it.
 
-## Native installed macOS receipt gate (Proposed ADR-0050)
+## Native installed macOS receipt gate (Accepted ADR-0050)
 
 - After actual PKG creation, `receipt_liveness` must successfully run both
   `scripts/test-macos-receipts.py --self-test` and

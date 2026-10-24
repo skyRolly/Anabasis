@@ -60,9 +60,9 @@ Status values: Proposed · Accepted · Deprecated · Superseded.
 | [ADR-0046](ADR-0046-the-true-peak-clamp-eases-in-and-engages-from-12-khz.md) | **The true-peak clamp eases in, and true-peak mode engages from 12 kHz** — the fourth PR #42 review round and KI-025: the clamp's requirement bounds a segment's reading only while the gains its interpolation reads are equal, and the boxcar attack ramp at its 8-sample floor put its steepest slope beside segments at the ceiling, so a worst-case burst read up to +0.157 dB (Annex 2) over the live ceiling below 44.1 kHz; a Ceiling reversal mid-ascent read +0.30 dB at 48 kHz at clamp level (ADR-0045's stamping). The attack is a geometrically weighted mean that eases in (λ·A = 4.8, floor 16 samples, so D = 46 below 66 kHz), the release rises at most 1 % per sample, a revision reaches only what a revised reading defines (the retarget step 22.5 → 4.9 glide steps), a TP frame answers to min(entry, predicted emission ceiling), and the path engages from 12 kHz — the lowest common rate a derived bound supports (`truePeakPathEngages`, one predicate for the engine's rail and the Ceiling's unit, which reads the prepared rate the GR ring already publishes). Two-stage verify-and-correct and a longer attack floor built, measured and rejected. Amends ADR-0041 decisions 3–4 (figures), ADR-0045 decisions 1, 2 and 5, ADR-0015 item 5, and DSP_POLICY invariants 4 and 8 (prescribed text) | **Accepted — 2026-09-28, on the owner's direction; ratified 2026-09-29** (Architecture Review Gate — the ceiling clamp's gain law, the TP delay composition's figures, conflict with Accepted ADR-0045, the supported-rate contract (3901–11999 Hz, 8 and 11.025 kHz among them, no longer engages TP), a new cross-thread READ of an existing published scalar — cleared on the owner's explicit approval; taken in the fourth PR #42 review round to close KI-025 without widening the tolerance, flagged ⊕ for the owner's review of the carrying PR, and held there until answered; the brief's "from Proposed" read as this ratification, the record having been filed `Accepted` ⊕). Its amendments to ADR-0041, ADR-0045 and ADR-0015 are in effect; ADR-0045 itself stays ⊕. A dated ratification note records the re-verification, that below 12 kHz the TP switch still moves the limiter's detector at Oversampling Off / 2× (no dBTP guarantee), the unit at a host rate ≤ 0, and invariant 3's prescribed text | Verified at engine and clamp level at every engaged rate — `testTruePeakModeHoldsTheCeilingBelow44k` fails 12 checks on 0.2.15; a 24 167-render engine matrix per tree (worst +0.0426 / +0.0380 dB; 0.2.15 over 0.1 dB in 378 renders, the integrated tree in none outside a Force Max offline-entry splice identical in both, KI-024), 1.1 million renders of engine climbs, 77 clamp-level searches (nothing over 0.1 dB; reversals ≤ +0.0454 where 0.2.15 read up to +0.60); derived retarget-step bounds for inputs not already under reduction (+0.0672 dB at 12 kHz, +0.1008 at 8 kHz — hence the rail); TP-off and latency identity; `testTheCeilingUnitFollowsTheRateTheTruePeakPathEngagesAt`. A dated implementation note (not an amendment) records the round's own review: decision 1's float weights summing just over 1 clipped an astronomical input to the ceiling at 88.2 / 384 / 768 kHz (fixed: normalised by their own float sum; `testTheClampSilencesAnAstronomicalInput`), and decisions 2 and 4 pinned (`testTheClampReleaseRiseIsCapped`, `testTruePeakModeLagsAnAscentByTheEntryCeiling`). No all-input bound; not heard; not run in a host at a low rate |
 | [ADR-0047](ADR-0047-juce-904-upgrade.md) | **JUCE 9.0.1 → 9.0.4**, immutable pin `3fb5cbc…`; reject previous default caches before fetching, retain custom/local comparisons, explicitly exclude the newly enabled MP3/Opus/WebP codecs on all six consumers, and re-verify attribution and dependency internals | **Accepted — owner's 2026-10-21 upgrade directive** | Pin and source audit verified; build/comparison evidence and remaining platform/Level-5 checks: `worklogs/2026-10-21-juce-904-upgrade.md` |
 | [ADR-0048](ADR-0048-domain-product-namespace.md) | Domain namespace `tech.rolly.anabasis`; partially amends ADR-0008 bundle identity and ADR-0021 receipts, preserves independent codes/GUID | **Accepted** — explicit final owner approval; record updated 2026-10-24; Architecture Review cleared | Source and synthetic gates verified; native evidence and limits in the namespace worklog |
-| [ADR-0050](ADR-0050-installed-receipt-validation-boundary.md) | Complete installed-receipt ownership and explicit liveness/PKG artifact boundary | **Proposed** — independent human review pending | Native fixtures, omission/mutation and scheduling-fault regressions |
+| [ADR-0050](ADR-0050-installed-receipt-validation-boundary.md) | Complete installed-receipt ownership and explicit liveness/PKG artifact boundary | **Accepted** — owner direct confirmation 2026-10-25; human architecture review complete; implementation/merge pending | Native fixtures, omission/mutation and scheduling-fault regressions |
 
-Number ADR-0049 is reserved by the independent [PR #53](https://github.com/skyRolly/Anabasis/pull/53); this branch does not duplicate its implementation or infer acceptance.
+Number ADR-0049 is reserved by the independent [PR #53](https://github.com/skyRolly/Anabasis/pull/53); the owner also confirmed ADR-0049 Accepted on 2026-10-25; this branch does not duplicate its implementation.
 
 ADR-0028 is the **first entry in `DEPENDENCY_POLICY.md`'s compliance log**, which had stood empty
 with the note "no dependency bump has occurred". Its rule-2 cell is deliberately half-empty: the
@@ -275,3 +275,23 @@ Evidence [Verified | Partially Verified | Unverified]:
 - Test:   <test name>
 - Worklog: worklogs/<file>.md   # the measurement trail, if the decision was empirical
 ```
+
+## 2026-10-25 platform-review approval reconciliation
+
+The owner directly confirmed in the platform-review closure task that **“all
+ADRs have received human approval.”** For this branch, ADR-0050 is **Accepted**.
+The confirmation also explicitly covers Anamorph ADR-0065/0066 and Anabasis
+ADR-0049/0050 in their respective PRs. Already Accepted predecessor decisions
+remain Accepted; no unrelated or future proposal is approved by implication.
+
+2026-10-25 is the confirmation/record-update date. The original earlier
+approval date, reviewer identity, meeting, signed record and GitHub approval
+submission were not supplied and are not invented. Human architecture/ADR
+approval is complete. This does not certify tests, satisfy a separate code
+review, or authorize merge/release. The decision is Accepted now; its branch
+implementation and associated policy enforcement reach main only after a
+separately authorized merge. Earlier Proposed entries remain historical.
+
+| Record / amendment | Decision status now | Implementation effectivity |
+| --- | --- | --- |
+| [ADR-0050](ADR-0050-installed-receipt-validation-boundary.md) | Accepted; owner confirmation 2026-10-25 | Prepared on PR #54; not effective on main; merge pending |

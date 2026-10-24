@@ -218,6 +218,7 @@ ADR-0048 is Accepted under explicit final owner approval; implementation is merg
 Native DAW/receipt-installation validation remains unverified.
 
 
-Installed-receipt policy proposal: [ADR-0050](docs/architecture/design-decisions/ADR-0050-installed-receipt-validation-boundary.md) remains Proposed.
+Installed-receipt decision: [ADR-0050](docs/architecture/design-decisions/ADR-0050-installed-receipt-validation-boundary.md) is Accepted by the owner's direct
+confirmation on 2026-10-25. Human architecture/ADR approval is complete; merge remains pending.
 Native fixtures are in `scripts/fixtures/macos-receipts`;
 `scripts/test-macos-receipt-gates.py` checks the production scheduling contract.
