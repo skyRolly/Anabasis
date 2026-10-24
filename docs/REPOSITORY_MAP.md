@@ -201,3 +201,12 @@ row is a *plan*, not a claim about existing files.
 `scripts/check-product-identity.py` verifies the domain namespace and independent plugin/GUID
 identities in source and generated/package metadata. The before-edit inventory, comparison
 commands and native-test limits are in `worklogs/2026-10-23-product-namespace.md` (ADR-0048).
+
+`scripts/test-macos-receipts.py` validates actual installed PackageKit/pkgutil receipts
+on this repository's disposable hosted Mac. `--self-test` proves parser/guard liveness
+without installation. It never forgets receipts or removes installed folders.
+
+
+Installed-receipt policy proposal: [ADR-0050](architecture/design-decisions/ADR-0050-installed-receipt-validation-boundary.md) remains Proposed.
+Native fixtures are in `scripts/fixtures/macos-receipts`;
+`scripts/test-macos-receipt-gates.py` checks the production scheduling contract.

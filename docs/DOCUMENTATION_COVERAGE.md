@@ -7906,3 +7906,29 @@ The initial lane-specific transport correction at `bffde567` passed Clang 22.1.8
 dependency setup exposed why the transport choice should be consistent across hosted Ubuntu
 callers rather than conditional on a job name. This does not change either dependency profile
 or any test/timeout. Current-head native CI re-verifies all callers, including the Debian container.
+
+## 2026-10-24 installed macOS receipts
+
+Added native installed-receipt validation in the existing Mac packaging job, with
+same-job positive/negative parser fixtures, strict disposable-host guard and retained
+logs. CI/testing/release procedures and script map are synchronized. No audio invariant
+mapping changes apply. No product source, existing tests, namespace, version or build
+architecture change. Evidence: `scripts/test-macos-receipts.py`, `build.yml` and
+`worklogs/2026-10-24-installed-macos-receipts.md`. Prior unperformed-runtime statements
+remain dated baseline; current native results are recorded by exact CI head.
+
+Final native-evidence sync: the installed-receipt worklog now records the successful
+ff0f422 matrix/artifact and exact pkgutil fields. The active release procedure closes
+the default-full receipt gap while keeping component/co-installation/DAW gaps explicit;
+Windows remains the separate PR #53. No historical release evidence is rewritten.
+
+
+## 2026-10-24 installed-receipt review closure
+
+Proposed ADR-0050 records the TESTING_POLICY addition; independent human acceptance
+remains pending. Raw native fixtures, complete payload ownership, explicit liveness
+dependency and production-condition fault replay replace the incomplete check.
+CI/testing/release procedures and navigation are synchronized. The ZIP gate stays
+independent. Earlier native results remain dated evidence, not new-head validation.
+See `scripts/test-macos-receipts.py`, `scripts/test-macos-receipt-gates.py` and the
+installed-receipt worklog; no DSP/state/identity/version or release policy change.

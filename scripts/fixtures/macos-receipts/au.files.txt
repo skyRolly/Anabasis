@@ -1,0 +1,8 @@
+Anabasis.component
+Anabasis.component/Contents
+Anabasis.component/Contents/Info.plist
+Anabasis.component/Contents/MacOS
+Anabasis.component/Contents/MacOS/Anabasis
+Anabasis.component/Contents/PkgInfo
+Anabasis.component/Contents/_CodeSignature
+Anabasis.component/Contents/_CodeSignature/CodeResources

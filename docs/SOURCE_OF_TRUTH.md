@@ -164,3 +164,8 @@ ADR-0048. Its partial amendments of Accepted ADR-0008 and ADR-0021 are effective
 2026-10-24 reconciliation in `architecture/design-decisions/ADR_INDEX.md` records explicit
 final owner approval, cleared architecture blockers and verified #51 main ancestry. Earlier
 implementation permission remains history; unperformed runtime/manual validation remains unverified.
+
+
+Installed-receipt policy proposal: [ADR-0050](architecture/design-decisions/ADR-0050-installed-receipt-validation-boundary.md) remains Proposed.
+Native fixtures are in `scripts/fixtures/macos-receipts`;
+`scripts/test-macos-receipt-gates.py` checks the production scheduling contract.

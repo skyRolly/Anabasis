@@ -107,6 +107,32 @@ The base is `tech.rolly.anabasis`; macOS receipts are `.vst3`, `.au` and `.app` 
 `build-pkg.sh` validates expanded metadata. Exact named component-to-receipt, choice and payload ownership must agree; a correct ID set alone does not pass. The Windows AppId stays
 `{19AAA915-4527-4BA2-B6A7-06068E527C54}`. Older unpublished receipts have no aliases or
 migration handling. ADR-0048 is Accepted under final owner approval and #51 is merged;
-its ADR-0008/ADR-0021 amendments are effective. Architecture review is cleared. Actual receipt
-installation, DAW recall and Windows runtime installation remain unverified; release authorization
+its ADR-0008/ADR-0021 amendments are effective. Architecture review is cleared for that
+namespace decision. Default-full actual macOS receipts are now verified by the guarded
+installed-receipt smoke test; exact native heads/artifacts are in its worklog. Component
+permutations, upgrades, both-product co-installation and DAW recall remain outside that
+coverage. Windows runtime correctness belongs to independent PR #53; release authorization
 is separate.
+
+## Native installed-receipt smoke test
+
+The macOS packaging job runs `scripts/test-macos-receipts.py --self-test` before
+`--package <actual.pkg> --staged-dir <validated tree>` on this repository's disposable
+GitHub-hosted Mac only. Existing product receipts or system bundles cause refusal.
+The real installer targets `/`; no receipt is forgotten and no plug-in folder is
+deleted. VM disposal is cleanup. Installer upload requires this gate and its evidence
+artifact retains the native installer log, raw pkgutil metadata and JSON result.
+
+The check measures `.vst3`/`.au`/`.app` receipt IDs, version, volume, destination and
+file ownership, actual installed CFBundleIdentifier/AU codes and staged/installed
+payload hashes. Pre-existing receipts and sibling metadata/payloads must be unchanged;
+an empty sibling snapshot is not proof of both-products co-installation. Portable
+fixtures prove parser liveness, not OS installation. Default full installation is the
+smoke-test scope; component permutations, upgrades, Finder/Dock and DAW recall remain
+manual/separate. See `worklogs/2026-10-24-installed-macos-receipts.md` for exact evidence.
+
+
+Installed-receipt review closure: PKG CI artifacts require successful named liveness
+and real installed-receipt verification, including every payload file/symlink. The
+macOS bundle ZIP retains its independent gate; its availability is not evidence of
+registered receipts or permission to publish a release. No release-policy change.

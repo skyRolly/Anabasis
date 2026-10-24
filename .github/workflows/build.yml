@@ -2653,11 +2653,39 @@ jobs:
           chmod +x packaging/macos/build-pkg.sh
           packaging/macos/build-pkg.sh dist/Anabasis-macOS "$VERSION" "dist/Anabasis-${VERSION}-macOS.pkg"
 
+      - name: Installed macOS receipt liveness
+        id: receipt_liveness
+        if: ${{ !cancelled() && steps.package_macos.outcome == 'success' }}
+        run: |
+          python3 scripts/test-macos-receipts.py --self-test
+          python3 scripts/test-macos-receipt-gates.py --report build/receipt-scheduling-faults.json
+
+      - name: Install the real macOS package and inspect receipts
+        id: installed_receipts
+        if: ${{ !cancelled() && steps.package_macos.outcome == 'success' && steps.receipt_liveness.outcome == 'success' }}
+        run: |
+          PKG=(dist/Anabasis-*-macOS.pkg)
+          test "${#PKG[@]}" -eq 1
+          python3 scripts/test-macos-receipts.py --package "${PKG[0]}" --staged-dir dist/Anabasis-macOS
+
+      - name: Retain installed macOS receipt evidence
+        if: ${{ always() && steps.installed_receipts.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Anabasis-macOS-installed-receipts
+          path: |
+            build/installed-receipts-macos.json
+            build/anabasis-receipt-logs
+            build/receipt-scheduling-faults.json
+          if-no-files-found: error
+
       - name: Upload macOS installer
         if: >-
           ${{ !cancelled()
               && steps.tests_x86_64.outcome == 'success'
-              && steps.package_macos.outcome == 'success' }}
+              && steps.package_macos.outcome == 'success'
+              && steps.receipt_liveness.outcome == 'success'
+              && steps.installed_receipts.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Anabasis-macOS-installer

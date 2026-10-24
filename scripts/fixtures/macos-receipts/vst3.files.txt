@@ -1,0 +1,10 @@
+Anabasis.vst3
+Anabasis.vst3/Contents
+Anabasis.vst3/Contents/Info.plist
+Anabasis.vst3/Contents/MacOS
+Anabasis.vst3/Contents/MacOS/Anabasis
+Anabasis.vst3/Contents/PkgInfo
+Anabasis.vst3/Contents/Resources
+Anabasis.vst3/Contents/Resources/moduleinfo.json
+Anabasis.vst3/Contents/_CodeSignature
+Anabasis.vst3/Contents/_CodeSignature/CodeResources
