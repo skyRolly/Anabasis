@@ -1,16 +1,16 @@
 # DOCUMENTATION_COVERAGE.md
 
-## Platform-review source-publication routing — 2026-10-25
+## Normal validation restoration — 2026-10-25
 
-CI_CD and TESTING now describe the temporary exact-repository/branch/event route
-in the existing build workflow, its retained ordinary/static/security commands,
-administration-free CodeQL build and deliberate full-validation-pending failure.
-Runtime/fuzz/installer jobs are excluded before selection; normal main/release and
-unrelated-branch policy remains unchanged. The existing native/archive/manual
-contracts and owner-confirmed Accepted ADR records remain in force. Local routing
-and command-selection evidence is required before publication; runtime success is
-not inferred from the routing checks. No new architecture decision is introduced.
-
+CI_CD and TESTING describe removal of the temporary branch-specific routing and
+pending marker, restoration of normal deduplication and reusable Release calls,
+and the restored CodeQL dependency setup. The production-file routing regression
+covers each review branch's direct/Release dispatch collision, tags, main,
+unrelated branches and forks without invoking installers. Existing target/query,
+artifact, identity and Accepted ADR contracts are preserved. Runtime outcomes are
+recorded separately from source fixtures; unsuitable hosts fail without changing
+kernel/security settings. Historical publication-only evidence is retained. The current restoration is
+recorded in `worklogs/2026-10-25-normal-validation.md`.
 
 ## Current approval reconciliation — record updated 2026-10-24 (Asia/Shanghai)
 

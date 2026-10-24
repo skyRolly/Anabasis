@@ -204,34 +204,6 @@ env:
 
 jobs:
 
-  # Temporary source-publication route for the four owner-authorized review PRs.
-  # This evaluates before runner selection for every existing validation job.
-  # A release-tag call, main, forks and unrelated branches retain the normal route.
-  validation-route:
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    outputs:
-      contained: ${{ steps.route.outputs.contained }}
-    steps:
-      - id: route
-        env:
-          CONTAINED: ${{ github.repository == 'skyRolly/Anabasis' && (((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/codex/windows-uninstall-icon-correctness' || github.ref == 'refs/heads/codex/macos-installed-receipts')) || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == 'skyRolly/Anabasis' && ((github.event.pull_request.number == 53 && github.event.pull_request.head.ref == 'codex/windows-uninstall-icon-correctness') || (github.event.pull_request.number == 54 && github.event.pull_request.head.ref == 'codex/macos-installed-receipts')))) }}
-        run: printf 'contained=%s\n' "$CONTAINED" >> "$GITHUB_OUTPUT"
-
-  # Deliberately non-success: source publication is not full validation or a
-  # waiver. Do not merge with this temporary route; restore and run normal gates.
-  full-validation-pending:
-    name: Full validation pending (source publication only)
-    needs: validation-route
-    if: needs.validation-route.outputs.contained == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    steps:
-      - name: Record the unexecuted validation contract
-        run: |
-          echo "::error::Source-publication route only: native installers, DSP/state runtime, pluginval, sanitizer/fault campaigns and customer artifacts have not been validated here. Restore the normal route and complete applicable gates before merge."
-          exit 1
-
   # -------------------------------------------------------------------------
   # Documentation structure lint (scripts/check-docs.py).
   #
@@ -275,7 +247,6 @@ jobs:
   # we ship".
   # -------------------------------------------------------------------------
   merge-check:
-    needs: [validation-route]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -283,7 +254,8 @@ jobs:
       CCACHE_MAXSIZE: 500M
       CCACHE_COMPILERCHECK: content
     if: >-
-      needs.validation-route.outputs.contained != 'true' && (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -368,7 +340,6 @@ jobs:
         run: ccache --show-stats --verbose || true
 
   docs:
-    needs: [validation-route]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Same rationale as `preflight` below: skip the duplicate same-repo PR event,
@@ -384,7 +355,8 @@ jobs:
     #     this job too. Unlike the build jobs nothing gates on it, so the failure
     #     mode is a missing check rather than a green run with zero builds.
     if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) || needs.validation-route.outputs.contained == 'true'
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Lint documentation structure
@@ -416,12 +388,12 @@ jobs:
   # terms, not wait behind a toolchain.
   # -------------------------------------------------------------------------
   source-lint:
-    needs: [validation-route]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Same same-repo-PR guard as `docs` above, for the same reasons.
     if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) || needs.validation-route.outputs.contained == 'true'
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -441,6 +413,9 @@ jobs:
       # hazard?". This answers "does the CHECKER still find it?" -- a question
       # about ~200 lines of hand-written lexing in that file, and the half that
       # can silently stop working without anything going red.
+      - name: Build and Release routing regression
+        run: python3 scripts/test-workflow-routing.py --report workflow-routing.json
+
       - name: Product identity self-test and source contract
         run: |
           python3 scripts/check-product-identity.py --self-test
@@ -534,7 +509,6 @@ jobs:
   # permanent no-op; it may then be deleted, but does no harm if left.
   # -------------------------------------------------------------------------
   preflight:
-    needs: [validation-route]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # Same-repo pull_request events are skipped entirely: `push: ["**"]` already
@@ -551,7 +525,8 @@ jobs:
     # tag-push-triggered, so this is latent, not broken. Re-check it when release.yml
     # lands; see docs/procedures/CI_CD.md.
     if: >-
-      needs.validation-route.outputs.contained != 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository)
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name != github.repository
     outputs:
       ready: ${{ steps.check.outputs.ready }}
     steps:
@@ -567,9 +542,8 @@ jobs:
           fi
 
   linux:
-    needs: [validation-route, preflight]
-    if: >-
-      needs.validation-route.outputs.contained != 'true' && (needs.preflight.outputs.ready == 'true')
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
@@ -1089,9 +1063,8 @@ jobs:
   # the first violation fails the job rather than scrolling past.
   # -------------------------------------------------------------------------
   sanitizers:
-    needs: [validation-route, preflight]
-    if: >-
-      needs.validation-route.outputs.contained != 'true' && (needs.preflight.outputs.ready == 'true')
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -1266,9 +1239,8 @@ jobs:
   # the env (or the reverse) fails in seconds rather than drifting.
   # -------------------------------------------------------------------------
   linux-lto-tests:
-    needs: [validation-route, preflight]
-    if: >-
-      needs.validation-route.outputs.contained != 'true' && (needs.preflight.outputs.ready == 'true')
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     container:
       image: gcc:16
@@ -1410,9 +1382,8 @@ jobs:
   # also two independent results: a red Clang arm cannot hide a GCC one.
   # -------------------------------------------------------------------------
   linux-lto-clang:
-    needs: [validation-route, preflight]
-    if: >-
-      needs.validation-route.outputs.contained != 'true' && (needs.preflight.outputs.ready == 'true')
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -1529,9 +1500,8 @@ jobs:
   # #error naming the reason instead of the lane going quietly blind.
   # -------------------------------------------------------------------------
   realtime:
-    needs: [validation-route, preflight]
-    if: >-
-      needs.validation-route.outputs.contained != 'true' && (needs.preflight.outputs.ready == 'true')
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -1662,9 +1632,8 @@ jobs:
         run: ccache --show-stats --verbose || true
 
   windows:
-    needs: [validation-route, preflight]
-    if: >-
-      needs.validation-route.outputs.contained != 'true' && (needs.preflight.outputs.ready == 'true')
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -2119,9 +2088,8 @@ jobs:
           }
 
   macos:
-    needs: [validation-route, preflight]
-    if: >-
-      needs.validation-route.outputs.contained != 'true' && (needs.preflight.outputs.ready == 'true')
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
     # Apple Silicon runner; we build a universal binary. FLOATING, like
     # `ubuntu-latest` and `windows-latest` above -- macOS was the one platform
     # pinned to a numbered image, and `macos-14` is now DEPRECATED upstream
@@ -2802,9 +2770,8 @@ jobs:
   #  shipping artefact still comes from the universal build above.
   # ==========================================================================
   macos-intel:
-    needs: [validation-route, preflight]
-    if: >-
-      needs.validation-route.outputs.contained != 'true' && (needs.preflight.outputs.ready == 'true')
+    needs: preflight
+    if: needs.preflight.outputs.ready == 'true'
     runs-on: macos-15-intel   # NATIVE x86_64 hardware -- not Apple Silicon, not Rosetta
     timeout-minutes: 60
     env:
