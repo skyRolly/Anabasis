@@ -93,7 +93,8 @@ jobs:
           [ -n "$CMAKE_VERSION" ] || { echo "::error::could not parse project VERSION from CMakeLists.txt"; exit 1; }
           echo "CMake project version: $CMAKE_VERSION"
 
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+          # A manual rehearsal never publishes, including when dispatched from a tag.
+          if [[ "${GITHUB_EVENT_NAME:-}" == push && "${GITHUB_REF}" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
             TAG_VERSION="${TAG#v}"
             echo "release tag: $TAG (commit ${GITHUB_SHA})"
