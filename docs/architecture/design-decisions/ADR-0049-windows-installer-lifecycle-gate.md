@@ -1,10 +1,10 @@
 # ADR-0049 — Optional-component Windows uninstall icon and lifecycle gate
 
-**Status:** Proposed. Implementation/testing is expressly requested by the owner in
-this round. This record enacts the accompanying TESTING_POLICY enforcement addition;
-formal human review/acceptance and merge authorization remain pending. No CMake,
-dependency/pin/format/audio/state/identity architecture gate item is changed or an
-Accepted decision contradicted. The optional-component contract in ADR-0021 remains.
+**Status:** Accepted. The owner directly confirmed on 2026-10-25 that human
+architecture review and approval are complete for this existing decision.
+This is the confirmation and record-update date; the original approval date
+was not separately specified. Merge/publication, separately required code
+review and unexecuted tests are not approved or certified by this confirmation.
 
 ## Context
 

@@ -91,7 +91,7 @@ Lowering strictness below the phase value is a deliberate act that must be justi
       Unavailable/skipped native checks are reported as such, never as passed. Portable
       fixtures and generated-package inspection do not establish installed receipts,
       installer runtime behavior or real-DAW session compatibility.
-  - **Windows installer runtime** (`scripts/test-windows-installer.ps1`, Proposed ADR-0049): before installer
+  - **Windows installer runtime** (`scripts/test-windows-installer.ps1`, Accepted ADR-0049): before installer
     upload, the Windows job runs its liveness self-test and real ISCC install/reinstall/
     component-change/uninstall checks on its disposable GitHub-hosted VM. All three initial
     component choices must register an existing uninstaller with an extractable icon; a

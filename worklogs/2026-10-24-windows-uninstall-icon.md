@@ -94,3 +94,15 @@ failure=null. This final documentation follow-up replaces the changelog's source
 citation with actual PR #53 per CHANGELOG_POLICY rule 2, and narrows the old active
 “Windows runtime unverified” release-procedure sentence. Installer/harness bytes are
 unchanged; fresh combined-head CI remains required.
+
+## 2026-10-25 current approval reconciliation
+
+The owner directly confirmed **“all ADRs have received human approval.”**
+ADR-0049 is now **Accepted**; human architecture/ADR review is complete.
+This supersedes earlier pending-acceptance statements in this historical
+worklog. 2026-10-25 is the confirmation/record-update date, not an invented
+earlier approval date. No reviewer identity, meeting, signed record or GitHub
+review submission is inferred. Separately required code review, unperformed
+native/manual checks and merge/publication remain separate; no test result is
+upgraded by approval. The associated implementation/policy becomes effective
+on main only after merge. Other existing Accepted decisions remain Accepted.

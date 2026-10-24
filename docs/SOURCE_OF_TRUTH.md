@@ -165,6 +165,7 @@ ADR-0048. Its partial amendments of Accepted ADR-0008 and ADR-0021 are effective
 final owner approval, cleared architecture blockers and verified #51 main ancestry. Earlier
 implementation permission remains history; unperformed runtime/manual validation remains unverified.
 
-Proposed ADR-0049 records the Windows optional-component uninstall icon and new runtime
-gate in TESTING_POLICY. Its implementation is owner-requested; formal acceptance and
-merge review remain pending. The existing ADR index is the decision-status authority.
+Accepted ADR-0049 records the Windows optional-component uninstall icon and new runtime
+gate in TESTING_POLICY. The owner's direct confirmation on 2026-10-25 completes
+human architecture/ADR approval. Implementation on main, separately required code
+review and merge remain pending. The ADR index is the decision-status authority.
