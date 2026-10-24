@@ -7906,3 +7906,21 @@ The initial lane-specific transport correction at `bffde567` passed Clang 22.1.8
 dependency setup exposed why the transport choice should be consistent across hosted Ubuntu
 callers rather than conditional on a job name. This does not change either dependency profile
 or any test/timeout. Current-head native CI re-verifies all callers, including the Debian container.
+
+## 2026-10-24 Windows uninstall-icon correction
+
+Drift reported before editing: `Anabasis.iss` said no ISCC CI step existed, despite
+`build.yml` compiling it. Corrected that comment and the optional-EXE DisplayIcon defect.
+Updated TESTING_POLICY, CI/testing/release procedures, user installation instructions,
+Windows INSTALL.txt and the script map. No audio invariant/test mapping changes apply;
+all `src/`, existing DSP/state tests and CMake identities remain untouched.
+Evidence: `packaging/windows/Anabasis.iss`, `scripts/test-windows-installer.ps1` and
+`worklogs/2026-10-24-windows-uninstall-icon.md`. Native results are scoped to the PR checks.
+
+ADR-0049 is registered as Proposed for the Windows runtime TESTING_POLICY addition,
+per ADR_POLICY's policy-change recording rule. Updated README/map/source-of-truth
+navigation; no accepted status or architecture clearance is invented.
+
+Final native-evidence synchronization: corrected the active release-procedure Windows
+runtime gap and the new Unreleased entry's evidence carrier to PR #53, leaving Mac
+receipt work independent. The Windows worklog records both successful native heads.

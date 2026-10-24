@@ -1998,8 +1998,30 @@ jobs:
           $out = "dist/Anabasis-$version-Windows-Installer.exe"
           if (-not (Test-Path $out)) { Write-Error "installer not produced at $out" }
 
-      - name: Upload Windows installer
+      - name: Installer behavior self-test
         if: ${{ !cancelled() && steps.package_windows.outcome == 'success' }}
+        shell: pwsh
+        run: ./scripts/test-windows-installer.ps1 -SelfTest
+
+      - name: Test native Windows install, component changes and uninstall
+        id: installer_behavior
+        if: ${{ !cancelled() && steps.package_windows.outcome == 'success' }}
+        shell: pwsh
+        run: |
+          $setup = @(Get-ChildItem -Path dist -Filter 'Anabasis-*-Windows-Installer.exe' -File)
+          if ($setup.Count -ne 1) { throw 'expected exactly one built installer' }
+          ./scripts/test-windows-installer.ps1 -Installer $setup[0].FullName -StagingDir dist/Anabasis-Windows
+
+      - name: Retain Windows installer runtime evidence
+        if: ${{ always() && steps.installer_behavior.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Anabasis-Windows-installer-validation
+          path: build/windows-installer-behavior.json
+          if-no-files-found: error
+
+      - name: Upload Windows installer
+        if: ${{ !cancelled() && steps.package_windows.outcome == 'success' && steps.installer_behavior.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: Anabasis-Windows-installer

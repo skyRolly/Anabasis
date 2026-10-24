@@ -24,11 +24,8 @@
 
 [Setup]
 ; ArchitecturesAllowed/InstallIn64BitMode use the `x64compatible` identifier,
-; which requires Inno Setup >= 6.3 (2024). The sibling additionally records the
-; compiler engine its CI proved this script against; that claim is dropped here
-; rather than copied, because Anabasis's build.yml has no Inno Setup step to
-; cite as evidence — a compile-validation claim with no run behind it is worse
-; than none.
+; which requires Inno Setup >= 6.3 (2024). build.yml compiles this script with
+; the runner's ISCC, then tests real installations on that disposable VM.
 ; Stable AppId: upgrades and uninstalls must always target the same product.
 ; This GUID is ANABASIS'S OWN and must NEVER change once a build has shipped —
 ; Inno keys the uninstall/upgrade entry on it, so a changed AppId turns an
@@ -55,7 +52,9 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; {commoncf64}\VST3 requires elevation.
 PrivilegesRequired=admin
-UninstallDisplayIcon={app}\Anabasis.exe
+; Standalone is optional; Inno always installs the uninstaller, including its
+; default executable icon. Branded installer artwork is a separate decision.
+UninstallDisplayIcon={uninstallexe}
 WizardStyle=modern
 
 [Types]
