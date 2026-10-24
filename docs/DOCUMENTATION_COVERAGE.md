@@ -7920,3 +7920,7 @@ Evidence: `packaging/windows/Anabasis.iss`, `scripts/test-windows-installer.ps1`
 ADR-0049 is registered as Proposed for the Windows runtime TESTING_POLICY addition,
 per ADR_POLICY's policy-change recording rule. Updated README/map/source-of-truth
 navigation; no accepted status or architecture clearance is invented.
+
+Final native-evidence synchronization: corrected the active release-procedure Windows
+runtime gap and the new Unreleased entry's evidence carrier to PR #53, leaving Mac
+receipt work independent. The Windows worklog records both successful native heads.

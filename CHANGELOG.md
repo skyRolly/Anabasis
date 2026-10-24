@@ -62,8 +62,8 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ### Fixed
 - Windows VST3-only installations register a real uninstall icon from the always-installed
   uninstaller. Standalone remains optional; the icon is generic pending separate branding approval.
-  Evidence: `packaging/windows/Anabasis.iss`; `scripts/test-windows-installer.ps1`;
-  `worklogs/2026-10-24-windows-uninstall-icon.md`. [Verified — source; native CI recorded separately]
+  Evidence: [PR #53](https://github.com/skyRolly/Anabasis/pull/53);
+  `worklogs/2026-10-24-windows-uninstall-icon.md`. [Verified — source and native disposable-VM matrix]
 - **BYPASS no longer admits delayed audition peaks into the session TP hold.**
   TP eligibility now follows the estimator's six-frame reporting lag at both
   bypass edges. Sample peak and the session clock retain their existing timing,

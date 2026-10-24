@@ -85,3 +85,12 @@ Proposed ADR-0049 records the added testing-policy enforcement requirement under
 ADR_POLICY's policy-change rule. No listed architecture hard-stop item is introduced;
 formal ADR acceptance and independent human merge review are still pending. This is
 not an automatic widening of Accepted ADR-0021/0048 or predecessor owner approval.
+
+At `c8b49d93c5413ecb40c256eca35b90984580bfb9`, Windows job 120716399447/run
+40042376168 repeated the same native lifecycle matrix successfully. Independently
+downloaded artifact 12540522538 has ZIP SHA-256
+`ce1fcb49dd005af968af9177c09b880e6ebe7b8e871c636846cfd11cf657d2c3`;
+failure=null. This final documentation follow-up replaces the changelog's source-only
+citation with actual PR #53 per CHANGELOG_POLICY rule 2, and narrows the old active
+“Windows runtime unverified” release-procedure sentence. Installer/harness bytes are
+unchanged; fresh combined-head CI remains required.
