@@ -7916,3 +7916,8 @@ mapping changes apply. No product source, existing tests, namespace, version or 
 architecture change. Evidence: `scripts/test-macos-receipts.py`, `build.yml` and
 `worklogs/2026-10-24-installed-macos-receipts.md`. Prior unperformed-runtime statements
 remain dated baseline; current native results are recorded by exact CI head.
+
+Final native-evidence sync: the installed-receipt worklog now records the successful
+ff0f422 matrix/artifact and exact pkgutil fields. The active release procedure closes
+the default-full receipt gap while keeping component/co-installation/DAW gaps explicit;
+Windows remains the separate PR #53. No historical release evidence is rewritten.

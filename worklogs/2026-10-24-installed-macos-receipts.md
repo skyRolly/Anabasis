@@ -39,8 +39,21 @@ Three valid components and 45 metadata/ownership/payload/separation/guard negati
 Three independently run mutants disable receipt identity, named bundle ownership or
 payload equality; each is rejected by its targeted fixture. The wrong-owner probe adds
 a foreign entry to an otherwise valid complete receipt, avoiding unrelated missing-file
-failure as liveness proof. Native results remain pending until exact-head CI completes;
+failure as liveness proof. At initial implementation native results awaited exact-head CI;
 Linux fixture success is not a native Mac pass. Installer upload requires native smoke.
 
 No audio/GUI/state/parameter/latency source, existing tests, AppId, host IDs, namespace,
 version or artwork changes. No merges, ADR acceptance, release/tag or deployments.
+
+## Native result at ff0f422c901b0c554223240ecca89e415b779d0f
+
+The full push matrix 40039466165, PR merge check 40039489894, CodeQL 40039489924
+and dependency review 40039490283 pass. Mac job 120706890289 performed actual default
+full installation; artifact 12539322009 was independently downloaded and digest-checked:
+ZIP SHA-256 `b6ac77722be6a2aadd9a6a17db73d0c5164c0733871c7c060aff2b67efe1a1ae`.
+It records failure=null, all three canonical receipts at version 0.2.17/volume /,
+locations Library/Audio/Plug-Ins/VST3, Library/Audio/Plug-Ins/Components, Applications,
+CFBundleIdentifier tech.rolly.anabasis, AU codes and installed/staged hash equality.
+Existing receipts survive; sibling count is zero, so co-installation is not claimed.
+The active release-procedure gap is narrowed accordingly. This final documentation
+follow-up changes no script/workflow/product bytes; fresh combined-head CI still applies.

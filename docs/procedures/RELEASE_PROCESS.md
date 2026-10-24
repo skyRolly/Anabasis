@@ -107,8 +107,11 @@ The base is `tech.rolly.anabasis`; macOS receipts are `.vst3`, `.au` and `.app` 
 `build-pkg.sh` validates expanded metadata. Exact named component-to-receipt, choice and payload ownership must agree; a correct ID set alone does not pass. The Windows AppId stays
 `{19AAA915-4527-4BA2-B6A7-06068E527C54}`. Older unpublished receipts have no aliases or
 migration handling. ADR-0048 is Accepted under final owner approval and #51 is merged;
-its ADR-0008/ADR-0021 amendments are effective. Architecture review is cleared. Actual receipt
-installation, DAW recall and Windows runtime installation remain unverified; release authorization
+its ADR-0008/ADR-0021 amendments are effective. Architecture review is cleared for that
+namespace decision. Default-full actual macOS receipts are now verified by the guarded
+installed-receipt smoke test; exact native heads/artifacts are in its worklog. Component
+permutations, upgrades, both-product co-installation and DAW recall remain outside that
+coverage. Windows runtime correctness belongs to independent PR #53; release authorization
 is separate.
 
 ## Native installed-receipt smoke test
