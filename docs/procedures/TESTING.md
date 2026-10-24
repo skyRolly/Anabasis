@@ -8,6 +8,19 @@ How to run and interpret the validation suite. Acceptance levels and the hard ga
 > invariant→test map still marked `TODO (P2+)` are the ones whose DSP does not exist yet; the
 > P1 rows are live. The structure below describes the suites as built.
 
+
+## Source-publication evidence boundary (2026-10-25)
+
+The branch-specific route in [CI_CD.md](CI_CD.md#temporary-platform-review-source-publication-2026-10-25)
+permits documentation/source checker self-tests, static contracts and security
+analysis without installer execution, fuzzing or host security-setting changes.
+Anamorph #175 additionally runs the ordinary-UID capture recorder against the
+production bootstrap. Its modeled ownership is not native root evidence.
+`full-validation-pending` deliberately fails: excluded jobs and prior exact-head
+evidence cannot establish newly executed runtime checks. Restore the normal route
+and complete applicable checks before merge; artifact and manual-validation gates
+remain separate. This routing changes no product code, versions, identities or art.
+
 ## Headless self-tests
 
 ## JUCE cache migration regression (ADR-0047)

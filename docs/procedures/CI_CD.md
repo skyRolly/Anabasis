@@ -2,6 +2,35 @@
 
 Continuous integration / delivery. Source of truth: `.github/workflows/`.
 
+
+## Temporary platform-review source publication (2026-10-25)
+
+For `skyRolly/Anabasis` only, `build.yml` routes push/dispatch events for `codex/windows-uninstall-icon-correctness` (#53), `codex/macos-installed-receipts` (#54)
+and matching same-repository PR events into `main` through `validation-route`.
+The feature commit defines the push workflow; the PR merge ref defines the
+`pull_request` workflow. Both run documentation and source lints. The ordinary
+helper-capture recorder also runs in Anamorph #175's `source-lint`; it executes
+no fixture helper and models root metadata rather than proving native protection.
+All existing runtime/build/package jobs, including the PR `merge-check`, are
+excluded by job conditions before their runner or matrix starts. Their commands,
+required contracts and the customer-archive hold remain intact. The explicit
+`full-validation-pending` job fails, keeping incomplete validation visible.
+
+CodeQL retains actions and C++ manual analysis, with unchanged queries/targets.
+For these same contexts only, its manual build uses preinstalled runner dependencies
+and skips `setup-linux.sh` (administrative package provisioning). Missing dependencies
+are an analysis failure, not a success or waiver. MSVC security analysis and dependency
+review remain enabled under their existing event/path filters; their builds compile
+analysis targets without running DSP/state suites or an installer. Existing read-only
+permissions and narrowly scoped security-report permissions are unchanged.
+
+No `pull_request_target`, `workflow_run` or downstream repository workflow is added.
+Release-tag reuse, main and unrelated branches retain their normal job selection.
+Body-only PR edits trigger none of the listed workflow events. This temporary routing
+must be removed and normal applicable merge checks completed before merging these PRs;
+source/static results do not certify native installations, GUI/DAW behavior or artifacts.
+The owner-confirmed ADR acceptance is complete and is independent of this test backlog.
+
 ## Workflows
 
 | Workflow | Purpose |
