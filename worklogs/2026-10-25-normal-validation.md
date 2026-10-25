@@ -76,3 +76,33 @@ provenance. It supersedes earlier recommendations only for these review defects;
 final recommendations require published-head checks and affected native runs.
 The script inventory drift was confirmed against docs/REPOSITORY_MAP.md and is
 corrected here. No product version, identity, asset, DSP/state or approval change.
+
+## 2026-10-25 staged-merge reconciliation
+
+The owner merged PR #53 as `6dba5871b42d0d4c7323e21a1d226f5bf246164a`. Its complete
+tree matches the reviewed first-PR head; both parent commits and relevant feature
+bytes were checked against actual main. ADR-0049 remains Accepted and its
+implementation is now effective on main. ADR-0050 remains Accepted, but its
+implementation on main still awaits PR #54; importing actual main into this
+feature branch does not perform that second merge. Owner confirmation remains
+2026-10-25 and is distinct from formal GitHub reviews. Earlier Proposed/pending
+entries and exact-head runtime results remain historical evidence.
+
+The combined workflow preserves normal push/PR/manual/reusable caller semantics,
+same-run routing liveness, dependency/security provisioning and both native
+installer gates. Optional artifact-derived package consumers retain their own
+selection/co-installation contracts and independent package inputs. Current normal
+CI and affected installer/archive gates must complete on this combined candidate;
+previous outer-workflow results do not certify its changed workflow.
+
+The inherited routing module description incorrectly named TSan environment
+fixtures. It now states the actual Release metadata and preflight presence/output
+coverage. This is a nonblocking coverage-description correction. No Anabasis TSan
+job, fixture or sanitizer evidence is added or claimed. Windows installer behavior
+and the optional consumer/receipt/extraction validation code are unchanged.
+
+Only the relevant conflict hunks were resolved; independent platform sections and
+Accepted ADR rows were combined. No whole workflow/document was selected with
+ours/theirs. Shared workflow/documentation overlap is now resolved against actual
+main. Product versions, JUCE pins, identities, approved art and DSP/state/GUI are
+unchanged. No GitHub PR merge, tag/release or deployment is performed here.

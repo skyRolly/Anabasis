@@ -108,11 +108,11 @@ The base is `tech.rolly.anabasis`; macOS receipts are `.vst3`, `.au` and `.app` 
 `{19AAA915-4527-4BA2-B6A7-06068E527C54}`. Older unpublished receipts have no aliases or
 migration handling. ADR-0048 is Accepted under final owner approval and #51 is merged;
 its ADR-0008/ADR-0021 amendments are effective. Architecture review is cleared for that
-namespace decision. Default-full actual macOS receipts are now verified by the guarded
-installed-receipt smoke test; exact native heads/artifacts are in its worklog. Component
-permutations, upgrades, both-product co-installation and DAW recall remain outside that
-coverage. Windows runtime correctness belongs to independent PR #53; release authorization
-is separate.
+namespace decision. Windows lifecycle validation is effective on main via PR #53.
+This combined candidate adds guarded default-full macOS receipt verification; exact
+heads/artifacts remain in their worklogs. Optional selections/co-installation have
+separate artifact-bound evidence; GUI/DAW, genuine upgrades and release authorization
+remain separate.
 
 ## Native installed-receipt smoke test
 
@@ -136,3 +136,22 @@ Installed-receipt review closure: PKG CI artifacts require successful named live
 and real installed-receipt verification, including every payload file/symlink. The
 macOS bundle ZIP retains its independent gate; its availability is not evidence of
 registered receipts or permission to publish a release. No release-policy change.
+
+## Windows uninstall icon correctness
+
+The installer references `{uninstallexe}` for DisplayIcon. Inno installs this executable
+for VST3-only, Standalone-only and combined choices; its generic icon is intentional.
+An approved branded Anabasis installer icon remains a separate design decision.
+AppId `{19AAA915-4527-4BA2-B6A7-06068E527C54}` and component/destination semantics are unchanged.
+
+The Windows job runs `scripts/test-windows-installer.ps1 -SelfTest` before its native
+`-Installer <setup.exe> -StagingDir <validated customer tree>` run. The harness refuses
+non-GitHub-hosted Windows targets and pre-existing product installs. It compiles the old
+optional-EXE target as a fault seed, reads actual uninstall registry values, extracts native
+icons, and checks three fresh choices, same-choice reinstall, selection changes and uninstall.
+Inno retains components installed by earlier runs when a later selection excludes them;
+changing selection is not a component-removal operation. The test checks that accumulated
+payload, shortcuts and stable icon path, then removes the installation through its uninstaller.
+Unmanaged files, a sibling VST3 and user preset/settings sentinels must survive.
+The `Anabasis-Windows-installer-validation` artifact records snapshots and failures.
+Installer upload requires the runtime gate. GUI chooser/DPI/cache and real DAWs remain manual.

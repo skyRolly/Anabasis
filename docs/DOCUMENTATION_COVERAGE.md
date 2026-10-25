@@ -7945,10 +7945,28 @@ independent. Earlier native results remain dated evidence, not new-head validati
 See `scripts/test-macos-receipts.py`, `scripts/test-macos-receipt-gates.py` and the
 installed-receipt worklog; no DSP/state/identity/version or release policy change.
 
+## 2026-10-24 Windows uninstall-icon correction
+
+Drift reported before editing: `Anabasis.iss` said no ISCC CI step existed, despite
+`build.yml` compiling it. Corrected that comment and the optional-EXE DisplayIcon defect.
+Updated TESTING_POLICY, CI/testing/release procedures, user installation instructions,
+Windows INSTALL.txt and the script map. No audio invariant/test mapping changes apply;
+all `src/`, existing DSP/state tests and CMake identities remain untouched.
+Evidence: `packaging/windows/Anabasis.iss`, `scripts/test-windows-installer.ps1` and
+`worklogs/2026-10-24-windows-uninstall-icon.md`. Native results are scoped to the PR checks.
+
+ADR-0049 is registered as Proposed for the Windows runtime TESTING_POLICY addition,
+per ADR_POLICY's policy-change recording rule. Updated README/map/source-of-truth
+navigation; no accepted status or architecture clearance is invented.
+
+Final native-evidence synchronization: corrected the active release-procedure Windows
+runtime gap and the new Unreleased entry's evidence carrier to PR #53, leaving Mac
+receipt work independent. The Windows worklog records both successful native heads.
+
 ## 2026-10-25 platform-review approval reconciliation
 
 Recorded the owner's direct confirmation of completed human architecture/ADR
-approval for ADR-0050 in its status header, ADR_INDEX approval/effectivity
+approval for ADR-0049 and ADR-0050 in their status headers, ADR_INDEX approval/effectivity
 record, current policy/procedure/navigation statements and dated worklog
 reconciliation. Historical Proposed entries are retained as history; current
 status is Accepted. Confirmation/record-update date is 2026-10-25; the earlier
@@ -8009,3 +8027,33 @@ and tests alternate spellings and archive link behavior. The reported spelling
 escape remains unconfirmed; these fixtures are bounded evidence, not universal
 safety proof. Existing ownership/content/location/selection/co-installation checks
 and the production default-full exact-three gate remain unchanged.
+
+## 2026-10-25 staged-merge reconciliation
+
+The owner merged PR #53 as `6dba5871b42d0d4c7323e21a1d226f5bf246164a`. Its complete
+tree matches the reviewed first-PR head; both parent commits and relevant feature
+bytes were checked against actual main. ADR-0049 remains Accepted and its
+implementation is now effective on main. ADR-0050 remains Accepted, but its
+implementation on main still awaits PR #54; importing actual main into this
+feature branch does not perform that second merge. Owner confirmation remains
+2026-10-25 and is distinct from formal GitHub reviews. Earlier Proposed/pending
+entries and exact-head runtime results remain historical evidence.
+
+The combined workflow preserves normal push/PR/manual/reusable caller semantics,
+same-run routing liveness, dependency/security provisioning and both native
+installer gates. Optional artifact-derived package consumers retain their own
+selection/co-installation contracts and independent package inputs. Current normal
+CI and affected installer/archive gates must complete on this combined candidate;
+previous outer-workflow results do not certify its changed workflow.
+
+The inherited routing module description incorrectly named TSan environment
+fixtures. It now states the actual Release metadata and preflight presence/output
+coverage. This is a nonblocking coverage-description correction. No Anabasis TSan
+job, fixture or sanitizer evidence is added or claimed. Windows installer behavior
+and the optional consumer/receipt/extraction validation code are unchanged.
+
+Only the relevant conflict hunks were resolved; independent platform sections and
+Accepted ADR rows were combined. No whole workflow/document was selected with
+ours/theirs. Shared workflow/documentation overlap is now resolved against actual
+main. Product versions, JUCE pins, identities, approved art and DSP/state/GUI are
+unchanged. No GitHub PR merge, tag/release or deployment is performed here.

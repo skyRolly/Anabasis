@@ -2,8 +2,9 @@
 """Check production Build/Release selection with inert event and command fixtures.
 
 This is a small evaluator for the Boolean job-condition subset used here, not an
-Actions emulator. It runs Release metadata and TSan environment bodies in private fixtures;
-no installer, compiler, workflow dispatch, tag or release is executed/created.
+Actions emulator. It runs Release metadata and the preflight presence/output body
+in private fixtures; no installer, compiler, workflow dispatch, tag or release
+is executed/created.
 """
 import argparse
 import hashlib

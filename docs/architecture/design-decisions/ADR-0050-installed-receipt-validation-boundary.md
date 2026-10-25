@@ -6,6 +6,10 @@ This is the confirmation and record-update date; the original approval date
 was not separately specified. Merge/publication, separately required code
 review and unexecuted tests are not approved or certified by this confirmation.
 
+**Implementation effectivity (2026-10-25):** Accepted; the combined PR #54 candidate
+includes actual main `6dba5871b42d0d4c7323e21a1d226f5bf246164a`. This decision's
+implementation is not effective on main until PR #54 is actually merged by the owner.
+
 ## Context
 
 Anabasis's namespace decision is already Accepted. The current receipt smoke

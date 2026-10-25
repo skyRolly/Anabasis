@@ -949,6 +949,25 @@ validation only; native installs require the real disposable host guard and actu
 identified artifacts. Archive digests are checked against GitHub metadata, and PKG
 bytes against the independent manifest digest, before native installation.
 
+## Windows uninstall icon correctness
+
+The installer references `{uninstallexe}` for DisplayIcon. Inno installs this executable
+for VST3-only, Standalone-only and combined choices; its generic icon is intentional.
+An approved branded Anabasis installer icon remains a separate design decision.
+AppId `{19AAA915-4527-4BA2-B6A7-06068E527C54}` and component/destination semantics are unchanged.
+
+The Windows job runs `scripts/test-windows-installer.ps1 -SelfTest` before its native
+`-Installer <setup.exe> -StagingDir <validated customer tree>` run. The harness refuses
+non-GitHub-hosted Windows targets and pre-existing product installs. It compiles the old
+optional-EXE target as a fault seed, reads actual uninstall registry values, extracts native
+icons, and checks three fresh choices, same-choice reinstall, selection changes and uninstall.
+Inno retains components installed by earlier runs when a later selection excludes them;
+changing selection is not a component-removal operation. The test checks that accumulated
+payload, shortcuts and stable icon path, then removes the installation through its uninstaller.
+Unmanaged files, a sibling VST3 and user preset/settings sentinels must survive.
+The `Anabasis-Windows-installer-validation` artifact records snapshots and failures.
+Installer upload requires the runtime gate. GUI chooser/DPI/cache and real DAWs remain manual.
+
 The routing fixtures use the real open/synchronize PR merge ref
 `refs/pull/N/merge`, while retaining the independent head branch field. Direct Build
 and inherited Release manual contexts retain their exact shared branch event/ref.
@@ -985,3 +1004,33 @@ and tests alternate spellings and archive link behavior. The reported spelling
 escape remains unconfirmed; these fixtures are bounded evidence, not universal
 safety proof. Existing ownership/content/location/selection/co-installation checks
 and the production default-full exact-three gate remain unchanged.
+
+## 2026-10-25 staged-merge reconciliation
+
+The owner merged PR #53 as `6dba5871b42d0d4c7323e21a1d226f5bf246164a`. Its complete
+tree matches the reviewed first-PR head; both parent commits and relevant feature
+bytes were checked against actual main. ADR-0049 remains Accepted and its
+implementation is now effective on main. ADR-0050 remains Accepted, but its
+implementation on main still awaits PR #54; importing actual main into this
+feature branch does not perform that second merge. Owner confirmation remains
+2026-10-25 and is distinct from formal GitHub reviews. Earlier Proposed/pending
+entries and exact-head runtime results remain historical evidence.
+
+The combined workflow preserves normal push/PR/manual/reusable caller semantics,
+same-run routing liveness, dependency/security provisioning and both native
+installer gates. Optional artifact-derived package consumers retain their own
+selection/co-installation contracts and independent package inputs. Current normal
+CI and affected installer/archive gates must complete on this combined candidate;
+previous outer-workflow results do not certify its changed workflow.
+
+The inherited routing module description incorrectly named TSan environment
+fixtures. It now states the actual Release metadata and preflight presence/output
+coverage. This is a nonblocking coverage-description correction. No Anabasis TSan
+job, fixture or sanitizer evidence is added or claimed. Windows installer behavior
+and the optional consumer/receipt/extraction validation code are unchanged.
+
+Only the relevant conflict hunks were resolved; independent platform sections and
+Accepted ADR rows were combined. No whole workflow/document was selected with
+ours/theirs. Shared workflow/documentation overlap is now resolved against actual
+main. Product versions, JUCE pins, identities, approved art and DSP/state/GUI are
+unchanged. No GitHub PR merge, tag/release or deployment is performed here.

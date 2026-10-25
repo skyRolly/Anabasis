@@ -84,6 +84,11 @@ never occupied, and omitted `MacroEngine` entirely.)*
 
 ## `scripts/`
 
+`test-windows-installer.ps1` validates actual ISCC installs on disposable Windows CI,
+with a preceding liveness self-test, old-target fault seed, registry/native icon checks,
+component changes and safe uninstallation. First-party copy-and-adapt provenance is in its header.
+
+
 | Path | Responsibility |
 |---|---|
 | `setup-linux.sh` | Ubuntu build dependencies (+ xvfb). |
@@ -211,6 +216,12 @@ Installed-receipt decision: [ADR-0050](architecture/design-decisions/ADR-0050-in
 confirmation on 2026-10-25. Human architecture/ADR approval is complete; merge remains pending.
 Native fixtures are in `scripts/fixtures/macos-receipts`;
 `scripts/test-macos-receipt-gates.py` checks the production scheduling contract.
+
+Accepted ADR-0049 records the Windows optional-component uninstall icon and new runtime
+gate in TESTING_POLICY. The owner's direct confirmation on 2026-10-25 completes
+human architecture/ADR approval. PR #53 merged as `6dba5871b42d0d4c7323e21a1d226f5bf246164a`;
+its Windows implementation is effective on main. PR #54 remains pending. The ADR
+index is the decision-status and effectivity authority.
 
 ### Review checker inventory (2026-10-25)
 
