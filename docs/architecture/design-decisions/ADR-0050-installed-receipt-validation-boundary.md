@@ -8,7 +8,7 @@ review and unexecuted tests are not approved or certified by this confirmation.
 
 **Implementation effectivity (record updated 2026-10-26):** effective on main
 through the owner's actual PR #54 merge `1afe5730a4fe3e9d918af91f17abcce0085a43d9`
-on 2026-10-25. Acceptance provenance remains the owner confirmation above;
+on 2026-10-26. Acceptance provenance remains the owner confirmation above;
 implementation effectivity is not a new GitHub review submission or release approval.
 
 ## Context
