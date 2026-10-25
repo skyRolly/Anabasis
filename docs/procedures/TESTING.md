@@ -948,3 +948,7 @@ host guard spoof and no receipt forgetting or pre-existing product deletion.
 validation only; native installs require the real disposable host guard and actual
 identified artifacts. Archive digests are checked against GitHub metadata, and PKG
 bytes against the independent manifest digest, before native installation.
+
+The routing fixtures use the real open/synchronize PR merge ref
+`refs/pull/N/merge`, while retaining the independent head branch field. Direct Build
+and inherited Release manual contexts retain their exact shared branch event/ref.

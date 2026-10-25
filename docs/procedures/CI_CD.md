@@ -8,8 +8,8 @@ Continuous integration / delivery. Source of truth: `.github/workflows/`.
 The temporary source-publication router and deliberate pending marker are retired.
 Build push, PR and manual events use the normal deduplication conditions. Release
 rehearsals reuse the full Build workflow at the caller commit, including on review
-branches; reusable calls inherit the caller's event/ref. No branch exception or
-invocation input remains. `scripts/test-workflow-routing.py` reads the production
+branches; reusable calls inherit the caller's event/ref. No publication-only branch exception or
+reusable invocation contract remains. `scripts/test-workflow-routing.py` reads the production
 Build/Release files and checks the review-branch dispatch collision, tags, main,
 unrelated branches and fork PRs. Rehearsals retain the non-publishing release guard.
 
