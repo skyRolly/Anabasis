@@ -918,3 +918,7 @@ payload, shortcuts and stable icon path, then removes the installation through i
 Unmanaged files, a sibling VST3 and user preset/settings sentinels must survive.
 The `Anabasis-Windows-installer-validation` artifact records snapshots and failures.
 Installer upload requires the runtime gate. GUI chooser/DPI/cache and real DAWs remain manual.
+
+The routing fixtures use the real open/synchronize PR merge ref
+`refs/pull/N/merge`, while retaining the independent head branch field. Direct Build
+and inherited Release manual contexts retain their exact shared branch event/ref.

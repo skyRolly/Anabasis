@@ -7946,3 +7946,7 @@ reconciliation. Historical Proposed entries are retained as history; current
 status is Accepted. Confirmation/record-update date is 2026-10-25; the earlier
 approval date was not specified. Acceptance does not approve merge or certify
 unexecuted tests. All prior product/runtime evidence keeps its exact-head scope.
+
+The routing fixtures use the real open/synchronize PR merge ref
+`refs/pull/N/merge`, while retaining the independent head branch field. Direct Build
+and inherited Release manual contexts retain their exact shared branch event/ref.
