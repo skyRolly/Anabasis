@@ -155,3 +155,15 @@ payload, shortcuts and stable icon path, then removes the installation through i
 Unmanaged files, a sibling VST3 and user preset/settings sentinels must survive.
 The `Anabasis-Windows-installer-validation` artifact records snapshots and failures.
 Installer upload requires the runtime gate. GUI chooser/DPI/cache and real DAWs remain manual.
+
+## 2026-10-26 platform main audit
+
+ADR-0049 is effective through PR #53 merge
+`6dba5871b42d0d4c7323e21a1d226f5bf246164a`; ADR-0050 and its receipt-gate policy
+are effective through PR #54 merge `1afe5730a4fe3e9d918af91f17abcce0085a43d9`.
+Both remain Accepted under owner confirmation 2026-10-25. Earlier pre-#54 pending
+statements are dated history. Exact source/run/artifact bindings and baseline
+outcomes remain separate; see `worklogs/2026-10-25-normal-validation.md` and
+`docs/architecture/design-decisions/ADR_INDEX.md`. No native result is inferred
+from approval or relabeled by this documentation-only correction. GUI/DAW,
+genuine older-installer upgrades and Icon Composer remain separate acceptance.

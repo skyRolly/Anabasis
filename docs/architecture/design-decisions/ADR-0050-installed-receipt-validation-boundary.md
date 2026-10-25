@@ -6,9 +6,10 @@ This is the confirmation and record-update date; the original approval date
 was not separately specified. Merge/publication, separately required code
 review and unexecuted tests are not approved or certified by this confirmation.
 
-**Implementation effectivity (2026-10-25):** Accepted; the combined PR #54 candidate
-includes actual main `6dba5871b42d0d4c7323e21a1d226f5bf246164a`. This decision's
-implementation is not effective on main until PR #54 is actually merged by the owner.
+**Implementation effectivity (record updated 2026-10-26):** effective on main
+through the owner's actual PR #54 merge `1afe5730a4fe3e9d918af91f17abcce0085a43d9`
+on 2026-10-25. Acceptance provenance remains the owner confirmation above;
+implementation effectivity is not a new GitHub review submission or release approval.
 
 ## Context
 
@@ -45,8 +46,9 @@ Same-job self-tests and production-expression fault replay cover failed/skipped
 liveness and failed installation with retained diagnostics. No deliberately invalid
 installer is published. The separate loose bundle ZIP retains its original gate;
 CI artifacts do not constitute a release. The accompanying TESTING_POLICY
-addition is approved by this Accepted decision; implementation becomes effective
-on main only when this PR is merged. Acceptance does not authorize that merge.
+addition is approved by this Accepted decision and is effective on main via
+the actual PR #54 merge `1afe5730a4fe3e9d918af91f17abcce0085a43d9`.
+This reconciliation does not authorize another merge or release.
 
 ## Consequences
 

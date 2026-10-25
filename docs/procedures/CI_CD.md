@@ -805,3 +805,15 @@ Accepted ADR rows were combined. No whole workflow/document was selected with
 ours/theirs. Shared workflow/documentation overlap is now resolved against actual
 main. Product versions, JUCE pins, identities, approved art and DSP/state/GUI are
 unchanged. No GitHub PR merge, tag/release or deployment is performed here.
+
+## 2026-10-26 platform main audit
+
+ADR-0049 is effective through PR #53 merge
+`6dba5871b42d0d4c7323e21a1d226f5bf246164a`; ADR-0050 and its receipt-gate policy
+are effective through PR #54 merge `1afe5730a4fe3e9d918af91f17abcce0085a43d9`.
+Both remain Accepted under owner confirmation 2026-10-25. Earlier pre-#54 pending
+statements are dated history. Exact source/run/artifact bindings and baseline
+outcomes remain separate; see `worklogs/2026-10-25-normal-validation.md` and
+`docs/architecture/design-decisions/ADR_INDEX.md`. No native result is inferred
+from approval or relabeled by this documentation-only correction. GUI/DAW,
+genuine older-installer upgrades and Icon Composer remain separate acceptance.
