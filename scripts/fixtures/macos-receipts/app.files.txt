@@ -1,0 +1,10 @@
+Anabasis.app
+Anabasis.app/Contents
+Anabasis.app/Contents/Info.plist
+Anabasis.app/Contents/MacOS
+Anabasis.app/Contents/MacOS/Anabasis
+Anabasis.app/Contents/PkgInfo
+Anabasis.app/Contents/Resources
+Anabasis.app/Contents/Resources/RecentFilesMenuTemplate.nib
+Anabasis.app/Contents/_CodeSignature
+Anabasis.app/Contents/_CodeSignature/CodeResources

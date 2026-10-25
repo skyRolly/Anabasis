@@ -215,9 +215,17 @@ serialization, threading, DSP order, latency) are hard-stop, human-review-requir
 
 Namespace inventory and validation: [product namespace worklog](worklogs/2026-10-23-product-namespace.md).
 ADR-0048 is Accepted under explicit final owner approval; implementation is merged.
-Native DAW/receipt-installation validation remains unverified.
+The namespace worklog retains its original native-validation limits. Later macOS
+receipt evidence keeps its exact head/package scope; DAW recall remains manual.
+
+
+Installed-receipt decision: [ADR-0050](docs/architecture/design-decisions/ADR-0050-installed-receipt-validation-boundary.md) is Accepted by the owner's direct
+confirmation on 2026-10-25. Human architecture/ADR approval is complete; merge remains pending.
+Native fixtures are in `scripts/fixtures/macos-receipts`;
+`scripts/test-macos-receipt-gates.py` checks the production scheduling contract.
 
 Accepted ADR-0049 records the Windows optional-component uninstall icon and new runtime
 gate in TESTING_POLICY. The owner's direct confirmation on 2026-10-25 completes
-human architecture/ADR approval. Implementation on main, separately required code
-review and merge remain pending. The ADR index is the decision-status authority.
+human architecture/ADR approval. PR #53 merged as `6dba5871b42d0d4c7323e21a1d226f5bf246164a`;
+its Windows implementation is effective on main. PR #54 remains pending. The ADR
+index is the decision-status and effectivity authority.

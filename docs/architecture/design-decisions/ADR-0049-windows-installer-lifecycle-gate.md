@@ -6,6 +6,11 @@ This is the confirmation and record-update date; the original approval date
 was not separately specified. Merge/publication, separately required code
 review and unexecuted tests are not approved or certified by this confirmation.
 
+**Implementation effectivity (2026-10-25):** effective on main through the owner's
+PR #53 merge `6dba5871b42d0d4c7323e21a1d226f5bf246164a`. The original human
+acceptance provenance is unchanged; this records actual effectivity, not a new
+GitHub review submission or approval of any later branch/release.
+
 ## Context
 
 Main `d5f227dd05ab26b44432ace590fceda0a3b5ac22` includes merged #51/#52 and Accepted

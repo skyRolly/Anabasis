@@ -8,8 +8,8 @@ Continuous integration / delivery. Source of truth: `.github/workflows/`.
 The temporary source-publication router and deliberate pending marker are retired.
 Build push, PR and manual events use the normal deduplication conditions. Release
 rehearsals reuse the full Build workflow at the caller commit, including on review
-branches; reusable calls inherit the caller's event/ref. No branch exception or
-invocation input remains. `scripts/test-workflow-routing.py` reads the production
+branches; reusable calls inherit the caller's event/ref. No publication-only branch exception or
+reusable invocation contract remains. `scripts/test-workflow-routing.py` reads the production
 Build/Release files and checks the review-branch dispatch collision, tags, main,
 unrelated branches and fork PRs. Rehearsals retain the non-publishing release guard.
 
@@ -708,6 +708,55 @@ dependency setup exposed why the transport choice should be consistent across ho
 callers rather than conditional on a job name. This does not change either dependency profile
 or any test/timeout. Current-head native CI re-verifies all callers, including the Debian container.
 
+## Native installed-receipt smoke test
+
+The macOS packaging job runs `scripts/test-macos-receipts.py --self-test` before
+`--package <actual.pkg> --staged-dir <validated tree>` on this repository's disposable
+GitHub-hosted Mac only. Existing product receipts or system bundles cause refusal.
+The real installer targets `/`; no receipt is forgotten and no plug-in folder is
+deleted. VM disposal is cleanup. Installer upload requires this gate and its evidence
+artifact retains the native installer log, raw pkgutil metadata and JSON result.
+
+The check measures `.vst3`/`.au`/`.app` receipt IDs, version, volume, destination and
+file ownership, actual installed CFBundleIdentifier/AU codes and staged/installed
+payload hashes. Pre-existing receipts and sibling metadata/payloads must be unchanged;
+an empty sibling snapshot is not proof of both-products co-installation. Portable
+fixtures prove parser liveness, not OS installation. Default full installation is the
+smoke-test scope; component permutations, upgrades, Finder/Dock and DAW recall remain
+manual/separate. See `worklogs/2026-10-24-installed-macos-receipts.md` for exact evidence.
+
+
+Review-closure enforcement (2026-10-24): native `install-location` fixtures are
+under `scripts/fixtures/macos-receipts`; the alternative `location` field is rejected.
+Ownership covers all payload files and symlinks, not just plist/executable. Resource,
+signature and symlink omission regressions leave both trees identical; bypass mutants
+must fail specifically on missing receipt ownership. Content equality remains independent.
+
+`receipt_liveness` explicitly gates native installation and PKG upload. Run
+`python3 scripts/test-macos-receipt-gates.py` for production-condition fault replay,
+including `!cancelled()` overriding implicit success. Failed/skipped liveness runs no
+installer and yields no PKG; failed installation yields retained diagnostics and no PKG.
+The separate bundle ZIP keeps its existing independent gate; this changes no release policy.
+Raw native evidence also retains host/head/package digest and actual choice XML.
+
+
+Optional native macOS integration review consumes independently identified finished
+package/staged artifacts through the direct Build manual input `integration-review`.
+The JSON manifest names each product's repository, run ID, exact artifact head and
+independently measured PKG SHA-256. Its default is empty; reusable Build calls define
+no input and Release passes none. Normal validation always retains its full gates.
+Seven selection jobs per product use separate fresh hosted Macs, measured choice
+IDs and a selection-aware expected receipt/bundle set. The production default-full
+exact-three assertion is unchanged. The Anamorph manual review also runs both real
+two-product installation orders on separate clean Macs, requiring all six receipts
+and preservation of the first product's metadata, listings and installed hashes.
+These optional evidence consumers introduce no sibling build dependency, no live
+host guard spoof and no receipt forgetting or pre-existing product deletion.
+`python3 scripts/test-macos-integration-review.py --self-test` exercises pure fixture
+validation only; native installs require the real disposable host guard and actual
+identified artifacts. Archive digests are checked against GitHub metadata, and PKG
+bytes against the independent manifest digest, before native installation.
+
 ## Windows uninstall icon correctness
 
 The installer references `{uninstallexe}` for DisplayIcon. Inno installs this executable
@@ -726,3 +775,33 @@ payload, shortcuts and stable icon path, then removes the installation through i
 Unmanaged files, a sibling VST3 and user preset/settings sentinels must survive.
 The `Anabasis-Windows-installer-validation` artifact records snapshots and failures.
 Installer upload requires the runtime gate. GUI chooser/DPI/cache and real DAWs remain manual.
+
+## 2026-10-25 staged-merge reconciliation
+
+The owner merged PR #53 as `6dba5871b42d0d4c7323e21a1d226f5bf246164a`. Its complete
+tree matches the reviewed first-PR head; both parent commits and relevant feature
+bytes were checked against actual main. ADR-0049 remains Accepted and its
+implementation is now effective on main. ADR-0050 remains Accepted, but its
+implementation on main still awaits PR #54; importing actual main into this
+feature branch does not perform that second merge. Owner confirmation remains
+2026-10-25 and is distinct from formal GitHub reviews. Earlier Proposed/pending
+entries and exact-head runtime results remain historical evidence.
+
+The combined workflow preserves normal push/PR/manual/reusable caller semantics,
+same-run routing liveness, dependency/security provisioning and both native
+installer gates. Optional artifact-derived package consumers retain their own
+selection/co-installation contracts and independent package inputs. Current normal
+CI and affected installer/archive gates must complete on this combined candidate;
+previous outer-workflow results do not certify its changed workflow.
+
+The inherited routing module description incorrectly named TSan environment
+fixtures. It now states the actual Release metadata and preflight presence/output
+coverage. This is a nonblocking coverage-description correction. No Anabasis TSan
+job, fixture or sanitizer evidence is added or claimed. Windows installer behavior
+and the optional consumer/receipt/extraction validation code are unchanged.
+
+Only the relevant conflict hunks were resolved; independent platform sections and
+Accepted ADR rows were combined. No whole workflow/document was selected with
+ours/theirs. Shared workflow/documentation overlap is now resolved against actual
+main. Product versions, JUCE pins, identities, approved art and DSP/state/GUI are
+unchanged. No GitHub PR merge, tag/release or deployment is performed here.

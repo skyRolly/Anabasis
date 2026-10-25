@@ -7919,6 +7919,32 @@ dependency setup exposed why the transport choice should be consistent across ho
 callers rather than conditional on a job name. This does not change either dependency profile
 or any test/timeout. Current-head native CI re-verifies all callers, including the Debian container.
 
+## 2026-10-24 installed macOS receipts
+
+Added native installed-receipt validation in the existing Mac packaging job, with
+same-job positive/negative parser fixtures, strict disposable-host guard and retained
+logs. CI/testing/release procedures and script map are synchronized. No audio invariant
+mapping changes apply. No product source, existing tests, namespace, version or build
+architecture change. Evidence: `scripts/test-macos-receipts.py`, `build.yml` and
+`worklogs/2026-10-24-installed-macos-receipts.md`. Prior unperformed-runtime statements
+remain dated baseline; current native results are recorded by exact CI head.
+
+Final native-evidence sync: the installed-receipt worklog now records the successful
+ff0f422 matrix/artifact and exact pkgutil fields. The active release procedure closes
+the default-full receipt gap while keeping component/co-installation/DAW gaps explicit;
+Windows remains the separate PR #53. No historical release evidence is rewritten.
+
+
+## 2026-10-24 installed-receipt review closure
+
+Proposed ADR-0050 records the TESTING_POLICY addition; independent human acceptance
+remains pending. Raw native fixtures, complete payload ownership, explicit liveness
+dependency and production-condition fault replay replace the incomplete check.
+CI/testing/release procedures and navigation are synchronized. The ZIP gate stays
+independent. Earlier native results remain dated evidence, not new-head validation.
+See `scripts/test-macos-receipts.py`, `scripts/test-macos-receipt-gates.py` and the
+installed-receipt worklog; no DSP/state/identity/version or release policy change.
+
 ## 2026-10-24 Windows uninstall-icon correction
 
 Drift reported before editing: `Anabasis.iss` said no ISCC CI step existed, despite
@@ -7940,12 +7966,30 @@ receipt work independent. The Windows worklog records both successful native hea
 ## 2026-10-25 platform-review approval reconciliation
 
 Recorded the owner's direct confirmation of completed human architecture/ADR
-approval for ADR-0049 in its status header, ADR_INDEX approval/effectivity
+approval for ADR-0049 and ADR-0050 in their status headers, ADR_INDEX approval/effectivity
 record, current policy/procedure/navigation statements and dated worklog
 reconciliation. Historical Proposed entries are retained as history; current
 status is Accepted. Confirmation/record-update date is 2026-10-25; the earlier
 approval date was not specified. Acceptance does not approve merge or certify
 unexecuted tests. All prior product/runtime evidence keeps its exact-head scope.
+
+
+Optional native macOS integration review consumes independently identified finished
+package/staged artifacts through the direct Build manual input `integration-review`.
+The JSON manifest names each product's repository, run ID, exact artifact head and
+independently measured PKG SHA-256. Its default is empty; reusable Build calls define
+no input and Release passes none. Normal validation always retains its full gates.
+Seven selection jobs per product use separate fresh hosted Macs, measured choice
+IDs and a selection-aware expected receipt/bundle set. The production default-full
+exact-three assertion is unchanged. The Anamorph manual review also runs both real
+two-product installation orders on separate clean Macs, requiring all six receipts
+and preservation of the first product's metadata, listings and installed hashes.
+These optional evidence consumers introduce no sibling build dependency, no live
+host guard spoof and no receipt forgetting or pre-existing product deletion.
+`python3 scripts/test-macos-integration-review.py --self-test` exercises pure fixture
+validation only; native installs require the real disposable host guard and actual
+identified artifacts. Archive digests are checked against GitHub metadata, and PKG
+bytes against the independent manifest digest, before native installation.
 
 The routing fixtures use the real open/synchronize PR merge ref
 `refs/pull/N/merge`, while retaining the independent head branch field. Direct Build
@@ -7965,3 +8009,51 @@ Anabasis additionally runs the actual preflight presence/output shell body in
 private inert directories with and without CMakeLists.txt, then verifies withheld
 downstream jobs for ready=false, absent output and failed/skipped preflight.
 This closes a coverage limitation; no production preflight defect was established.
+
+The optional integration consumer authenticates run/head, artifact ZIP and PKG
+bytes as before. Before installation, native `pkgutil --expand` supplies the
+PackageInfo component identities/versions and Distribution references, checked
+against staged Info.plist metadata. Receipt expectations come from that verified
+component mapping, never installed receipts or a fixed current product version.
+CFBundleShortVersionString identifies the marketing release used by build-pkg.sh;
+CFBundleVersion identifies its build and can differ. Both fields must agree with
+their corresponding native package declarations; they are not required to equal
+each other. See Apple's [bundle version keys](https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html).
+The supported `--self-test` covers current/alternate versions, metadata/receipt
+mismatches, missing/duplicate/foreign components, Distribution reference failures
+and distinct marketing/build strings, using inert files with no native/network call.
+ZIP extraction requires a fresh empty private root, checks resolved containment,
+and tests alternate spellings and archive link behavior. The reported spelling
+escape remains unconfirmed; these fixtures are bounded evidence, not universal
+safety proof. Existing ownership/content/location/selection/co-installation checks
+and the production default-full exact-three gate remain unchanged.
+
+## 2026-10-25 staged-merge reconciliation
+
+The owner merged PR #53 as `6dba5871b42d0d4c7323e21a1d226f5bf246164a`. Its complete
+tree matches the reviewed first-PR head; both parent commits and relevant feature
+bytes were checked against actual main. ADR-0049 remains Accepted and its
+implementation is now effective on main. ADR-0050 remains Accepted, but its
+implementation on main still awaits PR #54; importing actual main into this
+feature branch does not perform that second merge. Owner confirmation remains
+2026-10-25 and is distinct from formal GitHub reviews. Earlier Proposed/pending
+entries and exact-head runtime results remain historical evidence.
+
+The combined workflow preserves normal push/PR/manual/reusable caller semantics,
+same-run routing liveness, dependency/security provisioning and both native
+installer gates. Optional artifact-derived package consumers retain their own
+selection/co-installation contracts and independent package inputs. Current normal
+CI and affected installer/archive gates must complete on this combined candidate;
+previous outer-workflow results do not certify its changed workflow.
+
+The inherited routing module description incorrectly named TSan environment
+fixtures. It now states the actual Release metadata and preflight presence/output
+coverage. This is a nonblocking coverage-description correction. No Anabasis TSan
+job, fixture or sanitizer evidence is added or claimed. Windows installer behavior
+and the optional consumer/receipt/extraction validation code are unchanged.
+
+Only the relevant conflict hunks were resolved; independent platform sections and
+Accepted ADR rows were combined. No whole workflow/document was selected with
+ours/theirs. Shared workflow/documentation overlap is now resolved against actual
+main. Product versions, JUCE pins, identities, approved art and DSP/state/GUI are
+unchanged. No GitHub PR merge, tag/release or deployment is performed here.

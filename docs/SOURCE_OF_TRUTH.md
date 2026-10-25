@@ -165,7 +165,14 @@ ADR-0048. Its partial amendments of Accepted ADR-0008 and ADR-0021 are effective
 final owner approval, cleared architecture blockers and verified #51 main ancestry. Earlier
 implementation permission remains history; unperformed runtime/manual validation remains unverified.
 
+
+Installed-receipt decision: [ADR-0050](architecture/design-decisions/ADR-0050-installed-receipt-validation-boundary.md) is Accepted by the owner's direct
+confirmation on 2026-10-25. Human architecture/ADR approval is complete; merge remains pending.
+Native fixtures are in `scripts/fixtures/macos-receipts`;
+`scripts/test-macos-receipt-gates.py` checks the production scheduling contract.
+
 Accepted ADR-0049 records the Windows optional-component uninstall icon and new runtime
 gate in TESTING_POLICY. The owner's direct confirmation on 2026-10-25 completes
-human architecture/ADR approval. Implementation on main, separately required code
-review and merge remain pending. The ADR index is the decision-status authority.
+human architecture/ADR approval. PR #53 merged as `6dba5871b42d0d4c7323e21a1d226f5bf246164a`;
+its Windows implementation is effective on main. PR #54 remains pending. The ADR
+index is the decision-status and effectivity authority.

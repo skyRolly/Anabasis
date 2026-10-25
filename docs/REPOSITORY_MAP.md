@@ -207,13 +207,25 @@ row is a *plan*, not a claim about existing files.
 identities in source and generated/package metadata. The before-edit inventory, comparison
 commands and native-test limits are in `worklogs/2026-10-23-product-namespace.md` (ADR-0048).
 
+`scripts/test-macos-receipts.py` validates actual installed PackageKit/pkgutil receipts
+on this repository's disposable hosted Mac. `--self-test` proves parser/guard liveness
+without installation. It never forgets receipts or removes installed folders.
+
+
+Installed-receipt decision: [ADR-0050](architecture/design-decisions/ADR-0050-installed-receipt-validation-boundary.md) is Accepted by the owner's direct
+confirmation on 2026-10-25. Human architecture/ADR approval is complete; merge remains pending.
+Native fixtures are in `scripts/fixtures/macos-receipts`;
+`scripts/test-macos-receipt-gates.py` checks the production scheduling contract.
+
 Accepted ADR-0049 records the Windows optional-component uninstall icon and new runtime
 gate in TESTING_POLICY. The owner's direct confirmation on 2026-10-25 completes
-human architecture/ADR approval. Implementation on main, separately required code
-review and merge remain pending. The ADR index is the decision-status authority.
+human architecture/ADR approval. PR #53 merged as `6dba5871b42d0d4c7323e21a1d226f5bf246164a`;
+its Windows implementation is effective on main. PR #54 remains pending. The ADR
+index is the decision-status and effectivity authority.
 
 ### Review checker inventory (2026-10-25)
 
 | Script | Review validation responsibility |
 |---|---|
 | `scripts/test-workflow-routing.py` | Production Build/Release expression and needs selection, with same-run valid and seeded skipped-Release liveness controls before the real check. No dispatch or installer. |
+| `scripts/test-macos-integration-review.py` | Optional seven selections and real two-product co-installation from independently identified artifacts; native PackageInfo/Distribution and staged bundle metadata establish artifact-specific receipt versions before installation. Pure metadata/extraction `--self-test`. |
