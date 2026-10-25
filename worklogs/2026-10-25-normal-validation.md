@@ -37,3 +37,42 @@ host guard spoof and no receipt forgetting or pre-existing product deletion.
 validation only; native installs require the real disposable host guard and actual
 identified artifacts. Archive digests are checked against GitHub metadata, and PKG
 bytes against the independent manifest digest, before native installation.
+
+
+### Review regression closure (2026-10-25)
+
+`python3 scripts/test-workflow-routing.py --report <report.json>` now runs its
+bounded self-test before production selection on every invocation. The same
+production assertions accept a valid control and must specifically reject the
+named-review-branch Release dispatch collision. Expression and needs controls
+cover enabled/disabled jobs and failed/skipped prerequisites. A disabled verifier
+cannot satisfy the negative control. No Release dispatch or tag is created.
+
+Anabasis additionally runs the actual preflight presence/output shell body in
+private inert directories with and without CMakeLists.txt, then verifies withheld
+downstream jobs for ready=false, absent output and failed/skipped preflight.
+This closes a coverage limitation; no production preflight defect was established.
+
+The optional integration consumer authenticates run/head, artifact ZIP and PKG
+bytes as before. Before installation, native `pkgutil --expand` supplies the
+PackageInfo component identities/versions and Distribution references, checked
+against staged Info.plist metadata. Receipt expectations come from that verified
+component mapping, never installed receipts or a fixed current product version.
+CFBundleShortVersionString identifies the marketing release used by build-pkg.sh;
+CFBundleVersion identifies its build and can differ. Both fields must agree with
+their corresponding native package declarations; they are not required to equal
+each other. See Apple's [bundle version keys](https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html).
+The supported `--self-test` covers current/alternate versions, metadata/receipt
+mismatches, missing/duplicate/foreign components, Distribution reference failures
+and distinct marketing/build strings, using inert files with no native/network call.
+ZIP extraction requires a fresh empty private root, checks resolved containment,
+and tests alternate spellings and archive link behavior. The reported spelling
+escape remains unconfirmed; these fixtures are bounded evidence, not universal
+safety proof. Existing ownership/content/location/selection/co-installation checks
+and the production default-full exact-three gate remain unchanged.
+
+This dated reconciliation preserves earlier exact-head evidence and Accepted ADR
+provenance. It supersedes earlier recommendations only for these review defects;
+final recommendations require published-head checks and affected native runs.
+The script inventory drift was confirmed against docs/REPOSITORY_MAP.md and is
+corrected here. No product version, identity, asset, DSP/state or approval change.
