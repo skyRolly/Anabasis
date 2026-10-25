@@ -106,3 +106,32 @@ Accepted ADR rows were combined. No whole workflow/document was selected with
 ours/theirs. Shared workflow/documentation overlap is now resolved against actual
 main. Product versions, JUCE pins, identities, approved art and DSP/state/GUI are
 unchanged. No GitHub PR merge, tag/release or deployment is performed here.
+
+## 2026-10-26 platform main audit
+
+The owner merged PR #54 as `1afe5730a4fe3e9d918af91f17abcce0085a43d9` on 2026-10-26,
+after PR #53 merge `6dba5871b42d0d4c7323e21a1d226f5bf246164a`. The actual
+combined main tree equals reviewed candidate `1ee08c170ff5ea51b26f22098a3694067e84cc73`.
+ADR-0049 and ADR-0050 are Accepted and their implementations, including the
+installed-receipt policy enforcement, are effective on main. Owner acceptance
+confirmation remains 2026-10-25; no earlier approval date or formal GitHub review
+is inferred. The dated 2026-10-25 pre-#54 reconciliation remains historical.
+
+Windows native and default-full macOS evidence from run 40179688763 belongs to
+the reviewed feature head above. Seven selections per product and both real
+co-installation orders retain their original consumer/package heads; unchanged
+consumer/helpers, optional jobs/header and Mac inputs bound that reuse. These
+are not relabeled as main executions. Actual combined-main baseline runs are
+40213125495 (Build) and 40213125467 (CodeQL); their outcomes are recorded in the
+audit handoff, independently of this documentation-only correction. No runtime,
+package, workflow, product version, identity or policy gate changes here.
+
+Real GUI/DAW appearance and recall, genuine older-installer upgrades and native
+Icon Composer authoring remain separate acceptance work. Scanner completion is
+not zero findings. The C++23 baseline/canary policy is unchanged; its separate
+canary remains retired under ADR-0030. No PR merge or release is authorized here.
+
+Rejected alternatives: retaining false current-tense pending status after the
+actual owner merge, or treating Accepted approval/tree equality as main execution.
+Both confuse evidence scopes; retain actual main runs and historical native
+records independently. No new document class or script inventory entry is added.

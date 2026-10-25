@@ -61,7 +61,7 @@ Status values: Proposed · Accepted · Deprecated · Superseded.
 | [ADR-0047](ADR-0047-juce-904-upgrade.md) | **JUCE 9.0.1 → 9.0.4**, immutable pin `3fb5cbc…`; reject previous default caches before fetching, retain custom/local comparisons, explicitly exclude the newly enabled MP3/Opus/WebP codecs on all six consumers, and re-verify attribution and dependency internals | **Accepted — owner's 2026-10-21 upgrade directive** | Pin and source audit verified; build/comparison evidence and remaining platform/Level-5 checks: `worklogs/2026-10-21-juce-904-upgrade.md` |
 | [ADR-0048](ADR-0048-domain-product-namespace.md) | Domain namespace `tech.rolly.anabasis`; partially amends ADR-0008 bundle identity and ADR-0021 receipts, preserves independent codes/GUID | **Accepted** — explicit final owner approval; record updated 2026-10-24; Architecture Review cleared | Source and synthetic gates verified; native evidence and limits in the namespace worklog |
 | [ADR-0049](ADR-0049-windows-installer-lifecycle-gate.md) | Optional-component uninstall icon and real Windows installer lifecycle gate | **Accepted** — owner direct confirmation 2026-10-25; human architecture review complete; implementation effective on main via PR #53 (`6dba5871b42d0d4c7323e21a1d226f5bf246164a`) | Native old-target reproduction and 18 fixed snapshots; exact results in worklog |
-| [ADR-0050](ADR-0050-installed-receipt-validation-boundary.md) | Complete installed-receipt ownership and explicit liveness/PKG artifact boundary | **Accepted** — owner direct confirmation 2026-10-25; human architecture review complete; implementation/merge pending | Native fixtures, omission/mutation and scheduling-fault regressions |
+| [ADR-0050](ADR-0050-installed-receipt-validation-boundary.md) | Complete installed-receipt ownership and explicit liveness/PKG artifact boundary | **Accepted** — owner direct confirmation 2026-10-25; human architecture review complete; implementation effective on main via PR #54 (`1afe5730a4fe3e9d918af91f17abcce0085a43d9`) | Native fixtures, omission/mutation and scheduling-fault regressions |
 
 ADR-0028 is the **first entry in `DEPENDENCY_POLICY.md`'s compliance log**, which had stood empty
 with the note "no dependency bump has occurred". Its rule-2 cell is deliberately half-empty: the
@@ -126,6 +126,10 @@ passed at the merge above. Artifact 12527575543 (ZIP SHA-256
 `9b2d1832242fcd928a0938a23a5846bf1b956245a0123cbf9bef609ce07d4e9d`)
 confirms native package receipt/destination/bundle ownership. The namespace worklog retains
 the receipt-swap reproduction, rejected alternatives and the local GCC14 ABI-floor limitation.
+
+**Historical namespace-approval scope:** the following paragraph preserves the
+2026-10-24 snapshot. Later Windows/macOS installed-state evidence is reconciled
+in the 2026-10-26 audit below; this historical wording is not current native status.
 
 **Approval and empirical validation are separate.** Real DAW recall, AU/VST3 discovery/cache behavior, human audition, actual macOS
 package installation/receipt registration and native shell appearance remain unverified.
@@ -287,14 +291,14 @@ remain Accepted; no unrelated or future proposal is approved by implication.
 approval date, reviewer identity, meeting, signed record and GitHub approval
 submission were not supplied and are not invented. Human architecture/ADR
 approval is complete. This does not certify tests, satisfy a separate code
-review, or authorize merge/release. The decision is Accepted now; its branch
-implementation and associated policy enforcement reach main only after a
-separately authorized merge. Earlier Proposed entries remain historical.
+review, or authorize merge/release. Both implementations and associated policy
+enforcement are effective on main through the owner merges listed below.
+Earlier Proposed and pre-merge entries remain historical.
 
 | Record / amendment | Decision status now | Implementation effectivity |
 | --- | --- | --- |
 | [ADR-0049](ADR-0049-windows-installer-lifecycle-gate.md) | Accepted; owner confirmation 2026-10-25 | Effective on main via PR #53; merge `6dba5871b42d0d4c7323e21a1d226f5bf246164a` |
-| [ADR-0050](ADR-0050-installed-receipt-validation-boundary.md) | Accepted; owner confirmation 2026-10-25 | Prepared on PR #54; not effective on main; merge pending |
+| [ADR-0050](ADR-0050-installed-receipt-validation-boundary.md) | Accepted; owner confirmation 2026-10-25 | Effective on main via PR #54; merge `1afe5730a4fe3e9d918af91f17abcce0085a43d9` |
 
 ## 2026-10-25 actual-main effectivity reconciliation
 
@@ -303,3 +307,15 @@ ADR-0049 implementation is effective through the owner's actual PR #53 merge
 Accepted; implementation on main still awaits PR #54. The combined feature branch
 contains both feature sets and preserves the original approval provenance. A green
 branch check or local main-to-feature merge is not the remaining GitHub PR merge.
+
+## 2026-10-26 platform main audit
+
+ADR-0049 is effective through PR #53 merge
+`6dba5871b42d0d4c7323e21a1d226f5bf246164a`; ADR-0050 and its receipt-gate policy
+are effective through PR #54 merge `1afe5730a4fe3e9d918af91f17abcce0085a43d9`.
+Both remain Accepted under owner confirmation 2026-10-25. Earlier pre-#54 pending
+statements are dated history. Exact source/run/artifact bindings and baseline
+outcomes remain separate; see `worklogs/2026-10-25-normal-validation.md` and
+`docs/architecture/design-decisions/ADR_INDEX.md`. No native result is inferred
+from approval or relabeled by this documentation-only correction. GUI/DAW,
+genuine older-installer upgrades and Icon Composer remain separate acceptance.
