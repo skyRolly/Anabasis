@@ -164,3 +164,8 @@ ADR-0048. Its partial amendments of Accepted ADR-0008 and ADR-0021 are effective
 2026-10-24 reconciliation in `architecture/design-decisions/ADR_INDEX.md` records explicit
 final owner approval, cleared architecture blockers and verified #51 main ancestry. Earlier
 implementation permission remains history; unperformed runtime/manual validation remains unverified.
+
+Accepted ADR-0049 records the Windows optional-component uninstall icon and new runtime
+gate in TESTING_POLICY. The owner's direct confirmation on 2026-10-25 completes
+human architecture/ADR approval. Implementation on main, separately required code
+review and merge remain pending. The ADR index is the decision-status authority.

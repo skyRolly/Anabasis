@@ -84,6 +84,11 @@ never occupied, and omitted `MacroEngine` entirely.)*
 
 ## `scripts/`
 
+`test-windows-installer.ps1` validates actual ISCC installs on disposable Windows CI,
+with a preceding liveness self-test, old-target fault seed, registry/native icon checks,
+component changes and safe uninstallation. First-party copy-and-adapt provenance is in its header.
+
+
 | Path | Responsibility |
 |---|---|
 | `setup-linux.sh` | Ubuntu build dependencies (+ xvfb). |
@@ -201,3 +206,14 @@ row is a *plan*, not a claim about existing files.
 `scripts/check-product-identity.py` verifies the domain namespace and independent plugin/GUID
 identities in source and generated/package metadata. The before-edit inventory, comparison
 commands and native-test limits are in `worklogs/2026-10-23-product-namespace.md` (ADR-0048).
+
+Accepted ADR-0049 records the Windows optional-component uninstall icon and new runtime
+gate in TESTING_POLICY. The owner's direct confirmation on 2026-10-25 completes
+human architecture/ADR approval. Implementation on main, separately required code
+review and merge remain pending. The ADR index is the decision-status authority.
+
+### Review checker inventory (2026-10-25)
+
+| Script | Review validation responsibility |
+|---|---|
+| `scripts/test-workflow-routing.py` | Production Build/Release expression and needs selection, with same-run valid and seeded skipped-Release liveness controls before the real check. No dispatch or installer. |

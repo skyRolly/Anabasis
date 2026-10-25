@@ -8,6 +8,21 @@ How to run and interpret the validation suite. Acceptance levels and the hard ga
 > invariant→test map still marked `TODO (P2+)` are the ones whose DSP does not exist yet; the
 > P1 rows are live. The structure below describes the suites as built.
 
+
+## Normal validation evidence boundary (2026-10-25)
+
+The temporary publication-only selection and pending marker have been removed.
+Run the production Build/Release routing regression with
+`python3 scripts/test-workflow-routing.py --report <report.json>`; it uses safe
+context fixtures and never dispatches a workflow or runs an installer. A Release
+rehearsal on a review branch must select normal Build gates even though its
+inherited event/ref equals direct Build dispatch. Normal checks must complete on
+the actual candidate; retained native results remain bound to their original inputs.
+The ordinary-user helper recorder, where present, still models root metadata and
+cannot establish real privileged interpretation. Installer artifacts remain gated
+by their actual installed-resource checks. No kernel/security setting changes,
+exploits or unrelated fuzz campaigns are part of these checks.
+
 ## Headless self-tests
 
 ## JUCE cache migration regression (ADR-0047)
@@ -884,3 +899,41 @@ components, wrong payloads/choices/outlines and malformed namespaces are rejecte
 real component names, not numeric enumeration. A mutation disabling receipt ownership must fail
 the self-test specifically on a swapped receipt. Native `build-pkg.sh` validates freshly expanded
 metadata; retained CI metadata supplies a separate read-only check without installing receipts.
+
+## Windows uninstall icon correctness
+
+The installer references `{uninstallexe}` for DisplayIcon. Inno installs this executable
+for VST3-only, Standalone-only and combined choices; its generic icon is intentional.
+An approved branded Anabasis installer icon remains a separate design decision.
+AppId `{19AAA915-4527-4BA2-B6A7-06068E527C54}` and component/destination semantics are unchanged.
+
+The Windows job runs `scripts/test-windows-installer.ps1 -SelfTest` before its native
+`-Installer <setup.exe> -StagingDir <validated customer tree>` run. The harness refuses
+non-GitHub-hosted Windows targets and pre-existing product installs. It compiles the old
+optional-EXE target as a fault seed, reads actual uninstall registry values, extracts native
+icons, and checks three fresh choices, same-choice reinstall, selection changes and uninstall.
+Inno retains components installed by earlier runs when a later selection excludes them;
+changing selection is not a component-removal operation. The test checks that accumulated
+payload, shortcuts and stable icon path, then removes the installation through its uninstaller.
+Unmanaged files, a sibling VST3 and user preset/settings sentinels must survive.
+The `Anabasis-Windows-installer-validation` artifact records snapshots and failures.
+Installer upload requires the runtime gate. GUI chooser/DPI/cache and real DAWs remain manual.
+
+The routing fixtures use the real open/synchronize PR merge ref
+`refs/pull/N/merge`, while retaining the independent head branch field. Direct Build
+and inherited Release manual contexts retain their exact shared branch event/ref.
+
+
+### Review regression closure (2026-10-25)
+
+`python3 scripts/test-workflow-routing.py --report <report.json>` now runs its
+bounded self-test before production selection on every invocation. The same
+production assertions accept a valid control and must specifically reject the
+named-review-branch Release dispatch collision. Expression and needs controls
+cover enabled/disabled jobs and failed/skipped prerequisites. A disabled verifier
+cannot satisfy the negative control. No Release dispatch or tag is created.
+
+Anabasis additionally runs the actual preflight presence/output shell body in
+private inert directories with and without CMakeLists.txt, then verifies withheld
+downstream jobs for ready=false, absent output and failed/skipped preflight.
+This closes a coverage limitation; no production preflight defect was established.

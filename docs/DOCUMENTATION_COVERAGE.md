@@ -1,5 +1,17 @@
 # DOCUMENTATION_COVERAGE.md
 
+## Normal validation restoration — 2026-10-25
+
+CI_CD and TESTING describe removal of the temporary branch-specific routing and
+pending marker, restoration of normal deduplication and reusable Release calls,
+and the restored CodeQL dependency setup. The production-file routing regression
+covers each review branch's direct/Release dispatch collision, tags, main,
+unrelated branches and forks without invoking installers. Existing target/query,
+artifact, identity and Accepted ADR contracts are preserved. Runtime outcomes are
+recorded separately from source fixtures; unsuitable hosts fail without changing
+kernel/security settings. Historical publication-only evidence is retained. The current restoration is
+recorded in `worklogs/2026-10-25-normal-validation.md`.
+
 ## Current approval reconciliation — record updated 2026-10-24 (Asia/Shanghai)
 
 ADR-0048 is Accepted; ADR-0008/ADR-0021 partial amendments are effective, under explicit final owner approval of the completed five-PR scope.
@@ -7906,3 +7918,50 @@ The initial lane-specific transport correction at `bffde567` passed Clang 22.1.8
 dependency setup exposed why the transport choice should be consistent across hosted Ubuntu
 callers rather than conditional on a job name. This does not change either dependency profile
 or any test/timeout. Current-head native CI re-verifies all callers, including the Debian container.
+
+## 2026-10-24 Windows uninstall-icon correction
+
+Drift reported before editing: `Anabasis.iss` said no ISCC CI step existed, despite
+`build.yml` compiling it. Corrected that comment and the optional-EXE DisplayIcon defect.
+Updated TESTING_POLICY, CI/testing/release procedures, user installation instructions,
+Windows INSTALL.txt and the script map. No audio invariant/test mapping changes apply;
+all `src/`, existing DSP/state tests and CMake identities remain untouched.
+Evidence: `packaging/windows/Anabasis.iss`, `scripts/test-windows-installer.ps1` and
+`worklogs/2026-10-24-windows-uninstall-icon.md`. Native results are scoped to the PR checks.
+
+ADR-0049 is registered as Proposed for the Windows runtime TESTING_POLICY addition,
+per ADR_POLICY's policy-change recording rule. Updated README/map/source-of-truth
+navigation; no accepted status or architecture clearance is invented.
+
+Final native-evidence synchronization: corrected the active release-procedure Windows
+runtime gap and the new Unreleased entry's evidence carrier to PR #53, leaving Mac
+receipt work independent. The Windows worklog records both successful native heads.
+
+## 2026-10-25 platform-review approval reconciliation
+
+Recorded the owner's direct confirmation of completed human architecture/ADR
+approval for ADR-0049 in its status header, ADR_INDEX approval/effectivity
+record, current policy/procedure/navigation statements and dated worklog
+reconciliation. Historical Proposed entries are retained as history; current
+status is Accepted. Confirmation/record-update date is 2026-10-25; the earlier
+approval date was not specified. Acceptance does not approve merge or certify
+unexecuted tests. All prior product/runtime evidence keeps its exact-head scope.
+
+The routing fixtures use the real open/synchronize PR merge ref
+`refs/pull/N/merge`, while retaining the independent head branch field. Direct Build
+and inherited Release manual contexts retain their exact shared branch event/ref.
+
+
+### Review regression closure (2026-10-25)
+
+`python3 scripts/test-workflow-routing.py --report <report.json>` now runs its
+bounded self-test before production selection on every invocation. The same
+production assertions accept a valid control and must specifically reject the
+named-review-branch Release dispatch collision. Expression and needs controls
+cover enabled/disabled jobs and failed/skipped prerequisites. A disabled verifier
+cannot satisfy the negative control. No Release dispatch or tag is created.
+
+Anabasis additionally runs the actual preflight presence/output shell body in
+private inert directories with and without CMakeLists.txt, then verifies withheld
+downstream jobs for ready=false, absent output and failed/skipped preflight.
+This closes a coverage limitation; no production preflight defect was established.

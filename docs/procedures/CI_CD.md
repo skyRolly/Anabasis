@@ -2,6 +2,26 @@
 
 Continuous integration / delivery. Source of truth: `.github/workflows/`.
 
+
+## Normal validation restored (2026-10-25)
+
+The temporary source-publication router and deliberate pending marker are retired.
+Build push, PR and manual events use the normal deduplication conditions. Release
+rehearsals reuse the full Build workflow at the caller commit, including on review
+branches; reusable calls inherit the caller's event/ref. No branch exception or
+invocation input remains. `scripts/test-workflow-routing.py` reads the production
+Build/Release files and checks the review-branch dispatch collision, tags, main,
+unrelated branches and fork PRs. Rehearsals retain the non-publishing release guard.
+
+C++ CodeQL again runs `scripts/setup-linux.sh` before its unchanged manual target
+build, extraction, queries and SARIF upload. The ordinary source checks remain
+independent of native installation evidence. Existing project runtime, sanitizer,
+compatibility and bounded fuzz gates run under their original event conditions.
+Kernel/security settings are never changed: an unsuitable sanitizer or installer
+isolation capability must fail with its precise missing prerequisite. The Accepted
+ADRs, artifact gates and separate manual/GUI/DAW backlog remain in force. Earlier
+publication-only evidence remains historical and does not certify these new runs.
+
 ## Workflows
 
 | Workflow | Purpose |
@@ -687,3 +707,22 @@ The initial lane-specific transport correction at `bffde567` passed Clang 22.1.8
 dependency setup exposed why the transport choice should be consistent across hosted Ubuntu
 callers rather than conditional on a job name. This does not change either dependency profile
 or any test/timeout. Current-head native CI re-verifies all callers, including the Debian container.
+
+## Windows uninstall icon correctness
+
+The installer references `{uninstallexe}` for DisplayIcon. Inno installs this executable
+for VST3-only, Standalone-only and combined choices; its generic icon is intentional.
+An approved branded Anabasis installer icon remains a separate design decision.
+AppId `{19AAA915-4527-4BA2-B6A7-06068E527C54}` and component/destination semantics are unchanged.
+
+The Windows job runs `scripts/test-windows-installer.ps1 -SelfTest` before its native
+`-Installer <setup.exe> -StagingDir <validated customer tree>` run. The harness refuses
+non-GitHub-hosted Windows targets and pre-existing product installs. It compiles the old
+optional-EXE target as a fault seed, reads actual uninstall registry values, extracts native
+icons, and checks three fresh choices, same-choice reinstall, selection changes and uninstall.
+Inno retains components installed by earlier runs when a later selection excludes them;
+changing selection is not a component-removal operation. The test checks that accumulated
+payload, shortcuts and stable icon path, then removes the installation through its uninstaller.
+Unmanaged files, a sibling VST3 and user preset/settings sentinels must survive.
+The `Anabasis-Windows-installer-validation` artifact records snapshots and failures.
+Installer upload requires the runtime gate. GUI chooser/DPI/cache and real DAWs remain manual.

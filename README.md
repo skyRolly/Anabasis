@@ -216,3 +216,8 @@ serialization, threading, DSP order, latency) are hard-stop, human-review-requir
 Namespace inventory and validation: [product namespace worklog](worklogs/2026-10-23-product-namespace.md).
 ADR-0048 is Accepted under explicit final owner approval; implementation is merged.
 Native DAW/receipt-installation validation remains unverified.
+
+Accepted ADR-0049 records the Windows optional-component uninstall icon and new runtime
+gate in TESTING_POLICY. The owner's direct confirmation on 2026-10-25 completes
+human architecture/ADR approval. Implementation on main, separately required code
+review and merge remain pending. The ADR index is the decision-status authority.
