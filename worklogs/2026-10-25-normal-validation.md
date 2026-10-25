@@ -19,3 +19,24 @@ No dependency pin, product code, artwork, version or identity changes. Accepted
 ADR records remain Accepted. No separate code review or native/manual check is
 claimed by this source change. Kernel/security settings are never changed: any
 missing host capability fails visibly. Earlier publication evidence remains history.
+
+
+### Review regression closure (2026-10-25)
+
+`python3 scripts/test-workflow-routing.py --report <report.json>` now runs its
+bounded self-test before production selection on every invocation. The same
+production assertions accept a valid control and must specifically reject the
+named-review-branch Release dispatch collision. Expression and needs controls
+cover enabled/disabled jobs and failed/skipped prerequisites. A disabled verifier
+cannot satisfy the negative control. No Release dispatch or tag is created.
+
+Anabasis additionally runs the actual preflight presence/output shell body in
+private inert directories with and without CMakeLists.txt, then verifies withheld
+downstream jobs for ready=false, absent output and failed/skipped preflight.
+This closes a coverage limitation; no production preflight defect was established.
+
+This dated reconciliation preserves earlier exact-head evidence and Accepted ADR
+provenance. It supersedes earlier recommendations only for these review defects;
+final recommendations require published-head checks and affected native runs.
+The script inventory drift was confirmed against docs/REPOSITORY_MAP.md and is
+corrected here. No product version, identity, asset, DSP/state or approval change.

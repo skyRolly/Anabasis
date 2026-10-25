@@ -211,3 +211,9 @@ Accepted ADR-0049 records the Windows optional-component uninstall icon and new 
 gate in TESTING_POLICY. The owner's direct confirmation on 2026-10-25 completes
 human architecture/ADR approval. Implementation on main, separately required code
 review and merge remain pending. The ADR index is the decision-status authority.
+
+### Review checker inventory (2026-10-25)
+
+| Script | Review validation responsibility |
+|---|---|
+| `scripts/test-workflow-routing.py` | Production Build/Release expression and needs selection, with same-run valid and seeded skipped-Release liveness controls before the real check. No dispatch or installer. |

@@ -7950,3 +7950,18 @@ unexecuted tests. All prior product/runtime evidence keeps its exact-head scope.
 The routing fixtures use the real open/synchronize PR merge ref
 `refs/pull/N/merge`, while retaining the independent head branch field. Direct Build
 and inherited Release manual contexts retain their exact shared branch event/ref.
+
+
+### Review regression closure (2026-10-25)
+
+`python3 scripts/test-workflow-routing.py --report <report.json>` now runs its
+bounded self-test before production selection on every invocation. The same
+production assertions accept a valid control and must specifically reject the
+named-review-branch Release dispatch collision. Expression and needs controls
+cover enabled/disabled jobs and failed/skipped prerequisites. A disabled verifier
+cannot satisfy the negative control. No Release dispatch or tag is created.
+
+Anabasis additionally runs the actual preflight presence/output shell body in
+private inert directories with and without CMakeLists.txt, then verifies withheld
+downstream jobs for ready=false, absent output and failed/skipped preflight.
+This closes a coverage limitation; no production preflight defect was established.
