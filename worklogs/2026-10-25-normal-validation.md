@@ -135,3 +135,29 @@ Rejected alternatives: retaining false current-tense pending status after the
 actual owner merge, or treating Accepted approval/tree equality as main execution.
 Both confuse evidence scopes; retain actual main runs and historical native
 records independently. No new document class or script inventory entry is added.
+
+
+## Customer installation wording maintenance (2026-10-26)
+
+Scope is shipped instructions and unnecessary comment history, independently
+reviewable from Rosetta/CI host work. Preserve actual customer commands, modes,
+privilege/refusal, recovery, atomicity, component retention, settings, signatures
+and attribution. Files already concise are retained rather than edited for
+symmetry. There is no product/DSP/state/GUI change or architecture decision.
+
+Rejected regex removal of hash-prefixed lines and whole-script minification as
+behavior proof: quoted bootstrap scripts and here-document data must remain
+visible. Use a verified nonshipping shfmt POSIX parser and compare ASTs after
+removing only genuine comment nodes and source coordinates. Positive comment
+controls and negative quoted/here-document/bootstrap/token controls establish
+that the comparison can reject a real change. Syntax/source checks and normal
+applicable CI/native/archive results remain separately recorded. No Release,
+tag, deployment, signing change or extra optional native campaign is requested.
+
+Anabasis shortens mode-selection, validated-staging, advisory-failure isolation
+and exact scratch-name comments. Runtime strings and every executable AST node
+remain unchanged. Its Windows note keeps the generic VST3-only uninstall icon
+and component-retention/settings advice, with synchronized translated wording.
+Linux/macOS INSTALL.txt already use plain descriptions and remain unchanged;
+there was no B0 string to replace in these entry scripts, and no desktop helper
+is added for symmetry. Existing AppId and installer liveness/upload gate stay.

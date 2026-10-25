@@ -8069,3 +8069,16 @@ outcomes remain separate; see `worklogs/2026-10-25-normal-validation.md` and
 `docs/architecture/design-decisions/ADR_INDEX.md`. No native result is inferred
 from approval or relabeled by this documentation-only correction. GUI/DAW,
 genuine older-installer upgrades and Icon Composer remain separate acceptance.
+
+
+## Customer installation text audit (2026-10-26)
+
+Audited all six product/platform INSTALL.txt files and both products' Linux
+entry scripts; Anamorph's desktop helper was reviewed separately, and Anabasis
+has no counterpart. This branch changes only necessary customer wording or
+genuine shell comments. Existing languages, commands, paths, error messages,
+line endings, file modes, recovery/ownership semantics, artwork and identities
+remain. A POSIX shell AST comparison retains quoted/bootstrap/here-document data
+and proves unchanged executable structure, with valid and rejecting controls.
+No prose-mirroring unit test or installer execution on a developer host is used.
+The existing release procedure records scope and evidence-reuse boundaries.

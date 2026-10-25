@@ -10,18 +10,9 @@
 # says otherwise.
 set -eu
 
-# `--user` / `--system` MIRROR `install.sh`, and the reason is the same one: the
-# prompt below is gated on `[ -t 0 ]`, so a piped or CI invocation silently took
-# the per-user default with no way to ask for anything else. Adding them to the
-# installer alone would have left the asymmetry in the worse place — a script
-# that can INSTALL system-wide non-interactively but can only REMOVE per-user.
-# `sudo ./uninstall.sh` reaches the system-wide path, but that is the
-# whole-script-as-root route the installer's own comments argue against as a
-# different transaction.
-#
-# `--discard-parked` is the opt-in for the ONE thing this script will not throw
-# away on its own: a `Anabasis.vst3.prev` parked in the installer's scratch
-# directory. See `remove_install_scratch`.
+# --user / --system select the same destinations as install.sh, including
+# non-interactive use. --discard-parked explicitly allows deleting the previous
+# plug-in copy retained by an interrupted installation; see remove_install_scratch.
 discard_parked=0
 requested=''
 for arg in "$@"; do
@@ -65,9 +56,8 @@ SUDO=''
 mode=user
 
 if [ "$(id -u)" -eq 0 ]; then
-    # `--user` as root is refused for the installer's reason: which home `$HOME`
-    # names under sudo depends on the sudoers configuration, so the target would
-    # not be predictable — and here the unpredictable operation is a DELETION.
+    # Refuse --user as root: sudoers policy can make HOME name a different
+    # account, so the removal target would not be predictable.
     if [ "$requested" = user ]; then
         echo "error: --user cannot be combined with running as root: which home directory" >&2
         echo "       \$HOME names under sudo depends on the sudoers configuration, so the" >&2
@@ -113,15 +103,8 @@ fi
 
 removed=0
 
-# Clears temporary files an interrupted install may have left behind. Only the
-# exact names the installer creates are removed; nothing else is touched.
-# THIS LIST MUST MATCH `choose_stage_dir` IN `install.sh`, candidate for
-# candidate. It briefly did not: a `/var/tmp` staging candidate was added there
-# and not here, so an interrupted install's staged bundle survived a deliberate
-# uninstall — against what the CHANGELOG promises. That candidate is gone (it
-# carried a local root exploit; the reasoning is at its removal site), which
-# makes the two lists identical again. Add a candidate to one and it belongs in
-# the other in the same change set.
+# Remove only the installer's exact temporary names. Keep this candidate list
+# synchronized with choose_stage_dir in install.sh; preserve unrelated files.
 remove_install_scratch() {          # $1 = plug-in directory, $2 = bin directory
     for _scratch in "${1%/*}/.anabasis-install-stage" \
                     "$1/.anabasis-install-stage" \

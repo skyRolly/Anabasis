@@ -167,3 +167,14 @@ outcomes remain separate; see `worklogs/2026-10-25-normal-validation.md` and
 `docs/architecture/design-decisions/ADR_INDEX.md`. No native result is inferred
 from approval or relabeled by this documentation-only correction. GUI/DAW,
 genuine older-installer upgrades and Icon Composer remain separate acceptance.
+
+
+## Customer installation text maintenance (2026-10-26)
+
+The shipped installation instructions are user guidance. Keep mode/destination,
+permission, recovery/uninstall, component-retention, signing and attribution
+information; internal project codes and development chronology add no install
+step. This maintenance preserves existing translations and synchronizes changed
+wording. It does not alter a command, payload, identity, signing policy or
+installer behavior. Normal applicable native/archive gates remain required for
+each newly produced CI artifact; older artifacts retain their own source hashes.

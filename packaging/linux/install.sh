@@ -30,22 +30,10 @@ SUDO=''
 [ -f "$APP_SRC" ]  || { echo "error: Anabasis (Standalone) not found next to install.sh" >&2; exit 1; }
 
 # ---------------------------------------------------------------- mode choice
-# EXPLICIT SELECTION EXISTS BECAUSE THE PROMPT CANNOT ALWAYS BE ASKED. The gate
-# on it is `[ -t 0 ]`, so any non-interactive invocation — a provisioning script,
-# a CI step, `sh install.sh < /dev/null` — silently took the per-user default,
-# and the ONLY non-interactive route to a system-wide install was to run the
-# whole script as root. That is not the same install: `sudo ./install.sh` makes
-# the entire transaction root's, where answering `2` at the prompt elevates one
-# operation at a time and is the path the staging guards are written for.
-#
-# A CONTRADICTORY PAIR IS REFUSED, NOT RESOLVED. `--user --system` used to take
-# whichever was written last, silently, which is the one thing this whole block
-# exists to prevent: the same loop hard-fails on a MISSPELLED option on the
-# reasoning that a non-interactive caller must never have its intent guessed at,
-# and there is less intent to infer from a contradiction than from a typo. The
-# two outcomes are not near-misses either — they differ in destination AND in
-# privilege, since `--system` elevates individual operations through `priv`. A
-# REPEATED option (`--user --user`) is not a conflict and passes.
+# --user / --system select a destination without an interactive prompt.
+# --system elevates individual operations; running the whole script as root
+# selects the same system destinations. Conflicting modes are refused, while
+# repeating the same mode is allowed.
 requested=''
 for arg in "$@"; do
     case "$arg" in
@@ -75,11 +63,8 @@ done
 mode=user
 
 if [ "$(id -u)" -eq 0 ]; then
-    # `--user` AS ROOT IS REFUSED RATHER THAN GUESSED. The per-user branch writes
-    # to `$HOME`, and under `sudo` whose home that is depends on the sudoers
-    # configuration (`always_set_home`, `env_keep`) — so the same command would
-    # install to `/root/.vst3` on one machine and the caller's folder, root-owned,
-    # on another. Neither is what the flag was asking for.
+    # Under sudo, HOME depends on sudoers policy. Refuse --user as root rather
+    # than writing to an unexpected home or leaving root-owned user files.
     if [ "$requested" = user ]; then
         echo "error: --user cannot be combined with running as root: which home directory" >&2
         echo "       \$HOME names under sudo depends on the sudoers configuration, so the" >&2
@@ -231,18 +216,8 @@ stage_dir_is_same_filesystem() {    # $1 = candidate, $2 = probe path in the des
     return 1
 }
 
-# Prints the staging directory and returns 0, or returns NON-ZERO having printed
-# nothing. The caller must check, and both callers do.
-#
-# IT USED TO END IN AN UNGATED `printf`, which is worth spelling out because the
-# comment above it claimed the opposite. When both candidates were refused it
-# returned the second one anyway — so a directory just judged untrustworthy was
-# used as the staging area, `reconcile` then `mv`-ed whatever `Anabasis.vst3.prev`
-# it contained into place AS ROOT, and root copied the payload into a directory
-# the script had already decided it did not own. That is INC-006's adoption path
-# reached through the fallback instead of through `/var/tmp`, in a function
-# documenting itself as failing closed. It now fails closed for real: no
-# trustworthy candidate means no install.
+# Print a validated staging directory and return 0, or print nothing and fail.
+# Both callers check the status; no trustworthy candidate means no installation.
 choose_stage_dir() {            # $1 = plug-in directory; prints the stage directory
     _probe="$1/.anabasis-probe"
     $SUDO rm -rf "$_probe" 2>/dev/null || true
@@ -606,38 +581,12 @@ echo "  Standalone -> $BIN_DIR/Anabasis"
 # one behind means Anabasis appears twice and the per-user (older) copy is the
 # one many DAWs load.
 #
-# Finding it needs the INVOKING user's home, not `$HOME` — under `sudo` that is
-# root's. There are TWO ways to reach a system-wide install and they answer that
-# question differently, which is what the branch below is for:
-#
-#   * `sudo ./install.sh` — the whole script runs as root, `$HOME` is root's, and
-#     `$SUDO_USER` names the real account. Their home comes from the passwd
-#     database rather than from `~$SUDO_USER`, which POSIX sh does not expand.
-#   * `./install.sh` answered with 2 — the script runs as the USER and elevates
-#     only individual operations (`priv`), so `$HOME` is already the right home
-#     and `$SUDO_USER` is NEVER SET. Naming it here was an unguarded expansion
-#     under `set -u`: the install completed, the traps were already cleared, and
-#     then the courtesy note aborted the script with "SUDO_USER: parameter not
-#     set" and a non-zero exit — reporting failure for a run that had succeeded.
-#     `user_as` carries the answer instead, empty on this path because the
-#     account is the one already reading the message.
-# The subshell is the structural half of that fix, and it is worth more than the
-# variable was. Everything above this line has already happened: the payload is
-# installed and `trap -` has released the rollback. Nothing after that point is
-# allowed to decide the exit status, and a `set -u` abort is NOT containable by
-# `|| true` on a plain command or a function — the shell exits regardless. It is
-# containable inside a subshell, which is what this is. An advisory that cannot
-# run correctly should print nothing and cost nothing, not fail the install.
-#
-# EVERYTHING THE ADVISORY NEEDS IS COMPUTED INSIDE IT, and that placement is the
-# point rather than a tidiness. The `user_home` lookup used to sit outside, past
-# the point of no return, and was safe only by accident: `getent … | cut -d: -f6`
-# takes the PIPELINE's status from `cut`, which exits 0 even when `getent` fails
-# or matches nothing. Remove `cut` from the image and that assignment returns 127,
-# `set -e` fires, and a completed install exits non-zero — the exact failure this
-# subshell was introduced to prevent, reintroduced two lines above it. Inside, the
-# invariant is structural: nothing here can decide the exit status, whatever any
-# of these tools does.
+# Find the invoking user's home for the duplicate-install advisory. A whole-script
+# sudo invocation uses SUDO_USER and the passwd database; per-operation elevation
+# leaves HOME with the invoking user and may not set SUDO_USER.
+# The payload is already committed and rollback traps are cleared. Keep every
+# advisory lookup inside this subshell so missing tools, set -u or set -e cannot
+# turn a completed installation into a failure.
 (
     user_home=''
     user_as=''
