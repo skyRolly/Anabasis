@@ -78,7 +78,9 @@ Copyright / 版权
 Anabasis is (c) 2026 RollyTech. All rights reserved.
 Anabasis (c) 2026 RollyTech,保留所有权利。
 
-Windows uninstall icon: the always-installed Inno uninstaller supplies the generic
-icon for all component choices, including VST3-only. No branded Anabasis artwork
-is introduced. Re-running Setup with fewer components does not remove previously
-installed components; use Uninstall to remove the product. Presets/settings are retained.
+Windows uses the same generic uninstall icon for every component choice, including
+VST3-only. Re-running Setup with fewer components keeps previously installed
+components. Use Uninstall to remove the product; presets and settings are kept.
+Windows 的所有组件选择(包括仅安装 VST3)都使用相同的通用卸载图标。
+减少组件后重新运行安装程序,不会删除已安装的组件;请用卸载功能移除产品。
+预设和设置会保留。
