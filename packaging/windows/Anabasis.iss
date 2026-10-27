@@ -35,6 +35,8 @@
 AppId={{19AAA915-4527-4BA2-B6A7-06068E527C54}
 AppName=Anabasis
 AppVersion={#AppVersion}
+AppVerName=Anabasis
+UninstallDisplayName=Anabasis
 AppPublisher=RollyTech
 AppPublisherURL=https://www.rolly.tech
 DefaultDirName={autopf}\Anabasis

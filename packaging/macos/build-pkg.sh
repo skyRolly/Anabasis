@@ -131,7 +131,7 @@ build_component app  Anabasis.app       "/Applications"                      "$W
 cat > "$WORK/distribution.xml" <<EOF
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="1">
-    <title>Anabasis ${VERSION}</title>
+    <title>Anabasis</title>
     <options customize="allow" require-scripts="false"/>
     <domains enable_localSystem="true"/>
     <choices-outline>
