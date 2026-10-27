@@ -1,5 +1,17 @@
 # DOCUMENTATION_COVERAGE.md
 
+## Product-only installer names (2026-10-28)
+
+Windows explicitly sets `AppVerName=Anabasis` and
+`UninstallDisplayName=Anabasis`; the macOS Distribution title is `Anabasis`.
+RELEASE_PROCESS, user INSTALLATION and the Unreleased changelog describe this
+display-only change. Source: `packaging/windows/Anabasis.iss`,
+`packaging/macos/build-pkg.sh`. `AppVersion`, AppId, receipt/component and bundle
+versions, package IDs and versioned output filenames are preserved. Linux
+install/uninstall presentation and all packaging INSTALL.txt files were inspected;
+compliant text is unchanged. This repository has no desktop-integration.sh.
+Verification is static; no installer or product GUI was exercised.
+
 ## Normal validation restoration — 2026-10-25
 
 CI_CD and TESTING describe removal of the temporary branch-specific routing and

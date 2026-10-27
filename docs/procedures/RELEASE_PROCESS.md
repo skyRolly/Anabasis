@@ -57,6 +57,13 @@ ISCC, a **macOS** `.pkg` built by `packaging/macos/build-pkg.sh`, `SHA256SUMS` a
 manifest. The Linux zip carries `install.sh`, `uninstall.sh` and `INSTALL.txt` rather than an
 installer binary.
 
+Installer product titles use the bare **Anabasis** name: Windows sets
+`AppVerName` and `UninstallDisplayName`, and the macOS Distribution sets `<title>`.
+Localized Setup/Uninstall wording may surround that name. `AppVersion`, component/
+receipt and bundle versions, package identities and versioned output filenames
+retain their real values. Evidence: `packaging/windows/Anabasis.iss`,
+`packaging/macos/build-pkg.sh`. Source checks do not certify visual appearance.
+
 **The macOS package self-checks at BUILD time, and a failure there is usually not a defect here.**
 `build-pkg.sh` asserts every component is non-relocatable, non-version-checked and carries
 `BundleOverwriteAction=upgrade` (INC-005), and first proves those assertions can fire by packaging
