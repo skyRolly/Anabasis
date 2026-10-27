@@ -9,6 +9,10 @@ wrapper folder inside. A Windows installer and a macOS `.pkg` are built too, as 
 downloads** rather than as archive contents; neither the archives nor the installers are
 code-signed or notarized yet.
 
+The Windows installer/uninstaller and macOS installer show **Anabasis** as the
+product name, without a version suffix. Version metadata and versioned download
+filenames still identify the build.
+
 Each archive carries an `INSTALL.txt` with the same steps this guide gives, in English and
 Chinese. Linux additionally carries the two scripts its `INSTALL.txt` describes:
 

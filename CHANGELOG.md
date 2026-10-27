@@ -48,6 +48,10 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ## [Unreleased]
 
 ### Changed
+- **Installer and uninstaller product names display as Anabasis without a version suffix.**
+  Windows Setup/uninstall naming and the macOS installer title use the bare product name;
+  installed version metadata and versioned download filenames are preserved.
+  Evidence: commit `b2bae197d5ebd43f46426facbcb445e00a965fa5`. [Verified - source; appearance not exercised]
 - **Use the domain namespace `tech.rolly.anabasis` for application bundles and macOS package receipts.**
   Previous development receipt identities are intentionally replaced without aliases; independent
   plugin codes, VST3 class IDs, Windows AppId and saved state are preserved. Host rescan/recall
