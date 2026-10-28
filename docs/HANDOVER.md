@@ -1549,7 +1549,7 @@ plus `workflow_dispatch`).
 |---|---|---|
 | **JUCE** | **9.0.4** — immutable commit `3fb5cbc0340758596dac39f7c8de47d562b4896e` (ADR-0047), matching the read-only Anamorph reference | Framework for DSP, parameters/state, GUI and plugin wrappers. Previous default caches are rejected before fetching; all six consumers explicitly exclude unused MP3/Opus/WebP codecs. Upgrade audit, runtime evidence and remaining platform/manual checks: `worklogs/2026-10-21-juce-904-upgrade.md`. A bump remains a Build System change (ADR + Review). |
 | **C++ standard** | **C++23**, hard-set in CMake; separate canary retired | ADR-0030 supersedes the original C++20/canary baseline. Library features retain the feature-test/first-party-abstraction rule. |
-| **pluginval** | latest release (downloaded) | The conformance gate. Not vendored; fetched by `scripts/run-pluginval.sh`. Pinning it is a tracked improvement. |
+| **pluginval** | Exact ordinary release and content lock in `scripts/pluginval-release.json` | Both wrappers use the shared standard-library preparer with archive/full-tree verification and same-invocation digest liveness. Upgrade/recovery and distinct source-built KI-028 provenance: `DEPENDENCY_POLICY.md`, `TESTING.md`. |
 | Linux system libs | distro (`scripts/setup-linux.sh`) | ALSA/JACK/X11/FreeType/GTK/mesa/**EGL**/xvfb for headless build + validation. |
 
 ## Relationship to Anamorph

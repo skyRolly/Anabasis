@@ -114,6 +114,10 @@ To build without network (JUCE already on disk):
 
 ## Documentation
 
+Ordinary validator acquisition provenance and offline limits are recorded in the
+[pluginval acquisition worklog](worklogs/2026-10-28-pluginval-acquisition.md), supporting evidence
+outside the documentation authority classes; the dependency policy owns the upgrade procedure.
+
 The full technical documentation lives in **[`docs/`](docs/)**:
 
 - **Contributor and agent entry point:** [`AGENTS.md`](AGENTS.md) (primary instructions) ·

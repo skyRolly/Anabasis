@@ -7,7 +7,7 @@ Repository Governance Policy. Third-party dependency locking and upgrade safety.
 | Dependency | Pin | Mechanism | Status |
 |---|---|---|---|
 | **JUCE** | **9.0.4**, pinned by the tag's **IMMUTABLE commit SHA** `3fb5cbc0340758596dac39f7c8de47d562b4896e` | CMake `FetchContent` (`GIT_SHALLOW`), overridable via `-DANABASIS_JUCE_PATH`; previous default caches fail before fetching until both fields are reset | Original pin: OQ-001 / ADR-0008; 9.0.1: ADR-0028; **9.0.4: ADR-0047**, on the owner's upgrade directive (compliance log below) |
-| **pluginval** | latest release (downloaded) | `scripts/run-pluginval.sh` / `.ps1` | pinning it is a tracked improvement, not yet done |
+| **pluginval** | Exact ordinary release and content hashes in `scripts/pluginval-release.json` | Both wrappers call `scripts/acquire-pluginval.py` (Python standard library) | Implemented; full archive and extracted-tree verification, offline refusal regressions and per-invocation digest liveness |
 | **C++ standard** | **C++23** | `CMAKE_CXX_STANDARD 23` (a hard `set()`, not a cache variable — an override must fail rather than configure), `CMAKE_CXX_STANDARD_REQUIRED ON`, `CMAKE_CXX_EXTENSIONS OFF` | `DEVELOPMENT_BRIEF.md` §2.1 set 20 with a canary; **ADR-0030, 2026-08-22** raised the baseline, removed the `ANABASIS_CXX_STANDARD` seam and retired the canary job, closing OQ-006 |
 | **Clang (Linux CI)** | **major 22**, the newest major apt.llvm.org ships as a RELEASE for noble | `ANABASIS_CLANG_VERSION` in `.github/workflows/build.yml`; installed by `scripts/setup-llvm-apt.sh` from apt.llvm.org, signing key pinned by identity | **ADR-0031, 2026-08-22.** **ADR-0037, 2026-08-30** examined 23 and HELD: LLVM 23.1.0 is released and every gate passes on it, but apt.llvm.org's noble suite builds `clang-23` from a `release/23.x` commit that still carries `LLVM_VERSION_SUFFIX -rc3` — an unreleased build whose reported version says `23.1.0`. `setup-llvm-apt.sh` now asserts the package was built from the release tag's commit, so this cannot pass unnoticed again. Not a Dependabot ecosystem; maintained by this row and those ADRs. Ubuntu's own archives stop two majors short and ship no `libclang_rt.rtsan`, which the `realtime` job cannot run without |
 | Linux system libs | distro packages | `scripts/setup-linux.sh` (ALSA, JACK, X11, FreeType, GTK/WebKit, mesa, **EGL — required by JUCE 9's Linux GL context path**, xvfb) | scaffolded |
@@ -44,6 +44,41 @@ Two prior findings are preserved because pinning is what settles them:
 The cost is update volume: a bare major moves only when the major does, a SHA moves on every
 release. `.github/dependabot.yml` splits the updates by semver impact so patch bumps land on a green
 run without a major blocking them.
+
+## pluginval content lock and manual upgrades
+
+
+`scripts/pluginval-release.json` is the only release authority for both wrappers. The initial
+pin is the already used official **v1.0.4**, not a validator upgrade. Its annotated tag object is
+`c6dfeaeac8e729c468d2b43a739e19ef4be922e1`, targeting source commit
+`ed19c2c16b57a6d94db391bea3ef4a80b769d5bf`. The lock records the three official asset IDs,
+URLs, byte counts, archive hashes and executable member hashes. The archives were independently
+retrieved and rehashed before committing the lock. The upstream API digest fields were null:
+these are measurements of official release bytes, **not upstream signed checksums or proof
+that the binaries were built from that source commit**. The complete macOS bundle is verified
+against those locked archive bytes, including metadata, resources and code-signature files.
+
+A manual upgrade requires a reviewed change:
+
+1. Select an official Tracktion/pluginval release; inspect its release/tag provenance and all
+   three archives as data. Independently calculate archive SHA-256, lengths and executable
+   SHA-256; inspect member paths/types and the full macOS bundle. Do not execute downloads
+   merely to inspect them or derive a new expected hash during normal acquisition.
+2. Update the single lock with those measured values and official asset URLs/IDs. Never replace
+   a mismatched pin with the hash of whatever a failed download happened to return.
+3. Run `python3 scripts/test-pluginval-acquisition.py`; on Windows use
+   `python scripts/test-pluginval-acquisition.py --require-powershell`. Review refusal cases
+   and let ordinary CI exercise the unchanged production gates after source publication.
+4. Review the lock, provenance and gate evidence together. No updater, package manager or new
+   service is installed. This initial pin changes no product dependency or validation semantics;
+   existing Accepted platform ADR provenance and unexecuted acceptance evidence remain effective.
+
+The separate `ki028-diag.yml` is diagnostic-only source-built provenance: pluginval
+`v1.0.4` at `ed19c2c16b57a6d94db391bea3ef4a80b769d5bf`, JUCE submodule
+`5179f4e720d8406ebd1b5401c86aea8da6cc83c9`, with debug information and no hardened runtime.
+Its source pins, read-only restore cache and diagnostic invocation remain unchanged. They are
+not ordinary release archives and do not acquire this lock by implication. First-party helper/test
+copy provenance and alternatives are in `worklogs/2026-10-28-pluginval-acquisition.md`.
 
 ## Version-lock reasoning
 

@@ -790,12 +790,17 @@ whole mechanism.
 `Random seed: 0x…` at the top of every run. Take that value from the failing CI log and replay it:
 
 ```bash
-.tools/pluginval --strictness-level 10 --randomise --random-seed 0x4aeacb4 \
-                 --validate build/…/Anabasis.vst3 --timeout-ms 600000
+PLUGINVAL="$(python3 scripts/acquire-pluginval.py --tools .tools)" &&
+    "$PLUGINVAL" --strictness-level 10 --randomise --random-seed 0x4aeacb4 \
+                --validate build/…/Anabasis.vst3 --timeout-ms 600000
 ```
 
 Test *order* is shuffled per repeat, so a pinned seed reproduces the draw, not necessarily the
 interleaving of a 3-pass run.
+Run from the repository root and substitute the actual bundle path. The preparer returns the
+verified executable for the current platform and locked content; `&&` prevents replay if setup
+fails. The legacy `.tools/pluginval` is not a replay target. The offline suite executes this
+exact documented Bash block against a counting invocation boundary and a failing preparer.
 
 **Copy the logged value verbatim — do not uppercase it.** pluginval accepts the `0x…` form
 (`CommandLine.cpp`: `if (seedString.startsWith ("0x")) return seedString.getHexValue64();`) and
@@ -806,8 +811,43 @@ round-trips it exactly — verified against 1.0.4: `--random-seed 0x4aeacb4` log
 misclassify as an abnormal termination and retry three times before failing. Decimal works too
 (`78248628` logs `0x4a9fab4`), and is what the scripts themselves pass.
 
-The script downloads pluginval if absent, finds the built `Anabasis.vst3`, and runs under
-`xvfb-run` when available (Linux editor tests need a display).
+Both wrappers prepare pluginval through `scripts/acquire-pluginval.py`, using the single
+`scripts/pluginval-release.json` authority and Python's standard library (`python3` on POSIX,
+`python` in PowerShell). Python 3.8+ is required and is already used by these CI jobs. The shell
+wrapper still uses `xvfb-run` when available (Linux editor tests need a display).
+
+Acquisition verifies archive SHA-256 and length before opening the ZIP. It rejects malformed
+locks, unsupported hosts, wrong assets, failed/partial downloads, escaping paths (including
+Windows backslash/drive/UNC/ADS/device/alias spellings), links/special types, collisions and
+incomplete bundles. Files are written only in private staging; the final path is published after
+preparation succeeds. No quarantine/security policy is changed. Cache storage is
+`.tools/pluginval-releases/<version>-<platform>-<archive-sha256>/`. Reuse rehashes the archive,
+reads its full inventory, and compares every extracted file/directory against it; metadata,
+resources and signature files in the macOS app count as tool content. A marker or executable's
+presence is never sufficient. Damaged/incomplete caches fail setup before the validator loop.
+If concurrent first-time calls race to publish the same target, the loser rehashes the
+winner's archive, rebuilds its inventory and verifies its full tree before returning that path.
+Its own stage is discarded; an invalid/incomplete winner remains a setup failure, and a
+publication error with no winner still fails. No existing cache is deleted or replaced.
+Remove **only the exact content cache directory named by the setup error** to reacquire; legacy
+`.tools/pluginval`, `.tools/pluginval.exe` and other unrelated files are not removed or reused.
+Concurrent malicious modification after verification is outside this local cache check's scope.
+
+`python3 scripts/test-pluginval-acquisition.py` exercises the production preparation functions
+with inert data-only ZIPs, transport stand-ins and counting invocation boundaries. It covers
+valid reuse without download, bad/missing/truncated inputs, stale version/platform content,
+modified executables, bundle metadata/resources, containment/type refusal and setup propagation
+through the real shell/PowerShell setup sections. A barrier forces two fully staged calls to
+compete on each platform shape; assertions require the losing call to inspect the published
+archive, inventory and full tree. Invalid-winner and no-winner publication faults also fail.
+No archive member is executed. The PowerShell
+leg is required by `--require-powershell` in the existing Windows CI job; a host without `pwsh`
+reports that leg as skipped. The source-lint job and local preflight run the suite too. Every real
+acquisition runs a seeded digest failure through the same archive assertion; the suite disables
+that verifier to prove the canary itself refuses a dead gate. Anabasis has no separate existing `run-pluginval.sh --self-test` entry point; its
+verdict/retry code remains unchanged. Manual upgrades and provenance: `DEPENDENCY_POLICY.md`.
+Evidence [Verified]: `scripts/acquire-pluginval.py`, `scripts/test-pluginval-acquisition.py`,
+`scripts/run-pluginval.sh`, `scripts/run-pluginval.ps1`.
 
 ### Crash retry — what it is and is not
 

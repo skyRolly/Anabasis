@@ -108,7 +108,7 @@ depth for the audition. Results, when they exist, belong in this table with per-
 |---|---|---|---|
 | JUCE | **9.0.4** — immutable commit `3fb5cbc0340758596dac39f7c8de47d562b4896e` (FetchContent + `GIT_SHALLOW`); the read-only Anamorph reference pins the same commit | **Verified for the pin** | `CMakeLists.txt` (`ANABASIS_JUCE_TAG`); ADR-0047 and its verification limits; ADR-0008/OQ-001 for the original pin |
 | C++ standard | **C++23** baseline; the cache seam and the separate canary were removed by ADR-0030 | **Verified** | `CMakeLists.txt` (`CMAKE_CXX_STANDARD 23`); ADR-0030 |
-| pluginval | latest release, downloaded at validation time — **not pinned** | **Verified (that it is unpinned)** | `scripts/run-pluginval.sh`; recorded as a tracked improvement in `HANDOVER.md` §Critical dependencies |
+| pluginval | Exact ordinary release/content lock, verified archive and full extracted tree | **Verified** | `scripts/pluginval-release.json`; `scripts/acquire-pluginval.py`; independent source-built KI-028 provenance in `DEPENDENCY_POLICY.md` |
 
 See `docs/policies/DEPENDENCY_POLICY.md` for the version-lock reasoning; changing the JUCE pin
 is an Architecture Review Gate item.

@@ -38,6 +38,7 @@ cd "$(dirname "$0")/.."
 
 python3 scripts/check-product-identity.py --self-test
 python3 scripts/check-product-identity.py
+python3 scripts/test-pluginval-acquisition.py
 
 echo "== preflight: documentation + source lints =="
 python3 scripts/check-docs.py --self-test
