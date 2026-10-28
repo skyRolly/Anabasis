@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Offline acquisition regressions. ZIP contents are data and are never executed."""
-# Provenance: Anamorph scripts/test-pluginval-acquisition.py:1-355 @ 21b61fb91c7f8b151ee2f95747424d1512ac2895.
-# Copy/adapt under ADR-0009. Adaptation: Product name and optional discovery-helper copy match Anabasis wrappers.
+# Provenance: Anamorph scripts/test-pluginval-acquisition.py:1-427 @ 5da57eb26e48a9e59e6c2bc8dbfd950d70ec6993.
+# Copy/adapt under ADR-0009. Adaptation: Anabasis naming, optional discovery helper and seed-replay regression.
 # Anamorph remains a read-only reference from this repository.
 
 import copy
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import importlib.util
 import io
@@ -16,6 +17,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 import urllib.error
@@ -78,6 +80,76 @@ class AcquisitionTests(unittest.TestCase):
                 self.assertEqual(exe, same)
                 self.assertIn(lock["assets"][platform]["sha256"], str(exe))
         self.assertEqual(self.fetches, 3)
+
+    def test_concurrent_first_acquisition_reverifies_winner(self):
+        for platform in pv.PLATFORMS:
+            with self.subTest(platform=platform):
+                lock, blob = fixture(platform)
+                barrier = threading.Barrier(2)
+                rename = Path.rename
+
+                def publish(stage, target):
+                    # Both invocations must finish staging before either publishes.
+                    barrier.wait(timeout=10)
+                    return rename(stage, target)
+
+                with mock.patch.object(Path, "rename", publish), \
+                        mock.patch.object(pv, "verify_archive", wraps=pv.verify_archive) as archives, \
+                        mock.patch.object(pv, "inventory", wraps=pv.inventory) as inventories, \
+                        mock.patch.object(pv, "verify_tree", wraps=pv.verify_tree) as trees, \
+                        ThreadPoolExecutor(max_workers=2) as pool:
+                    futures = [pool.submit(pv.prepare, self.tools, lock, platform, self.fetch(blob))
+                               for _ in range(2)]
+                    paths = [future.result(timeout=20) for future in futures]
+                self.assertEqual(paths[0], paths[1])
+                target = paths[0].parents[len(Path(lock["assets"][platform]["executable"]).parts)]
+                # The losing invocation must check the PUBLISHED archive/tree,
+                # not return a path justified only by its own disposable stage.
+                self.assertIn(target / "archive.zip", [call.args[0] for call in archives.call_args_list])
+                self.assertIn(str(target / "archive.zip"), [call.args[0].filename for call in inventories.call_args_list])
+                self.assertIn(target / "tree", [call.args[0] for call in trees.call_args_list])
+                self.assertFalse(any(p.name.startswith(".stage-") for p in target.parent.iterdir()))
+        self.assertEqual(self.fetches, 6)
+
+    def test_concurrent_invalid_winner_is_not_replaced_or_reused(self):
+        cases = (("Linux", "archive.zip", b"corrupt archive"),
+                 ("Linux", "archive.zip", None),
+                 ("Linux", "tree/pluginval", b"modified executable"),
+                 ("macOS", "tree/pluginval.app/Contents/Info.plist", None),
+                 ("macOS", "tree/pluginval.app/Contents/Resources/Icon.icns", b"modified resource"))
+        for index, (platform, relative, replacement) in enumerate(cases):
+            with self.subTest(platform=platform, relative=relative, replacement=replacement):
+                lock, blob = fixture(platform)
+                tools = self.root / ("race-" + str(index))
+                published = []
+
+                def publish(stage, target):
+                    # An independent winner appears after the initial cache check.
+                    shutil.copytree(stage, target)
+                    victim = target / relative
+                    if replacement is None:
+                        victim.unlink()
+                    else:
+                        victim.write_bytes(replacement)
+                    published.append(target)
+                    raise FileExistsError("another invocation published this target")
+
+                with mock.patch.object(Path, "rename", publish):
+                    with self.assertRaisesRegex(pv.SetupError, "invalid cached tool at"):
+                        pv.prepare(tools, lock, platform, self.fetch(blob))
+                victim = published[0] / relative
+                if replacement is None:
+                    self.assertFalse(victim.exists())
+                else:
+                    self.assertEqual(victim.read_bytes(), replacement)
+                self.assertEqual(list(published[0].parent.iterdir()), published)
+
+    def test_publication_error_without_winner_still_fails(self):
+        lock, blob = fixture("Linux")
+        with mock.patch.object(Path, "rename", side_effect=PermissionError("publication denied")):
+            with self.assertRaisesRegex(PermissionError, "publication denied"):
+                pv.prepare(self.tools, lock, "Linux", self.fetch(blob))
+        self.assertEqual(list((self.tools / "pluginval-releases").iterdir()), [])
 
     def test_bad_downloads_never_extract_or_publish(self):
         lock, blob = fixture("Linux")
@@ -353,6 +425,48 @@ class AcquisitionTests(unittest.TestCase):
 
     def test_powershell_wrapper_setup_propagation(self):
         self.wrapper(True)
+
+    def test_documented_seed_replay_uses_preparer_result(self):
+        if os.name == "nt":
+            self.skipTest("Warning: documented Bash replay runs on POSIX hosts")
+        text = (SCRIPTS.parent / "docs/procedures/TESTING.md").read_text()
+        section = text.split("**Reproducing a randomise-only failure.**", 1)[1]
+        command = section.split("```bash\n", 1)[1].split("```", 1)[0]
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        setup_args = self.root / "setup-args"
+        invocation = self.root / "invocation-args"
+        legacy = self.tools / "pluginval"
+        legacy.parent.mkdir()
+        legacy.write_text("#!/bin/sh\nexit 91\n")
+        legacy.chmod(0o755)
+        # A test-authored invocation boundary, never an archive member.
+        tool = self.tools / "pluginval-releases/content addressed fixture/tree/pluginval"
+        tool.parent.mkdir(parents=True)
+        tool.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$PV_REPLAY_ARGS"\n')
+        tool.chmod(0o755)
+        python = bin_dir / "python3"
+        python.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$PV_SETUP_ARGS"\n'
+                          'printf "%s\\n" "$PV_REPLAY_TOOL"\nexit "$PV_SETUP_RC"\n')
+        python.chmod(0o755)
+        env = dict(os.environ, PATH=str(bin_dir) + os.pathsep + os.environ["PATH"],
+                   PV_REPLAY_ARGS=str(invocation), PV_SETUP_ARGS=str(setup_args),
+                   PV_REPLAY_TOOL=str(tool), PV_SETUP_RC="0")
+        result = subprocess.run(["bash", "-c", command], cwd=self.root, env=env,
+                                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(setup_args.read_text().splitlines(),
+                         ["scripts/acquire-pluginval.py", "--tools", ".tools"])
+        args = invocation.read_text().splitlines()
+        self.assertIn("--randomise", args)
+        self.assertEqual(args[args.index("--random-seed") + 1], "0x4aeacb4")
+        self.assertEqual(args[args.index("--timeout-ms") + 1], "600000")
+        invocation.unlink()
+        env["PV_SETUP_RC"] = "1"
+        result = subprocess.run(["bash", "-c", command], cwd=self.root, env=env,
+                                text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertFalse(invocation.exists(), "replay ran despite acquisition failure")
 
 
 if __name__ == "__main__":

@@ -64,3 +64,24 @@ native debugger, product application, installer or acceptance campaign was run h
 Offline test evidence does not establish real platform CI outcomes. Product sources, versions,
 identities, signing, artwork and installer names are unchanged. C++23's separate canary stays
 retired under ADR-0030. Ordinary platform CI is observed separately after source publication.
+
+## Review correction: concurrent publication and replay
+
+The review found that two fully verified stages could race at the final rename, failing the
+loser despite a valid published winner. The follow-up reuses one `cached_tool` path for ordinary
+reuse and an existing target after a failed rename. It verifies the published archive against
+the lock, rebuilds the ZIP inventory and verifies the complete tree; the losing stage's bytes
+cannot vouch for the winner. Invalid/incomplete winners and errors with no target still fail.
+A barrier deterministically reproduces the old OS error on all three platform shapes, while
+seeded invalid winners exercise refusal without replacement and verify private-stage cleanup.
+
+The old replay example targeted the legacy executable now ignored by ordinary preparation.
+TESTING now obtains the executable from the preparer and uses `&&` to stop after setup failure.
+Its regression runs the exact documented Bash block with an inert counting boundary, including
+an existing legacy tool and an acquisition failure. No archive member or product is executed.
+
+Review follow-up copy reference: Anamorph
+`5da57eb26e48a9e59e6c2bc8dbfd950d70ec6993`; the helper and concurrency regressions
+are copied with provenance. The exact-document replay regression is Anabasis-specific.
+The new cases failed on the prior implementation/example before the correction. Current
+suites contain 15 Anamorph cases and 16 Anabasis cases; native product execution is not implied.

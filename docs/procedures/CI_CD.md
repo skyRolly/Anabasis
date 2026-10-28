@@ -13,6 +13,11 @@ timeouts, verdicts, retry policy, bundle selection or workflow event routing. Py
 HTTPS acquisition, archive/inventory validation before private extraction, atomic publication
 and full cached-tree checks. Every acquisition runs a seeded digest refusal through the same
 production archive assertion before preparing or reusing the tool.
+Concurrent first acquisition may prepare two private stages; the losing publisher reuses the
+winner only after the same archive/inventory/full-tree checks as ordinary cache reuse. The
+existing offline suite forces this race and rejects invalid winners and other publication errors.
+It also checks the documented seed replay uses the preparer's returned executable and stops
+on setup failure, even if a legacy tool exists.
 
 The existing `source-lint` job and local preflight run `scripts/test-pluginval-acquisition.py`;
 the existing Windows job runs it immediately after checkout with `--require-powershell`.

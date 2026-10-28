@@ -1,5 +1,19 @@
 # DOCUMENTATION_COVERAGE.md
 
+## pluginval publication-race and replay review correction (2026-10-28)
+
+The shared `cached_tool` verification path now checks a concurrent winner's locked archive,
+inventory and complete extracted tree before the losing preparer can return its executable.
+Damaged/incomplete winners and publication errors without a winner still fail; each invocation
+cleans only its own private stage. Barrier-driven tests reproduce the original failure on all
+three platform shapes and require the published archive/inventory/tree checks and cleanup.
+The seed replay in TESTING formerly invoked the ignored legacy `.tools/pluginval`; it now
+uses the preparer's returned executable and `&&` stops it on setup failure. A regression runs
+the exact documented Bash block with legacy and content-path boundaries to distinguish both
+behaviors. CI_CD and the acquisition worklog record this follow-up. Existing wrapper verdicts,
+locks, workflow routing, product sources and historical acceptance observations are unchanged.
+No product-visible changelog entry is required under rule 3.
+
 ## Locked pluginval acquisition and cached integrity (2026-10-28)
 
 Both ordinary wrappers share `scripts/pluginval-release.json` and the first-party copied/adapted
