@@ -1,5 +1,20 @@
 # DOCUMENTATION_COVERAGE.md
 
+## Locked pluginval acquisition and cached integrity (2026-10-28)
+
+Both ordinary wrappers share `scripts/pluginval-release.json` and the first-party copied/adapted
+`scripts/acquire-pluginval.py`. DEPENDENCY_POLICY, HANDOVER's dependency row and
+COMPATIBILITY_MATRIX record the implemented lock instead of the old tracked gap. CI_CD, TESTING,
+TESTING_POLICY and REPOSITORY_MAP describe real consumers, Python runtime, inert regressions,
+per-acquisition digest liveness, full macOS bundle/cache checks and exact-directory recovery.
+The existing source-lint and Windows jobs and local preflight run the suite; PowerShell is
+required by the Windows job. `worklogs/2026-10-28-pluginval-acquisition.md` records copy provenance,
+measurements, alternatives and limits; SOURCE_OF_TRUTH/README keep its evidence class explicit.
+The KI-028 source-built workflow and historical observations retain their original provenance.
+No changelog entry under rule 3: internal validation-tool integrity changes no product behavior.
+Product DSP/state, identities, versions, packaging, signing, artwork, gates and unexecuted manual
+acceptance remain unchanged. The separate C++23 canary remains retired under ADR-0030.
+
 ## Product-only installer names (2026-10-28)
 
 Windows explicitly sets `AppVerName=Anabasis` and

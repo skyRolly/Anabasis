@@ -3,6 +3,32 @@
 Continuous integration / delivery. Source of truth: `.github/workflows/`.
 
 
+## pluginval release acquisition
+
+The ordinary Linux/macOS shell and Windows PowerShell wrappers both call
+`scripts/acquire-pluginval.py` and consume `scripts/pluginval-release.json`. This locks the
+already used official release/content without changing strictness, modes, pass counts, seed,
+timeouts, verdicts, retry policy, bundle selection or workflow event routing. Python 3.8+
+(`python3` on POSIX, `python` in PowerShell) uses only its standard library for bounded official
+HTTPS acquisition, archive/inventory validation before private extraction, atomic publication
+and full cached-tree checks. Every acquisition runs a seeded digest refusal through the same
+production archive assertion before preparing or reusing the tool.
+
+The existing `source-lint` job and local preflight run `scripts/test-pluginval-acquisition.py`;
+the existing Windows job runs it immediately after checkout with `--require-powershell`.
+Inert ZIPs and counting invocation boundaries exercise real wrapper setup without executing
+any archive member or product. Missing local PowerShell is an explicit skip; the Windows CI leg
+requires it. Refusal/recovery details: TESTING's pluginval section. Manual upgrade and provenance
+limits: `DEPENDENCY_POLICY.md`.
+
+Consumer inventory: `build.yml`'s ordinary Linux, Windows, macOS and native Intel macOS gates use
+these wrappers, including reusable Release calls. `release.yml`, `codeql.yml`, `msvc.yml` and
+`dependency-review.yml` contain no direct release acquisition to migrate. The special
+`ki028-diag.yml` builds pluginval from source at `ed19c2c16b57a6d94db391bea3ef4a80b769d5bf`,
+with its own JUCE source pin `5179f4e720d8406ebd1b5401c86aea8da6cc83c9`, debug information and
+no hardened runtime. Its read-only restore cache, source verification and diagnostic invocation
+remain unchanged; historical results keep that distinct provenance.
+
 ## Normal validation restored (2026-10-25)
 
 The temporary source-publication router and deliberate pending marker are retired.

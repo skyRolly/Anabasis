@@ -178,3 +178,8 @@ human architecture/ADR approval. PR #53 merged as `6dba5871b42d0d4c7323e21a1d226
 its Windows implementation is effective on main. PR #54 also merged as
 `1afe5730a4fe3e9d918af91f17abcce0085a43d9`; both platform decisions are implemented on main.
 The ADR index is the decision-status and effectivity authority.
+
+The acquisition record `worklogs/2026-10-28-pluginval-acquisition.md` is supporting evidence
+outside the documentation authority classes: measured release bytes, first-party copy provenance,
+alternatives and offline limits. The committed release/content lock and implementation govern
+ordinary tool preparation; the record does not confer manual acceptance or platform CI results.

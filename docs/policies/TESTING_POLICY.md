@@ -278,6 +278,18 @@ its methodology is not permitted (constraint C2).
    inter-sample-peak-heavy material, DC, silence, and automation swept at audio rate. A limiter
    that only holds its ceiling on well-behaved music does not satisfy `DSP_POLICY.md` invariant 4.
 
+## pluginval acquisition integrity
+
+Ordinary validation requires the shared `scripts/pluginval-release.json` content lock.
+`scripts/acquire-pluginval.py` must verify archive bytes before extraction and compare the
+entire extracted tree against independently reverified archive content before use. A cached
+executable or version marker alone cannot satisfy this requirement. Every acquisition first
+rejects a seeded wrong digest through the production assertion (same-invocation liveness).
+`scripts/test-pluginval-acquisition.py` exercises inert archives and both wrapper setup paths;
+source-lint, local preflight and the existing Windows job run it, with PowerShell required in
+that Windows job. No product validation semantic or acceptance level changes. Source-built
+KI-028 diagnostics retain their distinct provenance. Procedure: TESTING's pluginval section.
+
 ## Current status
 
 **P1–P5 in the tree (updated 2026-08-02; this section had read "TODO (no code yet)" since P0 —

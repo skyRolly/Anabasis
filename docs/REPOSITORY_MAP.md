@@ -46,6 +46,18 @@ documentation class restates the legal class and Anabasis has none to restate. T
 **owner-legal half** (`EULA.md`, `PRIVACY.md`, `TRADEMARKS.md`) remains absent: its wording is
 owner-supplied (C8) and gated with OQ-002/OQ-009 — inventing it would violate constraint C7.
 
+## pluginval acquisition scripts
+
+- `scripts/pluginval-release.json`: the single exact ordinary-release authority, with official
+  assets, lengths and archive/executable SHA-256 values.
+- `scripts/acquire-pluginval.py`: shared Python standard-library preparation for shell and
+  PowerShell wrappers; digest liveness, safe private staging and full extracted-tree verification.
+- `scripts/test-pluginval-acquisition.py`: offline inert ZIP/refusal regressions and real wrapper
+  setup with counting invocation boundaries, in source-lint, preflight and the Windows job.
+- `worklogs/2026-10-28-pluginval-acquisition.md`: first-party copy provenance, independent
+  archive measurements and alternatives. The existing KI-028 diagnostic source build remains
+  independent of ordinary release acquisition.
+
 ## `src/` — layout (P1 skeleton in the tree; stages marked P2+ are not yet implemented)
 
 | Path | Responsibility |

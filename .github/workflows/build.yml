@@ -432,6 +432,9 @@ jobs:
 
       - name: Portability lint self-test (the lint still fires, and still stays quiet)
         run: python3 scripts/check-portability.py --self-test
+      - name: pluginval acquisition offline regressions
+        run: python3 scripts/test-pluginval-acquisition.py
+
       - name: Citation-gate self-test (recognition, mapping and rewriting)
         run: python3 scripts/check-citations.py --self-test
       # The THIRD realtime tier (ADR-0029), and the only one that needs no build
@@ -1647,6 +1650,9 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: pluginval acquisition offline regressions (PowerShell required)
+        run: python scripts/test-pluginval-acquisition.py --require-powershell
 
       # Default Visual Studio generator (multi-config); MSVC is auto-detected.
       #
