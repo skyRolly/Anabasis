@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Offline acquisition regressions. ZIP contents are data and are never executed."""
-# Provenance: Anamorph scripts/test-pluginval-acquisition.py:1-347 @ 5a62738e8afca9d76d3b9bcf672513d45adb9997.
+# Provenance: Anamorph scripts/test-pluginval-acquisition.py:1-355 @ 21b61fb91c7f8b151ee2f95747424d1512ac2895.
 # Copy/adapt under ADR-0009. Adaptation: Product name and optional discovery-helper copy match Anabasis wrappers.
 # Anamorph remains a read-only reference from this repository.
 

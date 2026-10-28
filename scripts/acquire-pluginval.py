@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Prepare the content-locked release tool; never execute it. Standard library only."""
-# Provenance: Anamorph scripts/acquire-pluginval.py:1-275 @ 5a62738e8afca9d76d3b9bcf672513d45adb9997.
+# Provenance: Anamorph scripts/acquire-pluginval.py:1-278 @ 21b61fb91c7f8b151ee2f95747424d1512ac2895.
 # Copy/adapt under ADR-0009. Adaptation: None; independent first-party helper copy.
 # Anamorph remains a read-only reference from this repository.
 

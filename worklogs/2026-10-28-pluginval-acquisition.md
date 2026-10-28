@@ -4,7 +4,8 @@
 
 The owner authorized the same acquisition follow-up separately in Anabasis after Anamorph.
 Base: `4a13d02ad11529cd5805007fa5436557b99db4f8`. First-party reference:
-Anamorph `5a62738e8afca9d76d3b9bcf672513d45adb9997` (PR #181).
+Anamorph `21b61fb91c7f8b151ee2f95747424d1512ac2895` (PR #181), including the
+interrupted HTTP/decompression setup-error refinement and its regression.
 `scripts/acquire-pluginval.py` is copied with a provenance header; the test copy adapts only
 product naming and optional discovery-helper copying. `scripts/pluginval-release.json` copies
 the inspected release inventory, independently rehashed again before this repository's commit.
