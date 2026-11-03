@@ -1,5 +1,9 @@
 # CI_CD.md
 
+The [JUCE 9.0.5 review packet](../../worklogs/2026-11-04-juce-905-review.md) separates
+the captured 9.0.4 baseline CI from unexecuted target validation. Proposed ADR-0051
+does not change workflows, gates or dependency defaults; target native results remain pending.
+
 Continuous integration / delivery. Source of truth: `.github/workflows/`.
 
 

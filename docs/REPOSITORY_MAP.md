@@ -241,3 +241,13 @@ index is the decision-status and effectivity authority.
 |---|---|
 | `scripts/test-workflow-routing.py` | Production Build/Release expression and needs selection, with same-run valid and seeded skipped-Release liveness controls before the real check. No dispatch or installer. |
 | `scripts/test-macos-integration-review.py` | Optional seven selections and real two-product co-installation from independently identified artifacts; native PackageInfo/Distribution and staged bundle metadata establish artifact-specific receipt versions before installation. Pure metadata/extraction `--self-test`. |
+
+
+## JUCE 9.0.5 proposal (2026-11-04)
+
+- `docs/architecture/design-decisions/ADR-0051-juce-905-upgrade.md` — Proposed decision; registered locally, not Accepted.
+- [`worklogs/2026-11-04-juce-905-review.md`](../worklogs/2026-11-04-juce-905-review.md) — investigation/review packet and native acceptance worksheet.
+- `worklogs/juce905-review/evidence.json` — source/acquisition/local-check evidence.
+- `worklogs/juce905-review/baseline-ci.json` — captured 9.0.4 baseline jobs/statuses, not target validation.
+
+The worklog/ledgers are supporting investigation evidence under SOURCE_OF_TRUTH, not a new authority class.

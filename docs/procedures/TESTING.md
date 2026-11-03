@@ -1,5 +1,9 @@
 # TESTING.md
 
+The [JUCE 9.0.5 review packet](../../worklogs/2026-11-04-juce-905-review.md) records
+the exact pending comparison/native checklist and executed source/cache checks. Runtime equivalence
+is unverified; Level-5 is **Pending Human Acceptance** and existing 9.0.4 attestations retain their scope.
+
 How to run and interpret the validation suite. Acceptance levels and the hard gate are defined in
 `docs/policies/TESTING_POLICY.md`.
 

@@ -1,5 +1,9 @@
 # BUILD.md
 
+JUCE 9.0.5 is under [Proposed ADR-0051](../architecture/design-decisions/ADR-0051-juce-905-upgrade.md).
+Current defaults remain 9.0.4. The [review packet](../../worklogs/2026-11-04-juce-905-review.md)
+records acquisition checks and missing local development prerequisites; it does not authorize a pin change.
+
 How to configure and build Anabasis. Headless, command-line only (CMake + JUCE; no IDE/Projucer).
 
 > **Status: the build exists** (P1 skeleton, 2026-07-31). `CMakeLists.txt` implements ADR-0008's

@@ -114,6 +114,10 @@ To build without network (JUCE already on disk):
 
 ## Documentation
 
+The [JUCE 9.0.5 review packet](worklogs/2026-11-04-juce-905-review.md) supports
+[Proposed ADR-0051](docs/architecture/design-decisions/ADR-0051-juce-905-upgrade.md).
+It is investigation evidence outside the authority classes; the configured dependency remains 9.0.4 pending human Architecture Review.
+
 Ordinary validator acquisition provenance and offline limits are recorded in the
 [pluginval acquisition worklog](worklogs/2026-10-28-pluginval-acquisition.md), supporting evidence
 outside the documentation authority classes; the dependency policy owns the upgrade procedure.

@@ -183,3 +183,9 @@ The acquisition record `worklogs/2026-10-28-pluginval-acquisition.md` is support
 outside the documentation authority classes: measured release bytes, first-party copy provenance,
 alternatives and offline limits. The committed release/content lock and implementation govern
 ordinary tool preparation; the record does not confer manual acceptance or platform CI results.
+
+
+The [JUCE 9.0.5 investigation](../worklogs/2026-11-04-juce-905-review.md) and
+`worklogs/juce905-review/` ledgers are supporting evidence for **Proposed ADR-0051**.
+They do not approve a dependency/build change or replace native/Level-5 acceptance.
+The current pin remains JUCE 9.0.4 until the human Architecture Review permits implementation.

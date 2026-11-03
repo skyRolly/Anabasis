@@ -8123,3 +8123,15 @@ remain. A POSIX shell AST comparison retains quoted/bootstrap/here-document data
 and proves unchanged executable structure, with valid and rejecting controls.
 No prose-mirroring unit test or installer execution on a developer host is used.
 The existing release procedure records scope and evidence-reuse boundaries.
+
+
+## JUCE 9.0.5 review packet — 2026-11-04 (Asia/Shanghai)
+
+Register Proposed ADR-0051; add the independent upstream/source/licensing/cache/CI review,
+validation limitations and exact Pending Human Acceptance worksheet in `worklogs/2026-11-04-juce-905-review.md`
+and its source/baseline ledgers. Synchronize README, repository map, source-of-truth, dependency
+policy and build/CI/testing navigation. Current 9.0.4 declarations, NOTICE/licence inventory,
+historical decisions/attestations, tests, workflow gates, product version and release records
+remain factual and unchanged. No changelog entry claims an unimplemented upgrade. Architecture
+approval is required before pin/cache/source modifications; target DSP/state/native validation
+is unexecuted because configuration is blocked on missing Linux development prerequisites.

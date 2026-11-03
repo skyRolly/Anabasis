@@ -231,3 +231,14 @@ Namespace generation audit (2026-10-23, Accepted ADR-0048; final approval record
 BUNDLE_ID controls CFBundleIdentifier and unused framework/AAX/ARA defaults; AU component codes
 and the configured non-VST2-compatible VST3 class IDs are independent. Generated/native gates
 verify that distinction; no dependency or format is added.
+
+
+## Pending JUCE 9.0.5 proposal — 2026-11-04
+
+[Proposed ADR-0051](../architecture/design-decisions/ADR-0051-juce-905-upgrade.md) selects
+`d60b7a78030661574a615b586d9325ba7a7fa7dd` for human Architecture Review.
+The [review packet](../../worklogs/2026-11-04-juce-905-review.md) records upstream/security/licensing
+findings, current-cache checks, missing build prerequisites and Pending Human Acceptance.
+**Current dependency remains 9.0.4; no implementation or rule-2 completion is claimed.**
+Approval must precede pin/cache/build modifications. Existing upgrade requirements and commercial
+distribution decisions remain binding; the proposal does not append a completed-upgrade compliance row.
