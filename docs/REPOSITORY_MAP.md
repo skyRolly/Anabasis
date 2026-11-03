@@ -245,9 +245,14 @@ index is the decision-status and effectivity authority.
 
 ## JUCE 9.0.5 proposal (2026-11-04)
 
-- `docs/architecture/design-decisions/ADR-0051-juce-905-upgrade.md` — Proposed decision; registered locally, not Accepted.
+- `docs/architecture/design-decisions/ADR-0051-juce-905-upgrade.md` — Accepted decision under owner approval; implementation remains on its unmerged branch.
 - [`worklogs/2026-11-04-juce-905-review.md`](../worklogs/2026-11-04-juce-905-review.md) — investigation/review packet and native acceptance worksheet.
 - `worklogs/juce905-review/evidence.json` — source/acquisition/local-check evidence.
 - `worklogs/juce905-review/baseline-ci.json` — captured 9.0.4 baseline jobs/statuses, not target validation.
 
 The worklog/ledgers are supporting investigation evidence under SOURCE_OF_TRUTH, not a new authority class.
+
+`cmake/VerifyJuceSource.cmake` records the actual FetchContent checkout HEAD and refuses
+a mismatched immutable SHA; local-checkout comparisons retain their separate branch.
+`worklogs/juce905-review/implementation.json` and `citation-map.json` retain approved execution
+and upstream-coordinate evidence; these ledgers do not establish manual acceptance.

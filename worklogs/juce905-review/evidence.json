@@ -724,5 +724,6 @@
   "not_applicable_existing_targets": [
     "No normal TSan CI job",
     "No normal fuzz target"
-  ]
+  ],
+  "record_scope": "Original proposal-stage snapshot before owner ADR approval; current implementation status is in implementation.json"
 }

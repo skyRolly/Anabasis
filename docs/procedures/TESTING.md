@@ -29,12 +29,12 @@ exploits or unrelated fuzz campaigns are part of these checks.
 
 ## Headless self-tests
 
-## JUCE cache migration regression (ADR-0047)
+## JUCE cache migration regression (ADR-0047, extended by ADR-0051)
 
-Run `python3 tests/juce_cache_tests.py` with CMake, Ninja and a C/C++ compiler available.
+Run `python3 tests/juce_cache_tests.py` with CMake, Ninja, Git and a C/C++ compiler available.
 The test configures the real top-level build with a local dependency stand-in and stops at
-that boundary: no JUCE download or compilation. It verifies fresh/repeated 9.0.4 selection,
-rejection of both old default pins (including mixed or partially reset fields), successful
+that boundary: no JUCE download or compilation. It verifies fresh/repeated 9.0.5 selection,
+rejection of the 9.0.0/9.0.1/9.0.4 default pins (including mixed or partially reset fields), successful
 two-field reset, retained custom overrides and an intentional older local checkout. It also
 uses paths containing spaces. The `linux` CI job runs it before normal configuration.
 
@@ -1090,3 +1090,13 @@ outcomes remain separate; see `worklogs/2026-10-25-normal-validation.md` and
 `docs/architecture/design-decisions/ADR_INDEX.md`. No native result is inferred
 from approval or relabeled by this documentation-only correction. GUI/DAW,
 genuine older-installer upgrades and Icon Composer remain separate acceptance.
+
+
+## JUCE 9.0.5 source identity check
+
+`tests/juce_cache_tests.py` also exercises the actual FetchContent boundary with genuine local
+git fixtures. A mismatched immutable checkout must fail in `cmake/VerifyJuceSource.cmake`; a
+matching custom SHA must be reported before the deliberately minimal fixture reaches the later
+missing-JUCE-function error. Bypassing the real check fails the mismatch test. No framework
+download or product build is required for these controls. Normal CI configuration records actual
+source HEAD; explicit product local-path overrides retain intentional old/new comparisons.

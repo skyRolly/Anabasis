@@ -12,11 +12,12 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "9.0.4"
-TAG = "3fb5cbc0340758596dac39f7c8de47d562b4896e"
+VERSION = "9.0.5"
+TAG = "d60b7a78030661574a615b586d9325ba7a7fa7dd"
 PREVIOUS = {
     "9.0.0": "f8f8864172464b9adf9eba6101e1f784838d1597",
     "9.0.1": "e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8",
+    "9.0.4": "3fb5cbc0340758596dac39f7c8de47d562b4896e",
 }
 MARKER = "ANABASIS_JUCE_CACHE_PROBE_REACHED"
 
@@ -64,7 +65,7 @@ class JuceCacheTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertNotIn(MARKER, result.stdout)
         self.assertIn("stale JUCE cache", result.stdout)
-        self.assertIn("this tree pins JUCE 9.0.4", result.stdout)
+        self.assertIn("this tree pins JUCE 9.0.5", result.stdout)
         self.assertIn(
             "-UANABASIS_JUCE_TAG -UANABASIS_JUCE_VERSION",
             " ".join(result.stdout.split()),
@@ -111,9 +112,42 @@ class JuceCacheTests(unittest.TestCase):
         self.assert_selected(self.configure(), "custom-version", "custom-pin")
 
     def test_local_checkout_allows_intentional_old_pin_comparison(self):
-        self.seed_cache("9.0.1", PREVIOUS["9.0.1"])
+        self.seed_cache("9.0.4", PREVIOUS["9.0.4"])
         self.assert_selected(self.configure(f"-DANABASIS_JUCE_PATH={self.juce}"),
-                             "9.0.1", PREVIOUS["9.0.1"])
+                             "9.0.4", PREVIOUS["9.0.4"])
+
+    def test_existing_904_cache_is_refused_before_dependency_boundary(self):
+        self.seed_cache("9.0.4", PREVIOUS["9.0.4"])
+        self.assert_stale(self.configure())
+
+
+    def source_checkout(self):
+        (self.juce / "CMakeLists.txt").write_text("# Minimal git checkout for source provenance\n")
+        for args in (("init", "--quiet"), ("add", "CMakeLists.txt"),
+                     ("-c", "user.name=Cache Test", "-c", "user.email=cache-test@example.invalid",
+                      "commit", "--quiet", "-m", "fixture")):
+            subprocess.run(["git", "-C", str(self.juce), *args], check=True,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return subprocess.check_output(
+            ["git", "-C", str(self.juce), "rev-parse", "HEAD"], text=True).strip()
+
+    def test_fetched_source_must_match_immutable_pin(self):
+        actual = self.source_checkout()
+        result = self.configure()
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("JUCE source HEAD " + actual, " ".join(result.stdout.split()))
+        self.assertIn("does not match immutable pin " + TAG, " ".join(result.stdout.split()))
+        self.assertNotIn("verified JUCE source HEAD", result.stdout)
+
+    def test_matching_custom_immutable_source_is_verified(self):
+        actual = self.source_checkout()
+        result = self.configure("-DANABASIS_JUCE_TAG=" + actual,
+                                "-DANABASIS_JUCE_VERSION=custom-version")
+        # The minimal checkout has no JUCE plugin CMake functions; reaching their
+        # later error proves the provenance gate admitted this real custom SHA.
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn("verified JUCE source HEAD " + actual, result.stdout)
+        self.assertNotIn("does not match immutable pin", result.stdout)
 
 
 if __name__ == "__main__":

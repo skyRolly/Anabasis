@@ -6,7 +6,7 @@ Repository Governance Policy. Third-party dependency locking and upgrade safety.
 
 | Dependency | Pin | Mechanism | Status |
 |---|---|---|---|
-| **JUCE** | **9.0.4**, pinned by the tag's **IMMUTABLE commit SHA** `3fb5cbc0340758596dac39f7c8de47d562b4896e` | CMake `FetchContent` (`GIT_SHALLOW`), overridable via `-DANABASIS_JUCE_PATH`; previous default caches fail before fetching until both fields are reset | Original pin: OQ-001 / ADR-0008; 9.0.1: ADR-0028; **9.0.4: ADR-0047**, on the owner's upgrade directive (compliance log below) |
+| **JUCE** | **9.0.5**, pinned by the tag's **IMMUTABLE commit SHA** `d60b7a78030661574a615b586d9325ba7a7fa7dd` | CMake `FetchContent` (`GIT_SHALLOW`), overridable via `-DANABASIS_JUCE_PATH`; previous default caches fail before fetching until both fields are reset | Original pin: OQ-001 / ADR-0008; 9.0.1: ADR-0028; **9.0.5: ADR-0051**, on the owner's upgrade directive (compliance log below) |
 | **pluginval** | Exact ordinary release and content hashes in `scripts/pluginval-release.json` | Both wrappers call `scripts/acquire-pluginval.py` (Python standard library) | Implemented; full archive and extracted-tree verification, offline refusal regressions and per-invocation digest liveness |
 | **C++ standard** | **C++23** | `CMAKE_CXX_STANDARD 23` (a hard `set()`, not a cache variable — an override must fail rather than configure), `CMAKE_CXX_STANDARD_REQUIRED ON`, `CMAKE_CXX_EXTENSIONS OFF` | `DEVELOPMENT_BRIEF.md` §2.1 set 20 with a canary; **ADR-0030, 2026-08-22** raised the baseline, removed the `ANABASIS_CXX_STANDARD` seam and retired the canary job, closing OQ-006 |
 | **Clang (Linux CI)** | **major 22**, the newest major apt.llvm.org ships as a RELEASE for noble | `ANABASIS_CLANG_VERSION` in `.github/workflows/build.yml`; installed by `scripts/setup-llvm-apt.sh` from apt.llvm.org, signing key pinned by identity | **ADR-0031, 2026-08-22.** **ADR-0037, 2026-08-30** examined 23 and HELD: LLVM 23.1.0 is released and every gate passes on it, but apt.llvm.org's noble suite builds `clang-23` from a `release/23.x` commit that still carries `LLVM_VERSION_SUFFIX -rc3` — an unreleased build whose reported version says `23.1.0`. `setup-llvm-apt.sh` now asserts the package was built from the release tag's commit, so this cannot pass unnoticed again. Not a Dependabot ecosystem; maintained by this row and those ADRs. Ubuntu's own archives stop two majors short and ship no `libclang_rt.rtsan`, which the `realtime` job cannot run without |
@@ -90,7 +90,7 @@ copy provenance and alternatives are in `worklogs/2026-10-28-pluginval-acquisiti
   reproducible and keeps audited behaviour stable.
   Two cache variables carry it: `ANABASIS_JUCE_VERSION` (human-readable) and `ANABASIS_JUCE_TAG`
   (the SHA).
-  Since ADR-0047, either cached field from the previous Anabasis defaults (9.0.0/9.0.1) is
+  Since ADR-0047, either cached field from the previous Anabasis defaults (9.0.0/9.0.1/9.0.4) is
   rejected before fetching, because changing a CACHE default cannot migrate an existing
   build directory. Reset both fields with
   `cmake -S . -B build -UANABASIS_JUCE_TAG -UANABASIS_JUCE_VERSION`, then rebuild. Custom
@@ -129,9 +129,10 @@ copy provenance and alternatives are in `worklogs/2026-10-28-pluginval-acquisiti
   between them is again impossible by construction, and the shared-audit and transferable-audition
   properties hold. The obligation ADR-0028 carried is discharged by the sibling's own move; the
   family rule stands for the next bump.
-  **Current family pin (ADR-0047):** Anabasis moves to 9.0.4 / `3fb5cbc…`, the revision already
-  pinned by the read-only Anamorph reference's `CMakeLists.txt`. The previous paragraphs are
-  dated history; this upgrade restores convergence after Anamorph's subsequent point upgrades.
+  **Current upgrade-branch family pin (ADR-0051):** Anabasis pins 9.0.5 / `d60b7a7…`;
+  the independently approved Anamorph ADR-0071 branch selects the same commit. Both main
+  branches still carry their separately reviewed 9.0.4 baseline until their own PRs merge.
+  The previous paragraphs describe dated dependency history.
 - **C++23 is the baseline since ADR-0030 (0.2.0), and modules are still not used** — they remain a
   build-system liability in plugin projects, which is the half of ADR-0008 decision B5 that ADR-0030
   did NOT supersede. The **library** rule is unchanged and still binds: a C++23 library feature
@@ -167,7 +168,14 @@ copy provenance and alternatives are in `worklogs/2026-10-28-pluginval-acquisiti
    lines without breaking a single call, so nothing fails and the reasoning quietly stops holding.
    The register, to be walked after every bump:
 
-   **Walked again for 9.0.4 (ADR-0047).** The component, mouse, modal-manager, tooltip, button,
+   **Walked for 9.0.5 (ADR-0051, 2026-11-04).** APVTS, message-lock, GL-context, button,
+   mouse-source, modal-manager, ComboBox/TextEditor and attachment assumptions retain their
+   source basis. Parented menu look-and-feel binding, child append, modal entry and completion
+   deletion remain; `preparePopupMenuWindow` is now line 511. Native peer association, pointer
+   retargeting and parented menu transparency change and require native acceptance. Source map
+   and evidence: `worklogs/2026-11-04-juce-905-review.md` and its `juce905-review/` ledgers.
+
+   **Dated 9.0.4 walk (ADR-0047).** The component, mouse, modal-manager, tooltip, button,
    look-and-feel, ComboBox and TextEditor implementation files remain byte-identical from
    9.0.1. PopupMenu changes keyboard navigation and accessibility, while its parented
    look-and-feel selection, child insertion, modal entry and deletion paths remain intact;
@@ -233,12 +241,18 @@ and the configured non-VST2-compatible VST3 class IDs are independent. Generated
 verify that distinction; no dependency or format is added.
 
 
-## Pending JUCE 9.0.5 proposal — 2026-11-04
 
-[Proposed ADR-0051](../architecture/design-decisions/ADR-0051-juce-905-upgrade.md) selects
-`d60b7a78030661574a615b586d9325ba7a7fa7dd` for human Architecture Review.
-The [review packet](../../worklogs/2026-11-04-juce-905-review.md) records upstream/security/licensing
-findings, current-cache checks, missing build prerequisites and Pending Human Acceptance.
-**Current dependency remains 9.0.4; no implementation or rule-2 completion is claimed.**
-Approval must precede pin/cache/build modifications. Existing upgrade requirements and commercial
-distribution decisions remain binding; the proposal does not append a completed-upgrade compliance row.
+## JUCE 9.0.5 implementation — 2026-11-04
+
+**Accepted ADR-0051; owner approval: “approve ADR / dont merge PR”.**
+The immutable pin is `d60b7a78030661574a615b586d9325ba7a7fa7dd`; stale 9.0.4
+cache fields are refused alongside previous defaults. Custom pins/local comparisons and all codec
+exclusions remain. Current cache tests: 9 passing; the new old-cache test fails on baseline CMake
+for reaching the dependency boundary. Full automated evidence and remaining limitations are
+recorded in [the implementation worklog](../../worklogs/2026-11-04-juce-905-review.md).
+**Level-5 remains Pending Human Acceptance.** No merge or release approval is granted.
+
+FetchContent-only `cmake/VerifyJuceSource.cmake` reports actual Git HEAD and refuses an
+immutable SHA mismatch, including disconnected/stale source reuse. Its genuine local Git
+positive/negative regression cases run in the same cache suite; local-path comparisons bypass
+this guard and named custom revisions retain their resolution behavior.

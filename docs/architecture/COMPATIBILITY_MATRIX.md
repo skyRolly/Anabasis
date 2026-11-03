@@ -1,5 +1,10 @@
 # COMPATIBILITY_MATRIX.md
 
+JUCE 9.0.5 implementation is approved under ADR-0051 (owner: “approve ADR / dont merge PR”,
+2026-11-04). The upgrade branch selects `d60b7a78030661574a615b586d9325ba7a7fa7dd`;
+[validation and pending human acceptance](../../worklogs/2026-11-04-juce-905-review.md) are source-bound.
+Existing release/host attestations below retain their original dependency/artifact scope.
+
 What Anabasis is claimed to run on, at what confidence, with the evidence per claim — and,
 for the rows no headless gate can prove, the target list the **post-v0.1.0 DAW-matrix
 audition** records its results against (`HANDOVER.md` Pending Tasks item (b); this document
@@ -106,7 +111,7 @@ depth for the audition. Results, when they exist, belong in this table with per-
 
 | Dependency | Pin | Status | Evidence |
 |---|---|---|---|
-| JUCE | **9.0.4** — immutable commit `3fb5cbc0340758596dac39f7c8de47d562b4896e` (FetchContent + `GIT_SHALLOW`); the read-only Anamorph reference pins the same commit | **Verified for the pin** | `CMakeLists.txt` (`ANABASIS_JUCE_TAG`); ADR-0047 and its verification limits; ADR-0008/OQ-001 for the original pin |
+| JUCE | **9.0.5** — immutable commit `d60b7a78030661574a615b586d9325ba7a7fa7dd` (FetchContent + `GIT_SHALLOW`); the read-only Anamorph reference pins the same commit | **Verified for the pin** | `CMakeLists.txt` (`ANABASIS_JUCE_TAG`); ADR-0051 and its verification limits; ADR-0008/OQ-001 for the original pin |
 | C++ standard | **C++23** baseline; the cache seam and the separate canary were removed by ADR-0030 | **Verified** | `CMakeLists.txt` (`CMAKE_CXX_STANDARD 23`); ADR-0030 |
 | pluginval | Exact ordinary release/content lock, verified archive and full extracted tree | **Verified** | `scripts/pluginval-release.json`; `scripts/acquire-pluginval.py`; independent source-built KI-028 provenance in `DEPENDENCY_POLICY.md` |
 

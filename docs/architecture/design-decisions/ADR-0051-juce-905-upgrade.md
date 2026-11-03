@@ -1,9 +1,11 @@
-# ADR-0051 — Propose JUCE 9.0.4 → 9.0.5
+# ADR-0051 — JUCE 9.0.4 → 9.0.5
 
-**Status:** Proposed — 2026-11-04 (Asia/Shanghai). **Pending Human Architecture Review;
-implementation has not begun.** The assignment selects JUCE 9.0.5 and permits investigation
-and separate PR preparation subject to governance; it explicitly does not waive architecture
-approval. Accepted ADR-0047 remains the current dependency decision.
+**Status:** Accepted — 2026-11-04 (Asia/Shanghai), on the owner's explicit reply
+“approve ADR / dont merge PR” to the approval request for ADR-0051 and Anamorph ADR-0071.
+This clears the Architecture Review Gate for the scoped implementation below. It does not
+approve PR merge, release publication or unperformed manual acceptance. Proposed earlier
+the same day; the original investigation and unavailable-build observations remain history.
+Amends ADR-0047's current dependency pin and ADR-0008's pin reference only.
 
 ## Context
 
@@ -12,8 +14,8 @@ no open PRs before the assignment. Application version **0.2.17** stays unchange
 
 | Identity | Version | Immutable commit |
 |---|---|---|
-| Current, Accepted ADR-0047 | 9.0.4 | `3fb5cbc0340758596dac39f7c8de47d562b4896e` |
-| Proposed target | 9.0.5 | `d60b7a78030661574a615b586d9325ba7a7fa7dd` |
+| Baseline, Accepted ADR-0047 | 9.0.4 | `3fb5cbc0340758596dac39f7c8de47d562b4896e` |
+| Target of this decision | 9.0.5 | `d60b7a78030661574a615b586d9325ba7a7fa7dd` |
 
 Official lightweight tags, clean detached source trees, project/module versions and the
 2026-11-02 official release corroborate the target. Evidence is retained independently in
@@ -41,12 +43,12 @@ ADR-0047's earlier approval is not approval of this proposal.
 3. Only replace defaults or force cached values: rejected; silently retains old dependencies or
    overwrites deliberate custom pins.
 4. Preserve the existing FetchContent/local-path model and codec definition list, extend stale
-   default rejection, and pin the exact target commit: **proposed**. Keep `GIT_SHALLOW` unless a
+   default rejection, and pin the exact target commit: **chosen under owner approval**. Keep `GIT_SHALLOW` unless a
    supported configuration demonstrates a failure requiring a separately reviewed correction.
 
-## Proposed decision and implementation scope
+## Decision and implementation scope
 
-- After approval, update `ANABASIS_JUCE_VERSION` and `ANABASIS_JUCE_TAG` to the target pair.
+- Update `ANABASIS_JUCE_VERSION` and `ANABASIS_JUCE_TAG` to the target pair under the owner's approval.
 - Add both 9.0.4 fields to the top-level cache rejection, retaining 9.0.0/9.0.1 protection,
   two-field reset instructions, custom pins and `ANABASIS_JUCE_PATH`. Update the existing
   dependency-boundary regression for old/reused/partial/mixed caches and intentional local
@@ -122,10 +124,9 @@ The worklog contains the exact worksheet. Old approvals do not accept JUCE 9.0.5
 
 ## Consequences and rollback
 
-This proposal changes no current dependency or production behavior. A human may approve the
-scoped implementation independently of manual acceptance, integration and release decisions.
-Only after approval/implementation will this amend ADR-0047's current pin and ADR-0008's pin
-reference; the remaining Accepted contracts retain their force.
+The owner approved the scoped implementation independently of manual acceptance, integration
+and release decisions. This branch amends ADR-0047's current pin and ADR-0008's pin reference;
+all other Accepted contracts retain their force. Integration on main awaits PR review.
 
 If a compatibility/ceiling/latency/macro contract differs, stop the affected implementation at
 its gate and preserve evidence. Before integration, withdraw or revert the branch implementation.
@@ -142,3 +143,15 @@ revalidate. Do not roll release tags/assets or touch the sibling's source.
 definition sites and recorded tool exits. **Unverified:** target numerical/state/host equality,
 full native target matrix and human acceptance. Anamorph is a read-only reference from this
 repository; its independently owned ADR-0071 is a sibling proposal, not this ADR's authority.
+
+
+## Approved implementation continuation — 2026-11-04
+
+The pin/cache change is implemented on the unmerged branch. `cmake/VerifyJuceSource.cmake`
+prints the actual fetched Git HEAD and fails if an immutable pin resolves to a different checkout;
+custom named revisions and the documented local-path comparison remain supported. The existing
+cache harness tests both a genuine mismatched git checkout and a matching custom SHA, in addition
+to old-cache/refusal/reset cases. Current runtime evidence and explicit pending gates are retained
+in the implementation continuation of the worklog and `worklogs/juce905-review/implementation.json`.
+No PR merge, product version change, release operation or manual acceptance is authorized by this
+implementation record. Existing proposal-stage missing-header measurements remain dated history.

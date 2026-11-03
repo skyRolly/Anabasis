@@ -1,8 +1,8 @@
 # CI_CD.md
 
 The [JUCE 9.0.5 review packet](../../worklogs/2026-11-04-juce-905-review.md) separates
-the captured 9.0.4 baseline CI from unexecuted target validation. Proposed ADR-0051
-does not change workflows, gates or dependency defaults; target native results remain pending.
+the captured 9.0.4 baseline CI from unexecuted target validation. Accepted ADR-0051
+changes the pin and cache checks while preserving workflow gates; source-bound target results are recorded separately.
 
 Continuous integration / delivery. Source of truth: `.github/workflows/`.
 
@@ -100,7 +100,7 @@ future `release.yml` can reuse the whole matrix with identical gates — tag pus
 
 ## Build matrix
 
-JUCE is pinned to **9.0.4** by ADR-0047. The `linux` job runs
+JUCE is pinned to **9.0.5** by ADR-0051. The `linux` job runs
 `python3 tests/juce_cache_tests.py` before its ordinary configure step; the test uses a local
 FetchContent stand-in to verify migration from old default caches without network access.
 The existing self-test, pluginval (both modes ×3), platform, sanitizer and realtime gates

@@ -8135,3 +8135,14 @@ historical decisions/attestations, tests, workflow gates, product version and re
 remain factual and unchanged. No changelog entry claims an unimplemented upgrade. Architecture
 approval is required before pin/cache/source modifications; target DSP/state/native validation
 is unexecuted because configuration is blocked on missing Linux development prerequisites.
+
+
+## JUCE 9.0.5 owner-approved implementation — 2026-11-04
+
+The owner accepted ADR-0051 with the explicit instruction “approve ADR / dont merge PR”.
+Update the pin, stale-cache protection and regression cases, current dependency/provenance and
+attribution homes, live JUCE citations, architecture/build/CI/testing/compatibility navigation
+and changelog. Product versions/identities and DSP/state/latency/codec/compiler contracts remain.
+The original proposal and missing-outer-header observations are dated history; isolated Docker
+validation now supplies Linux prerequisites. Record actual runtime/CI outcomes in the worklog
+and implementation ledger; retain all unexecuted manual/native cases as pending.
