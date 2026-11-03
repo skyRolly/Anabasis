@@ -8146,3 +8146,14 @@ and changelog. Product versions/identities and DSP/state/latency/codec/compiler 
 The original proposal and missing-outer-header observations are dated history; isolated Docker
 validation now supplies Linux prerequisites. Record actual runtime/CI outcomes in the worklog
 and implementation ledger; retain all unexecuted manual/native cases as pending.
+
+
+## JUCE 9.0.5 executed comparison evidence
+
+Record exact source identities, equivalent flags, real cache migration, minimum-CMake checks,
+compiled components, cross-version session/parameter/renders and complete channel/engine comparisons
+in the upgrade packet. Register its independent session probe/helper and timestamped target CI
+snapshot through the repository map. Testing, attribution and ADR records describe observed results;
+source-head memcheck/AU-randomise cancellations and final-head CI remain explicit. Existing human
+attestations retain their version scope; new Level-5/native acceptance stays pending. No fixtures,
+tolerances, codec definitions, product versions, graph, latency or CI gates change.

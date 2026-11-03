@@ -1,8 +1,9 @@
 # TESTING.md
 
 The [JUCE 9.0.5 review packet](../../worklogs/2026-11-04-juce-905-review.md) records
-the exact pending comparison/native checklist and executed source/cache checks. Runtime equivalence
-is unverified; Level-5 is **Pending Human Acceptance** and existing 9.0.4 attestations retain their scope.
+the executed old/new comparisons and remaining native/CI checklist. Linux GCC 14 session renders
+are bit-identical; complete channel/engine probe outputs agree. Source-head CI cancellations and
+final-head checks remain explicit. Level-5 is **Pending Human Acceptance**; 9.0.4 attestations retain their scope.
 
 How to run and interpret the validation suite. Acceptance levels and the hard gate are defined in
 `docs/policies/TESTING_POLICY.md`.

@@ -15,8 +15,8 @@ inventory are adapted from `Anamorph:THIRD_PARTY_LICENSES.md`. The **findings ar
 copied**: every row below was re-verified against this repository's own pinned JUCE tree and
 its own build objects, exactly because "an inventory copied from another project is not
 evidence" (`RELEASE_POLICY.md`, constraint C7). The resulting component set still matches the
-sibling's — a result, not an assumption. **ADR-0047 restores the shared JUCE 9.0.4 pin** with
-the read-only Anamorph reference. Anabasis explicitly disables the newly enabled MP3, Opus and
+sibling's — a result, not an assumption. ADR-0047 restored the shared JUCE 9.0.4 pin. **ADR-0051 preserves convergence at
+JUCE 9.0.5** with the independently approved read-only Anamorph reference. Anabasis explicitly disables the newly enabled MP3, Opus and
 WebP codecs on every plugin/test/tool consumer, preserving its previous compiled component set.
 
 ## How this inventory was produced

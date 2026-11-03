@@ -140,7 +140,7 @@ revalidate. Do not roll release tags/assets or touch the sibling's source.
 `src/dsp/Latency.h`, `src/gui/PluginEditor.cpp`, `src/gui/LookAndFeel.h`, `tools/channel_probe.cpp`,
 `.github/workflows/build.yml`; Accepted ADR-0002/0003/0004/0005/0006/0007/0008/0009/0011/0014/
 0028/0030–0037/0041–0048. **Verified:** remote/tag identities, source/attribution comparisons,
-definition sites and recorded tool exits. **Unverified:** target numerical/state/host equality,
+definition sites and recorded tool exits. **Unverified at proposal time:** target numerical/state/host equality,
 full native target matrix and human acceptance. Anamorph is a read-only reference from this
 repository; its independently owned ADR-0071 is a sibling proposal, not this ADR's authority.
 
@@ -155,3 +155,23 @@ to old-cache/refusal/reset cases. Current runtime evidence and explicit pending 
 in the implementation continuation of the worklog and `worklogs/juce905-review/implementation.json`.
 No PR merge, product version change, release operation or manual acceptance is authorized by this
 implementation record. Existing proposal-stage missing-header measurements remain dated history.
+
+
+## Observed implementation validation — 2026-11-04
+
+Equivalent current source and GCC 14 Release configurations use verified clean old/new JUCE
+checkouts and identical normalized flags across 209 compile commands. Both local suites pass
+795 DSP / 1,638 state checks at each pin. The existing channel probe has identical full output
+(33 scenarios, 112 comparisons, only four declared collapses); engine default/field reproduction
+outputs agree. A 10,531-byte old session re-saves byte-for-byte; both slots' 50 parameter bits,
+metadata, six distinct render hashes and 502/541/1021-sample latencies agree at 44.1/48/96 kHz.
+Local strictness-10 pluginval passes both modes ×3. All eight configured consumers retain the
+codec exclusions; compiled objects and attribution were independently re-verified.
+
+Source-head Linux, Windows, native Intel, both LTO lanes, realtime, MSVC, CodeQL and dependency
+review pass. Apple Silicon AU randomized validation and memcheck were cancelled before completion;
+the sanitizer retry now passes both memchecks; Apple Silicon AU randomized validation and final evidence-head CI remain required.
+The local GCC-14 ABI remains equal but exceeds the unchanged shipping floor; shipping Clang CI
+establishes release ABI. See the timestamped ledger/worklog and live PR checks for final statuses.
+No production compatibility correction was necessary. Manual host/PDC/Level-5/native GUI acceptance
+remains **Pending Human Acceptance**. No merge, release or version change is authorized.

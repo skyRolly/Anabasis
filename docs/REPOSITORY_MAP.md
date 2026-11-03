@@ -243,7 +243,7 @@ index is the decision-status and effectivity authority.
 | `scripts/test-macos-integration-review.py` | Optional seven selections and real two-product co-installation from independently identified artifacts; native PackageInfo/Distribution and staged bundle metadata establish artifact-specific receipt versions before installation. Pure metadata/extraction `--self-test`. |
 
 
-## JUCE 9.0.5 proposal (2026-11-04)
+## JUCE 9.0.5 upgrade (2026-11-04)
 
 - `docs/architecture/design-decisions/ADR-0051-juce-905-upgrade.md` — Accepted decision under owner approval; implementation remains on its unmerged branch.
 - [`worklogs/2026-11-04-juce-905-review.md`](../worklogs/2026-11-04-juce-905-review.md) — investigation/review packet and native acceptance worksheet.
@@ -256,3 +256,7 @@ The worklog/ledgers are supporting investigation evidence under SOURCE_OF_TRUTH,
 a mismatched immutable SHA; local-checkout comparisons retain their separate branch.
 `worklogs/juce905-review/implementation.json` and `citation-map.json` retain approved execution
 and upstream-coordinate evidence; these ledgers do not establish manual acceptance.
+
+The packet also retains `completed-baseline-ci.json`, `target-ci.json` / `target-ci-retry.json`, independent
+`session_probe.cpp` / `build_session_probe.py`, and numerical/ABI/component records in
+`implementation.json`. These are local validation evidence, not shared product modules.
