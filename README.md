@@ -38,8 +38,8 @@ headless Linux machine, no IDE.
   suite COUNT, and this line used to imply it did. The count's home is `docs/HANDOVER.md`'s Test
   Status row, re-counted from the suites' own printed output — and `docs/policies/TESTING_POLICY.md`
   for the gate, which is deliberately stated in one place).
-- **Decided and frozen from the first build:** the JUCE pin (**9.0.4** at commit `3fb5cbc…`;
-  ADR-0047 upgrades 9.0.1 on the owner's directive and restores the shared pin with Anamorph)
+- **Decided and frozen from the first build:** the JUCE pin (**9.0.5** at commit `d60b7a7…`;
+  ADR-0047 records 9.0.1 → 9.0.4; Accepted ADR-0051 records 9.0.4 → 9.0.5)
   and the
   plugin identity (**`RTec` / `Anbs` /
   `tech.rolly.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.
@@ -71,8 +71,8 @@ headless Linux machine, no IDE.
 ## Requirements
 
 - **CMake ≥ 3.22**, a **C++23** compiler (GCC 13+, Clang 17+, MSVC 19.35+, AppleClang 15+ — ADR-0030), **Ninja** (recommended).
-- **JUCE 9.0.4**, fetched automatically by CMake `FetchContent` and pinned to that tag's
-  **immutable commit SHA** `3fb5cbc0340758596dac39f7c8de47d562b4896e` (ADR-0047).
+- **JUCE 9.0.5**, fetched automatically by CMake `FetchContent` and pinned to that tag's
+  **immutable commit SHA** `d60b7a78030661574a615b586d9325ba7a7fa7dd` (ADR-0051).
   Anamorph's reference checkout pins the same commit. Existing 9.0.0/9.0.1 build caches are
   rejected with a reset command; clear both fields before rebuilding:
   `cmake -S . -B build -UANABASIS_JUCE_TAG -UANABASIS_JUCE_VERSION`.
@@ -113,6 +113,12 @@ To build without network (JUCE already on disk):
 `cmake -B build -DANABASIS_JUCE_PATH=/path/to/JUCE ...`
 
 ## Documentation
+
+The [JUCE 9.0.5 review packet](worklogs/2026-11-04-juce-905-review.md) supports
+[Accepted ADR-0051](docs/architecture/design-decisions/ADR-0051-juce-905-upgrade.md).
+It is investigation evidence outside the authority classes; the configured dependency is 9.0.5 under explicit owner Architecture Review approval; Level-5 listening and native/manual acceptance are now **PASS — owner-attested for 9.0.5**,
+recorded 2026-11-04 (Asia/Shanghai). Exact tested payload/environment details were not supplied.
+No merge or release is authorized.
 
 Ordinary validator acquisition provenance and offline limits are recorded in the
 [pluginval acquisition worklog](worklogs/2026-10-28-pluginval-acquisition.md), supporting evidence

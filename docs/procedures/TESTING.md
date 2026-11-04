@@ -1,5 +1,12 @@
 # TESTING.md
 
+The [JUCE 9.0.5 review packet](../../worklogs/2026-11-04-juce-905-review.md) records
+the executed old/new comparisons and remaining native/CI checklist. Linux GCC 14 session renders
+are bit-identical; complete channel/engine probe outputs agree. Source-head CI cancellations and
+final-head checks remain explicit. Level-5 listening and native/manual acceptance are **PASS — newly owner-attested for 9.0.5**,
+recorded 2026-11-04 Asia/Shanghai. Exact tested payload/environment and execution date were not
+supplied; historical 9.0.4 attestations retain their scope.
+
 How to run and interpret the validation suite. Acceptance levels and the hard gate are defined in
 `docs/policies/TESTING_POLICY.md`.
 
@@ -25,12 +32,13 @@ exploits or unrelated fuzz campaigns are part of these checks.
 
 ## Headless self-tests
 
-## JUCE cache migration regression (ADR-0047)
+## JUCE cache migration regression (ADR-0047, extended by ADR-0051)
 
-Run `python3 tests/juce_cache_tests.py` with CMake, Ninja and a C/C++ compiler available.
+Run the 26 cache/source-provenance tests with `python3 tests/juce_cache_tests.py`; CMake, Ninja,
+Git and a C/C++ compiler are required.
 The test configures the real top-level build with a local dependency stand-in and stops at
-that boundary: no JUCE download or compilation. It verifies fresh/repeated 9.0.4 selection,
-rejection of both old default pins (including mixed or partially reset fields), successful
+that boundary: no JUCE download or compilation. It verifies fresh/repeated 9.0.5 selection,
+rejection of the 9.0.0/9.0.1/9.0.4 default pins (including mixed or partially reset fields), successful
 two-field reset, retained custom overrides and an intentional older local checkout. It also
 uses paths containing spaces. The `linux` CI job runs it before normal configuration.
 
@@ -1086,3 +1094,31 @@ outcomes remain separate; see `worklogs/2026-10-25-normal-validation.md` and
 `docs/architecture/design-decisions/ADR_INDEX.md`. No native result is inferred
 from approval or relabeled by this documentation-only correction. GUI/DAW,
 genuine older-installer upgrades and Icon Composer remain separate acceptance.
+
+
+## JUCE 9.0.5 source identity check
+
+`tests/juce_cache_tests.py` also exercises the actual FetchContent boundary with genuine local
+git fixtures. A mismatched immutable checkout must fail in `cmake/VerifyJuceSource.cmake`; a
+matching custom SHA must be reported before the deliberately minimal fixture reaches the later
+missing-JUCE-function error. Bypassing the real check fails the mismatch test. No framework
+download or product build is required for these controls. Normal CI configuration records actual
+source HEAD; explicit product local-path overrides retain intentional old/new comparisons.
+
+
+Explicit archive overrides are admitted with an unverified-identity warning, including without
+Git installed and under an unrelated Git parent. Normal fetched sources without Git identity
+and overrides with broken metadata are rejected. Archive fixtures reach a deliberate
+product-target boundary after the real verifier; a full real-archive configure is recorded in
+`worklogs/juce905-review/review-followup.json`. An archive is not official-pin evidence.
+The check follows JUCE configuration and does not prevent dependency CMake code from executing.
+
+
+JUCE metadata review (ADR-0051): the current 26-test suite includes dangling links,
+unreadable metadata files/directories, invalid links, valid metadata links/worktrees, no-Git
+checkout refusal, literal source paths and an executed post-configuration boundary marker.
+Symlink/permission fixture limitations are explicit unittest skips; POSIX chmod does not prove
+Windows ACL behavior. Original and IS_SYMLINK-only failures are retained in `metadata-review.json`.
+Owner Level-5/native/manual acceptance for 9.0.5 is **PASS — owner-attested**, recorded 2026-11-04
+Asia/Shanghai; exact tested payload/environment and individual observations are not supplied.
+No repeat acceptance is requested. Source-bound automated CI remains independently mandatory.

@@ -185,3 +185,10 @@ step. This maintenance preserves existing translations and synchronizes changed
 wording. It does not alter a command, payload, identity, signing policy or
 installer behavior. Normal applicable native/archive gates remain required for
 each newly produced CI artifact; older artifacts retain their own source hashes.
+
+
+JUCE 9.0.5 review reconciliation (recorded 2026-11-04 Asia/Shanghai): owner Level-5 listening
+and native/manual acceptance are **PASS — owner-attested** for the unmerged upgrade. Exact tested
+payload/source, execution date and environment details were not supplied. This acceptance is
+separate from historical releases and grants no merge/publication permission; current records:
+`worklogs/2026-11-04-juce-905-review.md`. No release object, product version or commercial decision changes.

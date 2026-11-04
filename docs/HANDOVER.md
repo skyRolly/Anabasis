@@ -1,5 +1,11 @@
 # HANDOVER.md
 
+JUCE 9.0.5 is implemented on the unmerged upgrade branch under owner-Accepted ADR-0051.
+Product version and existing release assets are unchanged. The [upgrade worklog](../worklogs/2026-11-04-juce-905-review.md)
+records source-bound automated evidence and the new **PASS — owner-attested** Level-5/native/manual
+acceptance for 9.0.5 (recorded 2026-11-04 Asia/Shanghai). Exact tested payload/environment fields
+were not supplied; merge/release remain unauthorized. Older attestations remain dated history.
+
 **Namespace governance (record updated 2026-10-24, Asia/Shanghai):** ADR-0048 is Accepted
 under explicit final owner approval; its partial amendments of Accepted ADR-0008 and ADR-0021
 are effective. PR #51 is merged as inspected main `626eb9a04d8da37995eb66fcf2c8c1fe986f7989`.
@@ -1547,7 +1553,7 @@ plus `workflow_dispatch`).
 
 | Dependency | Pin | Version-lock reason |
 |---|---|---|
-| **JUCE** | **9.0.4** — immutable commit `3fb5cbc0340758596dac39f7c8de47d562b4896e` (ADR-0047), matching the read-only Anamorph reference | Framework for DSP, parameters/state, GUI and plugin wrappers. Previous default caches are rejected before fetching; all six consumers explicitly exclude unused MP3/Opus/WebP codecs. Upgrade audit, runtime evidence and remaining platform/manual checks: `worklogs/2026-10-21-juce-904-upgrade.md`. A bump remains a Build System change (ADR + Review). |
+| **JUCE** | **9.0.5** — immutable commit `d60b7a78030661574a615b586d9325ba7a7fa7dd` (ADR-0051), matching the independently approved Anamorph upgrade branch | Framework for DSP, parameters/state, GUI and plugin wrappers. Previous default caches are rejected before fetching; all six consumers explicitly exclude unused MP3/Opus/WebP codecs. Upgrade audit, runtime evidence and remaining platform/manual checks: `worklogs/2026-11-04-juce-905-review.md`; Level-5/native manual acceptance is **PASS — newly owner-attested for 9.0.5**, recorded 2026-11-04 Asia/Shanghai; exact tested payload/environment binding is not supplied; merge/release remain unauthorized. Historical 9.0.4 evidence remains in `worklogs/2026-10-21-juce-904-upgrade.md`. A bump remains a Build System change (ADR + Review). |
 | **C++ standard** | **C++23**, hard-set in CMake; separate canary retired | ADR-0030 supersedes the original C++20/canary baseline. Library features retain the feature-test/first-party-abstraction rule. |
 | **pluginval** | Exact ordinary release and content lock in `scripts/pluginval-release.json` | Both wrappers use the shared standard-library preparer with archive/full-tree verification and same-invocation digest liveness. Upgrade/recovery and distinct source-built KI-028 provenance: `DEPENDENCY_POLICY.md`, `TESTING.md`. |
 | Linux system libs | distro (`scripts/setup-linux.sh`) | ALSA/JACK/X11/FreeType/GTK/mesa/**EGL**/xvfb for headless build + validation. |

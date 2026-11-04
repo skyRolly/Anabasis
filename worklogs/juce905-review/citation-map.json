@@ -1,0 +1,18 @@
+[
+  {
+    "product": "Anabasis",
+    "file": "src/PluginProcessor.cpp",
+    "line": 1382,
+    "citation": "juce_CharacterFunctions.h:254-265",
+    "target": "juce_CharacterFunctions.h:254-265",
+    "old_text": null
+  },
+  {
+    "product": "Anabasis",
+    "file": "src/gui/LookAndFeel.h",
+    "line": 222,
+    "citation": "juce_PopupMenu.cpp:515",
+    "target": "juce_PopupMenu.cpp:511",
+    "old_text": null
+  }
+]

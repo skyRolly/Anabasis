@@ -1,0 +1,176 @@
+{
+  "product": "Anabasis",
+  "note": "Read-only initial 9.0.4 baseline snapshot; target validation not claimed",
+  "runs": [
+    {
+      "id": 41624057077,
+      "name": "CodeQL Advanced",
+      "sha": "3eeaef2872cf1dbaecaa1bb9ee7b3fb3f03d8504",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41624057077",
+      "event": "schedule"
+    },
+    {
+      "id": 41400194433,
+      "name": "Microsoft C++ Code Analysis",
+      "sha": "3eeaef2872cf1dbaecaa1bb9ee7b3fb3f03d8504",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41400194433",
+      "event": "schedule"
+    },
+    {
+      "id": 40909467163,
+      "name": "Microsoft C++ Code Analysis",
+      "sha": "3eeaef2872cf1dbaecaa1bb9ee7b3fb3f03d8504",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467163",
+      "event": "push"
+    },
+    {
+      "id": 40909467107,
+      "name": "CodeQL Advanced",
+      "sha": "3eeaef2872cf1dbaecaa1bb9ee7b3fb3f03d8504",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467107",
+      "event": "push"
+    },
+    {
+      "id": 40909467187,
+      "name": "Build & Validate",
+      "sha": "3eeaef2872cf1dbaecaa1bb9ee7b3fb3f03d8504",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187",
+      "event": "push"
+    },
+    {
+      "id": 40889383667,
+      "name": "github_actions in /. - Update #1663293488",
+      "sha": "76c481f026e5d9ea70281b7280c4ece29dfd8dfa",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40889383667",
+      "event": "dynamic"
+    },
+    {
+      "id": 40676822165,
+      "name": "CodeQL Advanced",
+      "sha": "76c481f026e5d9ea70281b7280c4ece29dfd8dfa",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40676822165",
+      "event": "push"
+    },
+    {
+      "id": 40676822248,
+      "name": "Build & Validate",
+      "sha": "76c481f026e5d9ea70281b7280c4ece29dfd8dfa",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40676822248",
+      "event": "push"
+    },
+    {
+      "id": 40603411490,
+      "name": "Build & Validate",
+      "sha": "4a13d02ad11529cd5805007fa5436557b99db4f8",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40603411490",
+      "event": "push"
+    },
+    {
+      "id": 40478587414,
+      "name": "CodeQL Advanced",
+      "sha": "068c0651c0612fe7306c1698340022d911444b0f",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40478587414",
+      "event": "schedule"
+    }
+  ],
+  "jobs": [
+    {
+      "name": "preflight",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187/job/123573169784"
+    },
+    {
+      "name": "docs",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187/job/123573170131"
+    },
+    {
+      "name": "source-lint",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187/job/123573170392"
+    },
+    {
+      "name": "merge-check",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187/job/123573172249"
+    },
+    {
+      "name": "macos-review-selections",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187/job/123573173877"
+    },
+    {
+      "name": "linux-lto-clang",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187/job/123573248005"
+    },
+    {
+      "name": "macos",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187/job/123573248028"
+    },
+    {
+      "name": "realtime",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187/job/123573248078"
+    },
+    {
+      "name": "macos-intel",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187/job/123573248116"
+    },
+    {
+      "name": "linux-lto-tests",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187/job/123573248137"
+    },
+    {
+      "name": "sanitizers",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187/job/123573248216"
+    },
+    {
+      "name": "linux",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187/job/123573248401"
+    },
+    {
+      "name": "windows",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/40909467187/job/123573248407"
+    }
+  ]
+}

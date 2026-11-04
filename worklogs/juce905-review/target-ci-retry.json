@@ -1,0 +1,17 @@
+{
+  "record_scope": "Source implementation bdb7ef21386a562d86eab9a4e742a11db24f05fe, sanitizer retry only. Original cancellations retain their recorded statuses. Mac/final-head validation is separate.",
+  "workflow_run": 41710704478,
+  "attempt": 2,
+  "job_id": 126258975334,
+  "conclusion": "success",
+  "lines": [
+    "2026-11-03T22:51:50.0598455Z -- Anabasis: verified JUCE source HEAD d60b7a78030661574a615b586d9325ba7a7fa7dd at /home/runner/work/Anabasis/Anabasis/build-san/_deps/juce-src",
+    "2026-11-03T22:56:58.1300902Z PASS: 794 checks, 0 failure(s)",
+    "2026-11-03T22:57:16.0831514Z PASS: 1638 checks, 0 failure(s)",
+    "2026-11-03T22:57:46.2657741Z -- Anabasis: verified JUCE source HEAD d60b7a78030661574a615b586d9325ba7a7fa7dd at /home/runner/work/Anabasis/Anabasis/build-vg/_deps/juce-src",
+    "2026-11-03T23:11:57.4384433Z PASS: 790 checks, 0 failure(s)",
+    "2026-11-03T23:11:57.4616780Z ==7156== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)",
+    "2026-11-03T23:31:02.6514426Z PASS: 1638 checks, 0 failure(s)",
+    "2026-11-03T23:31:02.8226718Z ==7285== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)"
+  ]
+}

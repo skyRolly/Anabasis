@@ -8123,3 +8123,59 @@ remain. A POSIX shell AST comparison retains quoted/bootstrap/here-document data
 and proves unchanged executable structure, with valid and rejecting controls.
 No prose-mirroring unit test or installer execution on a developer host is used.
 The existing release procedure records scope and evidence-reuse boundaries.
+
+
+## JUCE 9.0.5 review packet — 2026-11-04 (Asia/Shanghai)
+
+Register Proposed ADR-0051; add the independent upstream/source/licensing/cache/CI review,
+validation limitations and exact Pending Human Acceptance worksheet in `worklogs/2026-11-04-juce-905-review.md`
+and its source/baseline ledgers. Synchronize README, repository map, source-of-truth, dependency
+policy and build/CI/testing navigation. Current 9.0.4 declarations, NOTICE/licence inventory,
+historical decisions/attestations, tests, workflow gates, product version and release records
+remain factual and unchanged. No changelog entry claims an unimplemented upgrade. Architecture
+approval is required before pin/cache/source modifications; target DSP/state/native validation
+is unexecuted because configuration is blocked on missing Linux development prerequisites.
+
+
+## JUCE 9.0.5 owner-approved implementation — 2026-11-04
+
+The owner accepted ADR-0051 with the explicit instruction “approve ADR / dont merge PR”.
+Update the pin, stale-cache protection and regression cases, current dependency/provenance and
+attribution homes, live JUCE citations, architecture/build/CI/testing/compatibility navigation
+and changelog. Product versions/identities and DSP/state/latency/codec/compiler contracts remain.
+The original proposal and missing-outer-header observations are dated history; isolated Docker
+validation now supplies Linux prerequisites. Record actual runtime/CI outcomes in the worklog
+and implementation ledger; retain all unexecuted manual/native cases as pending.
+
+
+## JUCE 9.0.5 executed comparison evidence
+
+Record exact source identities, equivalent flags, real cache migration, minimum-CMake checks,
+compiled components, cross-version session/parameter/renders and complete channel/engine comparisons
+in the upgrade packet. Register its independent session probe/helper and timestamped target CI
+snapshot through the repository map. Testing, attribution and ADR records describe observed results;
+source-head memcheck/AU-randomise cancellations and final-head CI remain explicit. Existing human
+attestations retain their version scope; new Level-5/native acceptance stays pending. No fixtures,
+tolerances, codec definitions, product versions, graph, latency or CI gates change.
+
+
+## JUCE 9.0.5 owner-review corrections
+
+Synchronize live handover/CI/build/compliance status with executed automated evidence and pending
+manual acceptance. Preserve 9.0.4 attestations under ADR-0047. Document explicit unversioned
+FetchContent archive overrides, strict Git/default pin checks and post-configuration provenance
+scope. Add archive/ancestor/broken-metadata regressions to the existing cache suite and retain
+execution evidence in `worklogs/juce905-review/review-followup.json`. Clarify normalized probe
+measurements without changing product parameters, state schema, DSP, formats or versions.
+
+
+## JUCE 9.0.5 owner acceptance and damaged-metadata reconciliation
+
+Record the new owner-attested Level-5/native/manual PASS, with actual execution date and exact
+tested payload/environment fields explicitly NOT RECORDED. Update live handover/compatibility/
+release-readiness/ADR/dependency/CI records while retaining dated history and no merge/release
+permission. Reproduce dangling and unreadable metadata archive misclassification; retain the
+post-configuration boundary under Accepted ADR-0051, with four alternatives and CMake evidence.
+Register `acceptance-reconciliation.json` and `metadata-review.json`; source-local regressions and
+before/after/partial-fix controls cover the corrected literal entry detection. Named-host rows,
+individual observations, product behavior/versions, fixtures and release objects are unchanged.

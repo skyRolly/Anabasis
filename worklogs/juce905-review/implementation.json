@@ -1,0 +1,786 @@
+{
+  "product": "Anabasis",
+  "status": "implemented_pending_human_acceptance_and_remaining_ci",
+  "owner_approval": {
+    "date": "2026-11-04",
+    "timezone": "Asia/Shanghai",
+    "quote": "approve ADR\ndont merge PR",
+    "adr": "0051",
+    "authorizes": "scoped implementation and validation",
+    "pr_merge_authorized": false
+  },
+  "baseline_main": "3eeaef2872cf1dbaecaa1bb9ee7b3fb3f03d8504",
+  "target": "d60b7a78030661574a615b586d9325ba7a7fa7dd",
+  "previous": "3fb5cbc0340758596dac39f7c8de47d562b4896e",
+  "manual_acceptance": "Pending Human Acceptance",
+  "full_automated_validation": "Source implementation bdb7ef21386a562d86eab9a4e742a11db24f05fe: Linux/Windows/native Intel/LTO/realtime/static/dependency jobs pass; sanitizer retry passes both ASan/UBSan and both memchecks. Source-head Apple Silicon AU-randomise was cancelled; final evidence-head matrix still must complete Mac and its own checks.",
+  "environment_recovery": "Isolated debian:13-slim Docker with development prerequisites; outer missing-header observations retained as history",
+  "source_changes": {
+    "comment_only": true,
+    "changed_comment_diff_lines": 2,
+    "non_comment_diff_lines": 0
+  },
+  "source_policy_checks": [
+    {
+      "command": [
+        "python3",
+        "scripts/check-portability.py",
+        "--self-test"
+      ],
+      "exit_code": 0,
+      "summary": [
+        "check-portability: self-test passed (120 cases)."
+      ]
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/check-portability.py"
+      ],
+      "exit_code": 0,
+      "summary": [
+        "check-portability: installer/uninstaller scratch names agree (.Anabasis.new, .anabasis-install-stage, .anabasis-probe, .probe).",
+        "check-portability: 50 file(s) scanned, 0 violation(s)."
+      ]
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/check-realtime.py",
+        "--self-test"
+      ],
+      "exit_code": 0,
+      "summary": [
+        "check-realtime: self-test passed (145 cases)."
+      ]
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/check-realtime.py"
+      ],
+      "exit_code": 0,
+      "summary": [
+        "check-realtime: 42 file(s) scanned, 0 violation(s), 1 of 1 ordering requirement(s) verified."
+      ]
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/check-product-identity.py",
+        "--self-test"
+      ],
+      "exit_code": 0,
+      "summary": [
+        "product identity VERSIONINFO API-boundary fixture passed",
+        "product identity self-test passed (source, generated Linux/Windows/macOS, AU, VST3, packages; good/bad fixtures)"
+      ]
+    },
+    {
+      "command": [
+        "python3",
+        "scripts/check-product-identity.py"
+      ],
+      "exit_code": 0,
+      "summary": [
+        "  }",
+        "}"
+      ]
+    }
+  ],
+  "cache_tests": {
+    "passed": true,
+    "count": 9,
+    "summary": ".........\n----------------------------------------------------------------------\nRan 9 tests in 109.675s\n\nOK\n"
+  },
+  "negative_controls": {
+    "old_cache_on_original_cmake": "detected",
+    "immutable_source_check_bypass": "detected"
+  },
+  "minimum_cmake_cache_tests": {
+    "cmake": "3.22.6",
+    "passed": true,
+    "count": 9
+  },
+  "compile_provenance": {
+    "Anabasis-904": {
+      "head": "3fb5cbc0340758596dac39f7c8de47d562b4896e",
+      "clean": true,
+      "compile_commands": 209,
+      "codec_definitions": {
+        "Anabasis": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "Anabasis_Standalone": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "Anabasis_VST3": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "AnabasisTests": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "AnabasisStateTests": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "AnabasisBench": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "AnabasisChannelProbe": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "AnabasisEngineRepro": [
+          [
+            true,
+            true,
+            true
+          ]
+        ]
+      }
+    },
+    "Anabasis-905": {
+      "head": "d60b7a78030661574a615b586d9325ba7a7fa7dd",
+      "clean": true,
+      "compile_commands": 209,
+      "codec_definitions": {
+        "Anabasis": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "Anabasis_Standalone": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "Anabasis_VST3": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "AnabasisTests": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "AnabasisStateTests": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "AnabasisBench": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "AnabasisChannelProbe": [
+          [
+            true,
+            true,
+            true
+          ]
+        ],
+        "AnabasisEngineRepro": [
+          [
+            true,
+            true,
+            true
+          ]
+        ]
+      }
+    },
+    "Anabasis-flags": {
+      "identical": true,
+      "differences": 0,
+      "examples": []
+    }
+  },
+  "invalid_invocations": [
+    {
+      "command": "scripts/run-pluginval.sh --self-test",
+      "classification": "operator invocation error; this wrapper has no self-test option; no target validation result",
+      "result": "option interpreted as invalid strictness against pre-existing repository build; not the new build; excluded from upgrade pass/fail evidence"
+    },
+    {
+      "command": "initial local validation before the baseline selected-target link completed",
+      "classification": "operator scheduling/path failure; missing executables were not product test failures; corrected run passes all steps"
+    },
+    {
+      "command": "readelf on baseline bundle during its later full-build relink",
+      "classification": "partial ELF, no ABI verdict; use the completed selected-target record and completed new target for comparison"
+    }
+  ],
+  "real_cache_migration": [
+    {
+      "step": "seed-old-local",
+      "command": [
+        "cmake",
+        "-S",
+        "/workspace/Anabasis",
+        "-B",
+        "/workspace/juce905-runs/anabasis-904",
+        "-DANABASIS_JUCE_PATH=/workspace/JUCE-904",
+        "-DANABASIS_JUCE_VERSION=9.0.4",
+        "-DANABASIS_JUCE_TAG=3fb5cbc0340758596dac39f7c8de47d562b4896e"
+      ],
+      "exit": 0,
+      "expected_exit": 0,
+      "passed": true
+    },
+    {
+      "step": "refuse-stale",
+      "command": [
+        "cmake",
+        "-S",
+        "/workspace/Anabasis",
+        "-B",
+        "/workspace/juce905-runs/anabasis-904",
+        "-DANABASIS_JUCE_PATH="
+      ],
+      "exit": 1,
+      "expected_exit": 1,
+      "passed": true
+    },
+    {
+      "step": "reset-and-local",
+      "command": [
+        "cmake",
+        "-S",
+        "/workspace/Anabasis",
+        "-B",
+        "/workspace/juce905-runs/anabasis-904",
+        "-UANABASIS_JUCE_VERSION",
+        "-UANABASIS_JUCE_TAG",
+        "-DANABASIS_JUCE_PATH=/workspace/JUCE-904"
+      ],
+      "exit": 0,
+      "expected_exit": 0,
+      "passed": true
+    }
+  ],
+  "baseline_local_tests": {
+    "dsp": {
+      "checks": 795,
+      "failures": 0
+    },
+    "state": {
+      "checks": 1638,
+      "failures": 0
+    }
+  },
+  "component_objects": {
+    "harfbuzz": {
+      "object": "juce_graphics/juce_graphics_Harfbuzz.cpp.o",
+      "count": 2,
+      "sample": [
+        "00000000 T hb_buffer_create",
+        "00000000 T hb_buffer_create_similar"
+      ]
+    },
+    "sheenbidi": {
+      "object": "juce_graphics/juce_graphics_Sheenbidi.c.o",
+      "count": 2,
+      "sample": [
+        "00000000 T SBAlgorithmCreate",
+        "00000000 T SBAlgorithmCreateParagraph"
+      ]
+    },
+    "jpeg": {
+      "object": "juce_graphics/juce_graphics_libjpg_1.c.o",
+      "count": 78,
+      "sample": [
+        "00000000 T jpeg_CreateCompress",
+        "00000000 T jpeg_abort",
+        "00000000 T jpeg_abort_compress",
+        "00000000 T jpeg_add_quant_table",
+        "00000000 T jpeg_alloc_huff_table"
+      ]
+    },
+    "png": {
+      "object": "juce_graphics/juce_graphics_libpng.c.o",
+      "count": 384,
+      "sample": [
+        "00000000 T png_XYZ_from_xy",
+        "00000000 T png_access_version_number",
+        "00000000 T png_app_error",
+        "00000000 T png_app_warning",
+        "00000000 T png_ascii_from_fixed"
+      ]
+    },
+    "webp": {
+      "object": "juce_graphics/juce_graphics_libwebp_dec.c.o",
+      "count": 0,
+      "sample": []
+    },
+    "opus": {
+      "object": "juce_audio_formats/juce_audio_formats_opus.c.o",
+      "count": 0,
+      "sample": []
+    },
+    "flac": {
+      "object": "juce_audio_formats/juce_audio_formats_flac_2.c.o",
+      "count": 272,
+      "sample": [
+        "00000000 D FLAC__ChannelAssignmentString",
+        "00000000 D FLAC__ENTROPY_CODING_METHOD_PARTITIONED_RICE2_ESCAPE_PARAMETER",
+        "00000000 D FLAC__ENTROPY_CODING_METHOD_PARTITIONED_RICE2_PARAMETER_LEN",
+        "00000000 D FLAC__ENTROPY_CODING_METHOD_PARTITIONED_RICE_ESCAPE_PARAMETER",
+        "00000000 D FLAC__ENTROPY_CODING_METHOD_PARTITIONED_RICE_ORDER_LEN"
+      ]
+    },
+    "oggvorbis": {
+      "object": "juce_audio_formats/juce_audio_formats_ogg.c.o",
+      "count": 35,
+      "sample": [
+        "00000000 T ogg_packet_clear",
+        "00000000 T ogg_page_bos",
+        "00000000 T ogg_page_checksum_set",
+        "00000000 T ogg_page_continued",
+        "00000000 T ogg_page_eos"
+      ]
+    },
+    "mp3": {
+      "object": "juce_audio_formats/juce_audio_formats.cpp.o",
+      "count": 0,
+      "sample": []
+    },
+    "plutovg": {
+      "object": "juce_graphics/juce_graphics_lunasvg.c.o",
+      "count": 223,
+      "sample": [
+        "00000000 T juce_plutovg_blend",
+        "00000000 T juce_plutovg_canvas_add_font_face",
+        "00000000 T juce_plutovg_canvas_add_font_file",
+        "00000000 T juce_plutovg_canvas_add_glyph",
+        "00000000 T juce_plutovg_canvas_add_path"
+      ]
+    },
+    "zlib": {
+      "object": "juce_core/juce_core_zlib.c.o",
+      "count": 40,
+      "sample": [
+        "00000000 T deflate",
+        "00000000 T deflateBound",
+        "00000000 T deflateBound_z",
+        "00000000 T deflateCopy",
+        "00000000 T deflateEnd"
+      ]
+    }
+  },
+  "baseline_local_runtime": [
+    {
+      "step": "dsp-tests",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "/workspace/juce905-runs/anabasis-904/AnabasisTests_artefacts/Release/AnabasisTests"
+      ],
+      "exit": 0,
+      "seconds": 33.397,
+      "log": "anabasis-904-dsp-tests.log"
+    },
+    {
+      "step": "state-tests",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "/workspace/juce905-runs/anabasis-904/AnabasisStateTests_artefacts/Release/AnabasisStateTests"
+      ],
+      "exit": 0,
+      "seconds": 12.378,
+      "log": "anabasis-904-state-tests.log"
+    },
+    {
+      "step": "session-build",
+      "command": [
+        "python3",
+        "/workspace/juce905-runs/build_session_probe.py",
+        "Anabasis",
+        "904"
+      ],
+      "exit": 0,
+      "seconds": 15.501,
+      "log": "anabasis-904-session-build.log"
+    },
+    {
+      "step": "session-write",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "/workspace/juce905-runs/anabasis-session-904",
+        "write",
+        "/workspace/juce905-runs/anabasis-session-904.bin"
+      ],
+      "exit": 0,
+      "seconds": 0.46,
+      "log": "anabasis-904-session-write.log"
+    },
+    {
+      "step": "session-read1",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "/workspace/juce905-runs/anabasis-session-904",
+        "read",
+        "/workspace/juce905-runs/anabasis-session-904.bin"
+      ],
+      "exit": 0,
+      "seconds": 0.324,
+      "log": "anabasis-904-session-read1.log"
+    },
+    {
+      "step": "session-read2",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "/workspace/juce905-runs/anabasis-session-904",
+        "read",
+        "/workspace/juce905-runs/anabasis-session-904.bin"
+      ],
+      "exit": 0,
+      "seconds": 0.306,
+      "log": "anabasis-904-session-read2.log"
+    },
+    {
+      "step": "session-repeat",
+      "command": [
+        "cmp",
+        "/workspace/juce905-runs/anabasis-904-session-read1.log",
+        "/workspace/juce905-runs/anabasis-904-session-read2.log"
+      ],
+      "exit": 0,
+      "seconds": 0.004,
+      "log": "anabasis-904-session-repeat.log"
+    },
+    {
+      "step": "channel",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "/workspace/juce905-runs/anabasis-904/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe",
+        "/workspace/juce905-runs/anabasis-904/Anabasis_artefacts/Release/VST3/Anabasis.vst3",
+        "--assert-discriminating"
+      ],
+      "exit": 0,
+      "seconds": 1.707,
+      "log": "anabasis-904-channel.log"
+    },
+    {
+      "step": "engine",
+      "command": [
+        "/workspace/juce905-runs/anabasis-904/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro"
+      ],
+      "exit": 0,
+      "seconds": 0.051,
+      "log": "anabasis-904-engine.log"
+    }
+  ],
+  "record_scope": "Executed source-implementation/local comparison record captured 2026-11-03 UTC / 2026-11-04 Asia/Shanghai. Source-head CI cancellations and final evidence-head CI remain visible; consult live PR checks.",
+  "local_runtime": [
+    {
+      "step": "dsp-tests",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "/workspace/juce905-runs/anabasis-905/AnabasisTests_artefacts/Release/AnabasisTests"
+      ],
+      "exit": 0,
+      "seconds": 26.115,
+      "log": "anabasis-905-dsp-tests.log"
+    },
+    {
+      "step": "state-tests",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "/workspace/juce905-runs/anabasis-905/AnabasisStateTests_artefacts/Release/AnabasisStateTests"
+      ],
+      "exit": 0,
+      "seconds": 9.741,
+      "log": "anabasis-905-state-tests.log"
+    },
+    {
+      "step": "session-build",
+      "exit": 0,
+      "note": "Reused the just-validated entry point built from these same state-target commands/objects; early read and byte comparison exited 0."
+    },
+    {
+      "step": "session-read",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "/workspace/juce905-runs/anabasis-session-905",
+        "read",
+        "/workspace/juce905-runs/anabasis-session-904.bin"
+      ],
+      "exit": 0,
+      "seconds": 0.359,
+      "log": "anabasis-905-session-read.log"
+    },
+    {
+      "step": "session-compare",
+      "command": [
+        "cmp",
+        "/workspace/juce905-runs/anabasis-904-session-read1.log",
+        "/workspace/juce905-runs/anabasis-905-session-read.log"
+      ],
+      "exit": 0,
+      "seconds": 0.007,
+      "log": "anabasis-905-session-compare.log"
+    },
+    {
+      "step": "session-bytes",
+      "command": [
+        "cmp",
+        "/workspace/juce905-runs/anabasis-session-904.bin",
+        "/workspace/juce905-runs/anabasis-session-904.bin.resaved"
+      ],
+      "exit": 0,
+      "seconds": 0.002,
+      "log": "anabasis-905-session-bytes.log"
+    },
+    {
+      "step": "channel",
+      "command": [
+        "xvfb-run",
+        "-a",
+        "/workspace/juce905-runs/anabasis-905/AnabasisChannelProbe_artefacts/Release/AnabasisChannelProbe",
+        "/workspace/juce905-runs/anabasis-905/Anabasis_artefacts/Release/VST3/Anabasis.vst3",
+        "--assert-discriminating"
+      ],
+      "exit": 0,
+      "seconds": 1.715,
+      "log": "anabasis-905-channel.log"
+    },
+    {
+      "step": "engine",
+      "command": [
+        "/workspace/juce905-runs/anabasis-905/AnabasisEngineRepro_artefacts/Release/AnabasisEngineRepro"
+      ],
+      "exit": 0,
+      "seconds": 0.052,
+      "log": "anabasis-905-engine.log"
+    },
+    {
+      "step": "channel-compare",
+      "command": [
+        "cmp",
+        "/workspace/juce905-runs/anabasis-904-channel.log",
+        "/workspace/juce905-runs/anabasis-905-channel.log"
+      ],
+      "exit": 0,
+      "seconds": 0.004,
+      "log": "anabasis-905-channel-compare.log"
+    },
+    {
+      "step": "engine-compare",
+      "command": [
+        "cmp",
+        "/workspace/juce905-runs/anabasis-904-engine.log",
+        "/workspace/juce905-runs/anabasis-905-engine.log"
+      ],
+      "exit": 0,
+      "seconds": 0.003,
+      "log": "anabasis-905-engine-compare.log"
+    },
+    {
+      "step": "identity-selftest",
+      "command": [
+        "python3",
+        "/workspace/Anabasis/scripts/check-product-identity.py",
+        "--self-test"
+      ],
+      "exit": 0,
+      "seconds": 0.337,
+      "log": "anabasis-905-identity-selftest.log"
+    },
+    {
+      "step": "identity",
+      "command": [
+        "python3",
+        "/workspace/Anabasis/scripts/check-product-identity.py",
+        "--build-dir",
+        "/workspace/juce905-runs/anabasis-905",
+        "--platform",
+        "linux",
+        "--report",
+        "/workspace/juce905-runs/anabasis-identity.json"
+      ],
+      "exit": 0,
+      "seconds": 0.108,
+      "log": "anabasis-905-identity.log"
+    },
+    {
+      "step": "pluginval-deterministic",
+      "command": [
+        "bash",
+        "/workspace/juce905-runs/pluginval-Anabasis/scripts/run-pluginval.sh",
+        "10",
+        "deterministic",
+        "vst3"
+      ],
+      "exit": 0,
+      "seconds": 53.832,
+      "log": "anabasis-905-pluginval-deterministic.log"
+    },
+    {
+      "step": "pluginval-randomise",
+      "command": [
+        "bash",
+        "/workspace/juce905-runs/pluginval-Anabasis/scripts/run-pluginval.sh",
+        "10",
+        "randomise",
+        "vst3"
+      ],
+      "exit": 0,
+      "seconds": 45.86,
+      "log": "anabasis-905-pluginval-randomise.log"
+    }
+  ],
+  "state_comparison": {
+    "bytes": 10531,
+    "sha256": "721a73ecaf8236da888dad8c6d078ce3b948e03b8785390961e8ac9d983e31bb",
+    "byte_identical_resave": true,
+    "baseline_repeatable": true,
+    "target_full_output_identical": true,
+    "parameters_per_slot": 50,
+    "slots": 2,
+    "render_records": [
+      "render 44100 latency=502 hash=5484de467b84917a",
+      "render 48000 latency=541 hash=647605f767a2bf49",
+      "render 96000 latency=1021 hash=988f86a2f577e4ed",
+      "render 44100 latency=502 hash=87c8612cc70cbb87",
+      "render 48000 latency=541 hash=7ed326aaff43b9dd",
+      "render 96000 latency=1021 hash=4c1848535e884dc0"
+    ],
+    "raw_output": "resaved-identical=1 size=10531\nslot=0 name=升级 & <Recall> \"A/B\" dirty=0\nbypass=00000000\nadvancedMode=3e3a2e8c\nloudness=3ee66666\ncharacter=3e19999a\ntone=3f266666\nceiling=3f7eb852\nfreeze=00000000\nloudnessComp=3f3a2e8c\ndeltaMonitor=3f51745d\ninputGain=3eaaaaab\nscHpfFreq=00000000\ncompRatio=3e5cb08d\ncompThreshold=3f466666\ncompAttack=3f191d58\ncompRelease=3eecee69\ncompAutoRelease=3f800000\ncompKnee=3f000000\ncompDetector=00000000\ncompMix=3f800000\ncompStereoLink=3f800000\nclipShape=3eef8af9\nclipDrive=3da49247\nclipMix=3f800000\ncolourModel=3eaaaaab\ncolourBalance=3f000000\ncolourTone=3f133333\ndynTilt=00000000\ncolourDepth=3dcdd2f3\nlimGain=3ec4647c\nlookahead=3eecee69\nlimRelease=3f2aaaab\nlimAutoRelease=3f800000\nlimStyle=00000000\nstereoLink=3f800000\ntransientPreserve=3f000000\ntruePeakMode=00000000\neqTilt=3f199999\neqLowShelfFreq=3f000000\neqLowShelfGain=3f000000\neqHighShelfFreq=3f31b2cf\neqHighShelfGain=3f000000\neqBell1Freq=3ec8b836\neqBell1Gain=3f000000\neqBell1Q=3ebbbde6\neqBell2Freq=3f39b170\neqBell2Gain=3f100000\neqBell2Q=3ed82c0f\neqPosition=00000000\ndither=00000000\nditherShaping=00000000\nrender 44100 latency=502 hash=5484de467b84917a\nrender 48000 latency=541 hash=647605f767a2bf49\nrender 96000 latency=1021 hash=988f86a2f577e4ed\nslot=1 name=升级 & <Recall> \"A/B\" dirty=0\nbypass=00000000\nadvancedMode=3e3a2e8c\nloudness=3e8ba2e9\ncharacter=3eba2e8c\ntone=3ee8ba2f\nceiling=3f0ba5e3\nfreeze=00000000\nloudnessComp=3f3a2e8c\ndeltaMonitor=3f51745d\ninputGain=3f68ba2e\nscHpfFreq=00000000\ncompRatio=3dba2e8b\ncompThreshold=3e3a2e8d\ncompAttack=3e8ba2e9\ncompRelease=3eba2e8c\ncompAutoRelease=3ee8ba2f\ncompKnee=3f0ba2e9\ncompDetector=3f22e8ba\ncompMix=3f3a2e8c\ncompStereoLink=3f51745d\nclipShape=3f68ba2f\nclipDrive=00000000\nclipMix=3dba2e8c\ncolourModel=3e3a2e8c\ncolourBalance=3e8ba2e9\ncolourTone=3eba2e8c\ndynTilt=3ee8ba2f\ncolourDepth=3f0ba2e9\nlimGain=3f22e8ba\nlookahead=3f3a2e8c\nlimRelease=3f51745d\nlimAutoRelease=3f68ba2f\nlimStyle=00000000\nstereoLink=3dba2e8c\ntransientPreserve=3e3a2e8c\ntruePeakMode=3e8ba2e9\neqTilt=3eba2e8c\neqLowShelfFreq=3ee8ba2e\neqLowShelfGain=3f0ba2e9\neqHighShelfFreq=3f22e8ba\neqHighShelfGain=3f3a2e8c\neqBell1Freq=3f51745d\neqBell1Gain=3f68ba2f\neqBell1Q=00000000\neqBell2Freq=3dba2e8c\neqBell2Gain=3e3a2e8c\neqBell2Q=3e8ba2e9\neqPosition=3eba2e8c\ndither=3ee8ba2f\nditherShaping=3f0ba2e9\nrender 44100 latency=502 hash=87c8612cc70cbb87\nrender 48000 latency=541 hash=7ed326aaff43b9dd\nrender 96000 latency=1021 hash=4c1848535e884dc0\n",
+    "parameter_listing_representation": "normalized AudioProcessorParameter::getValue() float bit patterns (0..1); no independent unnormalized-value comparison"
+  },
+  "dsp_comparison": {
+    "channel": {
+      "identical": true,
+      "baseline_sha256": "65b2e4a615118216c377f710e98d28e21c490feb270a9f061e5ce6a6c45bb7a3",
+      "target_sha256": "65b2e4a615118216c377f710e98d28e21c490feb270a9f061e5ce6a6c45bb7a3",
+      "raw_output": "  hosted parameters (50):\n    [ 0] id='773352680'  name='Bypass'\n    [ 1] id='624375013'  name='Advanced'\n    [ 2] id='271472809'  name='Loudness'\n    [ 3] id='1564195625'  name='Character'\n    [ 4] id='3565938'  name='Tone'\n    [ 5] id='660387005'  name='Ceiling'\n    [ 6] id='881080983'  name='Freeze'\n    [ 7] id='716177240'  name='Loudness Comp'\n    [ 8] id='114850434'  name='Delta'\n    [ 9] id='1706566249'  name='Input Gain'\n    [10] id='1819316102'  name='SC HPF'\n    [11] id='720421436'  name='Comp Ratio'\n    [12] id='1938282012'  name='Comp Threshold'\n    [13] id='389071415'  name='Comp Attack'\n    [14] id='942264824'  name='Comp Release'\n    [15] id='1812412617'  name='Comp Auto Rel'\n    [16] id='1547063538'  name='Comp Knee'\n    [17] id='744991733'  name='Comp Detector'\n    [18] id='950464717'  name='Comp Mix'\n    [19] id='1309623425'  name='Comp Stereo Link'\n    [20] id='533024305'  name='Clip Shape'\n    [21] id='519477274'  name='Clip Drive'\n    [22] id='860883180'  name='Clip Mix'\n    [23] id='201133245'  name='Color'\n    [24] id='596863856'  name='Odd/Even'\n    [25] id='1392170334'  name='Color Tone'\n    [26] id='2124376278'  name='Dynamic Tame'\n    [27] id='192535639'  name='Color Depth'\n    [28] id='175086127'  name='Limiter Gain'\n    [29] id='1131625090'  name='Lookahead'\n    [30] id='1042750295'  name='Lim Release'\n    [31] id='896711336'  name='Lim Auto Rel'\n    [32] id='1144366337'  name='Style'\n    [33] id='687276050'  name='Limiter Stereo Link'\n    [34] id='44272374'  name='Transients'\n    [35] id='1873347280'  name='True Peak'\n    [36] id='851025289'  name='Tilt'\n    [37] id='753565082'  name='LS Freq'\n    [38] id='753578657'  name='LS Gain'\n    [39] id='1804687092'  name='HS Freq'\n    [40] id='1804700667'  name='HS Gain'\n    [41] id='1415656410'  name='Bell 1 Freq'\n    [42] id='1415669985'  name='Bell 1 Gain'\n    [43] id='1272491599'  name='Bell 1 Q'\n    [44] id='1416579931'  name='Bell 2 Freq'\n    [45] id='1416593506'  name='Bell 2 Gain'\n    [46] id='1272491630'  name='Bell 2 Q'\n    [47] id='60530165'  name='EQ Position'\n    [48] id='815960102'  name='Dither'\n    [49] id='661698840'  name='Noise Shaping'\nAnabasisChannelProbe -- Anabasis (vst3), 2 in / 2 out\n  running slice: x86_64\n  [ ok ] 48000 Hz /  512  defaults                      L=0.176871664  R=0.176713376\n  [ ok ] 48000 Hz /  512  field: mix 100, links 0       L=0.589603058  R=0.589073620\n  [ ok ] 48000 Hz /  512  field: mix 50,  links 0       L=0.670895493  R=0.670268050\n  [ ok ] 48000 Hz /  512  field: mix 25,  links 0       L=0.712458441  R=0.711801929\n  [ ok ] 48000 Hz /  512  field: mix 1,   links 0       L=0.700009227  R=0.699347975\n  [ ok ] 48000 Hz /  512  control: mix 0, links 0       L=0.699408128  R=0.698765245\n  [ ok ] 48000 Hz /  512  field: mix 100, links 100     L=0.589603058  R=0.589073620\n  [ ok ] 48000 Hz /  512  pushed, colour off            L=0.583626441  R=0.583153418\n  [ ok ] 48000 Hz /   64  defaults                      L=0.176404277  R=0.177037686\n  [ ok ] 48000 Hz /   64  field: mix 100, links 0       L=0.588312255  R=0.590062728\n  [ ok ] 48000 Hz /   64  field: mix 50,  links 0       L=0.669245017  R=0.671456033\n  [ ok ] 48000 Hz /   64  field: mix 25,  links 0       L=0.710634541  R=0.713088024\n  [ ok ] 48000 Hz /   64  field: mix 1,   links 0       L=0.698159578  R=0.700630245\n  [ ok ] 48000 Hz /   64  control: mix 0, links 0       L=0.697560848  R=0.700047602\n  [ ok ] 48000 Hz /   64  field: mix 100, links 100     L=0.588312255  R=0.590062728\n  [ ok ] 48000 Hz /   64  pushed, colour off            L=0.582422509  R=0.584077413\n  [ ok ] 44100 Hz /  512  defaults                      L=0.176830700  R=0.176818747\n  [ ok ] 44100 Hz /  512  field: mix 100, links 0       L=0.589474538  R=0.589365491\n  [ ok ] 44100 Hz /  512  field: mix 50,  links 0       L=0.670740336  R=0.670632337\n  [ ok ] 44100 Hz /  512  field: mix 25,  links 0       L=0.712292762  R=0.712207520\n  [ ok ] 44100 Hz /  512  field: mix 1,   links 0       L=0.699845947  R=0.699754556\n  [ ok ] 44100 Hz /  512  control: mix 0, links 0       L=0.699243000  R=0.699182727\n  [ ok ] 44100 Hz /  512  field: mix 100, links 100     L=0.589474538  R=0.589365491\n  [ ok ] 44100 Hz /  512  pushed, colour off            L=0.583494667  R=0.583438807\n  [ ok ] 44100 Hz /   64  defaults                      L=0.176213928  R=0.176375828\n  [ ok ] 44100 Hz /   64  field: mix 100, links 0       L=0.587709489  R=0.588130739\n  [ ok ] 44100 Hz /   64  field: mix 50,  links 0       L=0.668540923  R=0.669069212\n  [ ok ] 44100 Hz /   64  field: mix 25,  links 0       L=0.709877166  R=0.710480960\n  [ ok ] 44100 Hz /   64  field: mix 1,   links 0       L=0.697405007  R=0.698002871\n  [ ok ] 44100 Hz /   64  control: mix 0, links 0       L=0.696803582  R=0.697431229\n  [ ok ] 44100 Hz /   64  field: mix 100, links 100     L=0.587709489  R=0.588130739\n  [ ok ] 44100 Hz /   64  pushed, colour off            L=0.581760592  R=0.582268451\n  declared COLLAPSE at 48000 Hz /  512: 'field: mix 100, links 0' == 'field: mix 100, links 100' (L=0.589603058 R=0.589073620)\n  declared COLLAPSE at 48000 Hz /   64: 'field: mix 100, links 0' == 'field: mix 100, links 100' (L=0.588312255 R=0.590062728)\n  declared COLLAPSE at 44100 Hz /  512: 'field: mix 100, links 0' == 'field: mix 100, links 100' (L=0.589474538 R=0.589365491)\n  declared COLLAPSE at 44100 Hz /   64: 'field: mix 100, links 0' == 'field: mix 100, links 100' (L=0.587709489 R=0.588130739)\n  discrimination: 112 configuration pair(s) compared, 4 collapsed (0 undeclared)\n  [ ok ] 48000 Hz /  512  macro: Loudness 85 + editor   L=0.698800631  R=0.698926169\nPROBE PASSED: every configuration kept both channels\n"
+    },
+    "engine": {
+      "identical": true,
+      "baseline_sha256": "af106bb522789a8b38fd30753cbd5d0c6c66f22f1c1bed6b44b8f938a2395bff",
+      "target_sha256": "af106bb522789a8b38fd30753cbd5d0c6c66f22f1c1bed6b44b8f938a2395bff",
+      "raw_output": "engine repro (no wrapper, no format, no host)\n  engine defaults  L=0.176871664  R=0.176713376  L/R=   0.01 dB  -> ok\n  field settings   L=0.589603058  R=0.589073620  L/R=   0.01 dB  -> ok\nengine repro: both cases kept both channels\n"
+    }
+  },
+  "abi_comparison": {
+    "baseline_record": "Re-read from completed final baseline relink",
+    "baseline": {
+      "GLIBC": "2.38",
+      "GLIBCXX": "3.4.31",
+      "CXXABI": "1.3.15"
+    },
+    "target": {
+      "GLIBC": "2.38",
+      "GLIBCXX": "3.4.31",
+      "CXXABI": "1.3.15"
+    },
+    "identical": true,
+    "shipping_floor": "Local GCC 14 CXXABI_1.3.15 exceeds the existing CXXABI_1.3.9 floor at both pins; shipping Clang CI remains required. No ABI gate or floor changes."
+  },
+  "local_warning_comparison": {
+    "compiler": "GCC 14.2.0 local diagnostic comparison; shipping warning gate remains CI",
+    "baseline": [],
+    "target": [],
+    "new": [],
+    "removed": []
+  },
+  "environment_failures": [
+    {
+      "event": "Disk exhaustion during simultaneous local links at both pins",
+      "classification": "environment failure, no product/JUCE compatibility verdict",
+      "recovery": "Retain original logs; clear completed task-generated Anamorph artifacts and probe clones, preserving original repository build directories; resume unchanged configurations. Target full build succeeds."
+    }
+  ],
+  "baseline_full_build_continuation": "Complete old/new VST3, Standalone, test, benchmark and probe builds succeeded after clearing task-generated disk usage; source/flags unchanged. Baseline final relink channel comparison is independently checked.",
+  "files_modified": [
+    "CHANGELOG.md",
+    "CMakeLists.txt",
+    "NOTICE",
+    "README.md",
+    "THIRD_PARTY_LICENSES.md",
+    "cmake/VerifyJuceSource.cmake",
+    "docs/DEVELOPMENT_BRIEF.md",
+    "docs/DOCUMENTATION_COVERAGE.md",
+    "docs/HANDOVER.md",
+    "docs/REPOSITORY_MAP.md",
+    "docs/SOURCE_OF_TRUTH.md",
+    "docs/architecture/COMPATIBILITY_MATRIX.md",
+    "docs/architecture/design-decisions/ADR-0047-juce-904-upgrade.md",
+    "docs/architecture/design-decisions/ADR-0051-juce-905-upgrade.md",
+    "docs/architecture/design-decisions/ADR_INDEX.md",
+    "docs/policies/DEPENDENCY_POLICY.md",
+    "docs/procedures/BUILD.md",
+    "docs/procedures/CI_CD.md",
+    "docs/procedures/TESTING.md",
+    "src/gui/LookAndFeel.h",
+    "tests/juce_cache_tests.py",
+    "worklogs/2026-11-04-juce-905-review.md",
+    "worklogs/juce905-review/baseline-ci.json",
+    "worklogs/juce905-review/build_session_probe.py",
+    "worklogs/juce905-review/citation-map.json",
+    "worklogs/juce905-review/completed-baseline-ci.json",
+    "worklogs/juce905-review/evidence.json",
+    "worklogs/juce905-review/implementation.json",
+    "worklogs/juce905-review/session_probe.cpp",
+    "worklogs/juce905-review/target-ci-retry.json",
+    "worklogs/juce905-review/target-ci.json"
+  ],
+  "source_sanitizer_retry": {
+    "run": 41710704478,
+    "attempt": 2,
+    "job": 126258975334,
+    "conclusion": "success",
+    "both_memchecks_passed": true
+  },
+  "review_followup": "review-followup.json",
+  "later_owner_acceptance_record": "acceptance-reconciliation.json (new 9.0.5 owner-attested PASS; original snapshot status retained as history)",
+  "later_source_metadata_review": "metadata-review.json"
+}

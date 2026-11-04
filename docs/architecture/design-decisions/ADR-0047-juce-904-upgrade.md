@@ -5,6 +5,12 @@ resolve resulting issues, synchronize documentation and create a PR. This author
 Build System change under `ARCHITECTURE_REVIEW_GATE.md`; it is not release sign-off or
 authorization to merge. Manual audition remains owed under `DEPENDENCY_POLICY.md` rule 2.
 
+
+**Dependency-pin amendment — 2026-11-04:** owner-Accepted ADR-0051 advances the
+unmerged upgrade branch to JUCE 9.0.5 / `d60b7a78030661574a615b586d9325ba7a7fa7dd`.
+This record retains its historical 9.0.4 decision/evidence; other contracts remain in force.
+No current PR merge or new manual acceptance is inferred from the earlier approvals.
+
 ## Context
 
 Anabasis pins JUCE 9.0.1 at `e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8` (ADR-0028).

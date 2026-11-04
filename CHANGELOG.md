@@ -48,6 +48,11 @@ read as data, so the sample heading immediately below is not mistaken for struct
 ## [Unreleased]
 
 ### Changed
+
+- **Upgrade JUCE from 9.0.4 to 9.0.5**, including upstream Windows VST3 scaling, native-window
+  lifecycle and parser hardening changes. Existing default CMake caches must reset both JUCE fields.
+  Evidence: [PR #60](https://github.com/skyRolly/Anabasis/pull/60); ADR-0051.
+  [Verified — dependency/source; runtime and native acceptance are recorded separately]
 - **Installer and uninstaller product names display as Anabasis without a version suffix.**
   Windows Setup/uninstall naming and the macOS installer title use the bare product name;
   installed version metadata and versioned download filenames are preserved.

@@ -1,5 +1,9 @@
 # BUILD.md
 
+JUCE 9.0.5 is under [Accepted ADR-0051](../architecture/design-decisions/ADR-0051-juce-905-upgrade.md).
+Defaults pin the exact 9.0.5 commit. The [review packet](../../worklogs/2026-11-04-juce-905-review.md)
+records acquisition, comparisons and remaining validation; owner approval is recorded in the ADR.
+
 How to configure and build Anabasis. Headless, command-line only (CMake + JUCE; no IDE/Projucer).
 
 > **Status: the build exists** (P1 skeleton, 2026-07-31). `CMakeLists.txt` implements ADR-0008's
@@ -33,8 +37,8 @@ How to configure and build Anabasis. Headless, command-line only (CMake + JUCE; 
   ([ADR-0033](../architecture/design-decisions/ADR-0033-lto-validation-lane.md)), which is where "the
   tree still compiles under the other major toolchain" is checked. A local GCC build needs none of
   this — any g++ that supports C++23 will do; the pin is about what CI's compatibility claim means.
-- **JUCE 9.0.4** is fetched automatically (CMake `FetchContent`, pinned to that tag's **immutable
-  commit SHA** `3fb5cbc0340758596dac39f7c8de47d562b4896e`) — or pointed at a local checkout.
+- **JUCE 9.0.5** is fetched automatically (CMake `FetchContent`, pinned to that tag's **immutable
+  commit SHA** `d60b7a78030661574a615b586d9325ba7a7fa7dd`) — or pointed at a local checkout.
   **ADR-0047** upgrades this repository from 9.0.1 and restores the same pin as Anamorph. See
   `docs/policies/DEPENDENCY_POLICY.md` for the version-lock reasoning.
   `set(... CACHE ...)` never overwrites an existing pin. Configuration now refuses either
@@ -73,7 +77,7 @@ of the `gcc:16` container — and survives on Ubuntu only as a `Provides:` on th
 unsuffixed name is real on both.
 
 **The web-browser binding is a `full`-only extra and nothing here compiles it:** every target sets
-`JUCE_WEB_BROWSER=0`, JUCE gates the webkit include on that macro, and JUCE 9.0.4 declares no
+`JUCE_WEB_BROWSER=0`, JUCE gates the webkit include on that macro, and JUCE 9.0.5 declares no
 `linuxPackages` for `juce_gui_extra`. Where `libwebkit2gtk-4.1-dev` is absent the successor is
 `libwebkitgtk-6.0-dev` (Debian trixie and later); `libwebkit2gtk-4.0-dev` is the OLDER name and is
 already gone from trixie, so it is not a fallback there.
@@ -117,7 +121,7 @@ scripts/build.sh            # scripts/build.sh [Release|Debug]
 | `ANABASIS_BUILD_TESTS` | ON | Build the `AnabasisTests` + `AnabasisStateTests` console apps |
 | `ANABASIS_BUILD_STANDALONE` | ON | Add the Standalone target (debugging convenience) |
 | `ANABASIS_JUCE_PATH` | "" | Use a local JUCE checkout instead of fetching |
-| `ANABASIS_JUCE_TAG` | `3fb5cbc…` (= tag 9.0.4) | JUCE git rev to fetch when no local path is given; `ANABASIS_JUCE_VERSION` (`9.0.4`) carries the human-readable version. Reset both fields when migrating an old build cache |
+| `ANABASIS_JUCE_TAG` | `d60b7a7…` (= tag 9.0.5) | JUCE git rev to fetch when no local path is given; `ANABASIS_JUCE_VERSION` (`9.0.5`) carries the human-readable version. Reset both fields when migrating an old build cache |
 | `ANABASIS_BUILD_NUMBER` | 0 | CI build/dev number shown in the About box (`-DANABASIS_BUILD_NUMBER=${{ github.run_number }}`) |
 
 Offline build (no network) with a local JUCE:
@@ -195,3 +199,28 @@ Current namespace (ADR-0048): JUCE generates the base `tech.rolly.anabasis` for 
 Standalone/VST3/AU CFBundleIdentifier; pkg receipts separately use `.app/.vst3/.au`.
 Independent RTec/Anbs, VST3 class IDs and the Windows AppId are preserved. Verify actual
 outputs with `scripts/check-product-identity.py --self-test` then `--build-dir build`.
+
+
+## Explicit offline source-directory overrides
+
+CMake's existing `-DFETCHCONTENT_SOURCE_DIR_JUCE=/path/to/JUCE` override remains supported,
+including extracted source archives. A Git checkout rooted at that directory is checked against
+an immutable pin just like a fetched checkout. An archive without its own Git metadata is accepted
+for trusted offline/development use with an **unverified source identity** warning; no commit SHA
+is inferred from its version string or an enclosing repository's HEAD. Broken Git metadata is an
+error, and normal fetched sources cannot silently use the archive exception.
+
+The stale-cache checks still apply: reset both `ANABASIS_JUCE_TAG` and
+`ANABASIS_JUCE_VERSION` when upgrading an existing build. The separate
+`-DANABASIS_JUCE_PATH=/path/to/JUCE` escape hatch retains its intentional local-comparison
+behavior. Release/CI evidence for the default 9.0.5 pin must use a verifiable Git checkout.
+Verification follows JUCE's configuration; it is not a gate on executing untrusted CMake code.
+
+
+### Damaged Git metadata (ADR-0051, 2026-11-04)
+
+An explicit archive qualifies only when the source has no `.git` directory entry. Dangling or
+unreadable entries are errors, not archives; valid worktree/git-directory links still verify HEAD.
+Missing Git tooling permits metadata-free trusted archive overrides, but cannot verify a checkout.
+The check still follows JUCE configuration and is not a pre-execution trust boundary. The 26-case
+suite covers these cases on CMake 3.22.6 and 3.31.6; see `worklogs/juce905-review/metadata-review.json`.

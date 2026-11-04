@@ -73,14 +73,14 @@ endif()
 set(ANABASIS_JUCE_PATH "" CACHE PATH "Local JUCE checkout (skips FetchContent — offline escape hatch)")
 set(ANABASIS_BUILD_NUMBER "0" CACHE STRING "CI build number (CI passes the run number)")
 
-# --- JUCE: version 9.0.4 pinned to the tag's IMMUTABLE COMMIT SHA -----------
+# --- JUCE: version 9.0.5 pinned to the tag's IMMUTABLE COMMIT SHA -----------
 # A tag NAME can be re-pointed upstream; the SHA cannot (ADR-0008 decision A5,
 # OQ-001). GIT_SHALLOW with a SHA is a documented CMake trap: if the fetch
 # misbehaves, drop GIT_SHALLOW, NEVER the SHA (ADR-0008's caveat carries the
 # sanctioned fix). Changing this pin is an Architecture Review Gate item
-# (DEPENDENCY_POLICY.md); 9.0.1 -> 9.0.4 is ADR-0047.
-set(ANABASIS_JUCE_VERSION "9.0.4" CACHE STRING "Human-readable JUCE version (README records this)")
-set(ANABASIS_JUCE_TAG "3fb5cbc0340758596dac39f7c8de47d562b4896e" CACHE STRING "Immutable commit SHA of the JUCE tag")
+# (DEPENDENCY_POLICY.md); 9.0.4 -> 9.0.5 is ADR-0051.
+set(ANABASIS_JUCE_VERSION "9.0.5" CACHE STRING "Human-readable JUCE version (README records this)")
+set(ANABASIS_JUCE_TAG "d60b7a78030661574a615b586d9325ba7a7fa7dd" CACHE STRING "Immutable commit SHA of the JUCE tag")
 
 # CACHE defaults do not replace an existing build's pin. Refuse either stale
 # field from a previous Anabasis default before FetchContent can reuse it.
@@ -89,10 +89,12 @@ set(ANABASIS_JUCE_TAG "3fb5cbc0340758596dac39f7c8de47d562b4896e" CACHE STRING "I
 if(NOT ANABASIS_JUCE_PATH AND
    (ANABASIS_JUCE_VERSION STREQUAL "9.0.0" OR
     ANABASIS_JUCE_VERSION STREQUAL "9.0.1" OR
+    ANABASIS_JUCE_VERSION STREQUAL "9.0.4" OR
     ANABASIS_JUCE_TAG STREQUAL "f8f8864172464b9adf9eba6101e1f784838d1597" OR
-    ANABASIS_JUCE_TAG STREQUAL "e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8"))
+    ANABASIS_JUCE_TAG STREQUAL "e18f7f506c0b96f2c738a0bcd7fe6467a5005ad8" OR
+    ANABASIS_JUCE_TAG STREQUAL "3fb5cbc0340758596dac39f7c8de47d562b4896e"))
     message(FATAL_ERROR
-        "Anabasis: stale JUCE cache; this tree pins JUCE 9.0.4. "
+        "Anabasis: stale JUCE cache; this tree pins JUCE 9.0.5. "
         "Reset BOTH cached fields, then rebuild:\n"
         "  cmake -S \"${CMAKE_CURRENT_SOURCE_DIR}\" -B \"${CMAKE_BINARY_DIR}\" "
         "-UANABASIS_JUCE_TAG -UANABASIS_JUCE_VERSION\n"
@@ -116,6 +118,7 @@ else()
         GIT_TAG        ${ANABASIS_JUCE_TAG}
         GIT_SHALLOW    TRUE)
     FetchContent_MakeAvailable(JUCE)
+    include(cmake/VerifyJuceSource.cmake) # Post-configuration provenance; not a pre-execution trust gate.
 endif()
 
 # ============================================================================

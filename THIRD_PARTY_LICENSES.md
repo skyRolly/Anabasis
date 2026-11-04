@@ -15,8 +15,8 @@ inventory are adapted from `Anamorph:THIRD_PARTY_LICENSES.md`. The **findings ar
 copied**: every row below was re-verified against this repository's own pinned JUCE tree and
 its own build objects, exactly because "an inventory copied from another project is not
 evidence" (`RELEASE_POLICY.md`, constraint C7). The resulting component set still matches the
-sibling's — a result, not an assumption. **ADR-0047 restores the shared JUCE 9.0.4 pin** with
-the read-only Anamorph reference. Anabasis explicitly disables the newly enabled MP3, Opus and
+sibling's — a result, not an assumption. ADR-0047 restored the shared JUCE 9.0.4 pin. **ADR-0051 preserves convergence at
+JUCE 9.0.5** with the independently approved read-only Anamorph reference. Anabasis explicitly disables the newly enabled MP3, Opus and
 WebP codecs on every plugin/test/tool consumer, preserving its previous compiled component set.
 
 ## How this inventory was produced
@@ -41,7 +41,7 @@ To re-verify after a JUCE bump, repeat exactly that: read the new `LICENSE.md` a
 the symbol probes against a fresh Release build's object files. See
 [`docs/policies/DEPENDENCY_POLICY.md`](docs/policies/DEPENDENCY_POLICY.md).
 
-Pinned version: **JUCE 9.0.4**, commit `3fb5cbc0340758596dac39f7c8de47d562b4896e`. Paths below
+Pinned version: **JUCE 9.0.5**, commit `d60b7a78030661574a615b586d9325ba7a7fa7dd`. Paths below
 are relative to that checkout (`build/_deps/juce-src/` in a local build) unless stated otherwise.
 
 **9.0.4 re-verification (ADR-0047):** the SPDX inventory adds Opus/libwebp, which are excluded
@@ -71,6 +71,15 @@ so it adds no component to §2 and no third-party obligation. Its `package-lock.
 package's own *build* dependencies; nothing in this repository fetches or executes them.
 
 ---
+
+
+**9.0.5 re-verification (ADR-0051, 2026-11-04):** HarfBuzz moves from 14.2.1 to 15.0.0;
+its actual `COPYING` and the selected module licence/notice/readme files retain their text.
+The SPDX adds no package or changed licence expression; the Gradle wrapper update is Android-only.
+PlutoVG transitive FreeType/stb and OpenGL embedded grants were compared separately.
+MP3/Opus/WebP remain excluded. Source hashes, compiled-component evidence and validation limits
+are recorded in [`worklogs/2026-11-04-juce-905-review.md`](worklogs/2026-11-04-juce-905-review.md).
+Commercial JUCE and product distribution decisions remain unchanged.
 
 ## 1. Framework
 
@@ -166,7 +175,7 @@ zlib and libpng ask for acknowledgement but explicitly do *not* require it; it i
 
 ## 3. Steinberg VST 3 — separate review required
 
-The VST 3 SDK **source code** bundled with JUCE 9.0.4 is under the **MIT licence**
+The VST 3 SDK **source code** bundled with JUCE 9.0.5 is under the **MIT licence**
 (`.../VST3_SDK/LICENSE.txt`, "Copyright (c) 2025, Steinberg Media Technologies GmbH").
 
 The MIT grant covers the code. It does **not** cover the "VST" name and logo, or the terms on

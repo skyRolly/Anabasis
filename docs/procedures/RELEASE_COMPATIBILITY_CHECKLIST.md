@@ -1,5 +1,15 @@
 # RELEASE_COMPATIBILITY_CHECKLIST.md
 
+**JUCE 9.0.5 human acceptance: PASS — owner-attested**, recorded 2026-11-04
+(Asia/Shanghai). Level-5 listening and native/manual acceptance are complete for this upgrade;
+this is separate from the historical 9.0.4 approval. Architecture Review remains Accepted.
+Exact tested payload/environment details were not supplied; see the [reconciliation worklog](../../worklogs/2026-11-04-juce-905-review.md).
+No merge or release publication is authorized.
+
+This records broad acceptance for the unmerged JUCE upgrade. It does not assert individual
+named-host results or complete an artifact-specific release checklist. Exact tested source/payload,
+execution date and environment fields remain NOT RECORDED; original release records are unchanged.
+
 Hard compatibility gate. **Every box must be checked before a release ships.** This enforces
 `docs/policies/COMPATIBILITY_POLICY.md` and its subset policies. A failed item blocks the release
 (or requires the COMPATIBILITY_POLICY exception: ADR + migration + Architecture Review).

@@ -1,5 +1,12 @@
 # CI_CD.md
 
+The [JUCE 9.0.5 review packet](../../worklogs/2026-11-04-juce-905-review.md) separates source-bound automated
+validation from human evidence. Level-5 listening and native/manual acceptance are now **PASS —
+owner-attested for 9.0.5**, recorded 2026-11-04 (Asia/Shanghai); exact tested payload/environment
+fields were not supplied. The [reconciliation record](../../worklogs/juce905-review/acceptance-reconciliation.json)
+identifies prior tested heads, while [PR checks](https://github.com/skyRolly/Anabasis/pull/60)
+identify corrected-head CI. ADR-0051 remains Accepted; no merge/release authorization is granted.
+
 Continuous integration / delivery. Source of truth: `.github/workflows/`.
 
 
@@ -96,7 +103,7 @@ future `release.yml` can reuse the whole matrix with identical gates — tag pus
 
 ## Build matrix
 
-JUCE is pinned to **9.0.4** by ADR-0047. The `linux` job runs
+JUCE is pinned to **9.0.5** by ADR-0051. The `linux` job runs
 `python3 tests/juce_cache_tests.py` before its ordinary configure step; the test uses a local
 FetchContent stand-in to verify migration from old default caches without network access.
 The existing self-test, pluginval (both modes ×3), platform, sanitizer and realtime gates
@@ -848,3 +855,20 @@ outcomes remain separate; see `worklogs/2026-10-25-normal-validation.md` and
 `docs/architecture/design-decisions/ADR_INDEX.md`. No native result is inferred
 from approval or relabeled by this documentation-only correction. GUI/DAW,
 genuine older-installer upgrades and Icon Composer remain separate acceptance.
+
+
+## Source-provenance check scope
+
+`FetchContent_MakeAvailable(JUCE)` configures JUCE (including its helper tools) before
+`cmake/VerifyJuceSource.cmake` runs. The check verifies source identity before product targets
+are generated; it is **not a pre-execution trust gate for dependency CMake code**. Configure only
+trusted sources. Normal fetched checkouts must have a JUCE-root Git identity and immutable pins
+must match HEAD. Explicit archive overrides are permitted with an unverified-source warning;
+they do not establish release/CI pin provenance. See `BUILD.md` and `DEPENDENCY_POLICY.md`.
+
+
+Source-metadata review (2026-11-04, ADR-0051): retain the documented post-configuration
+ordering. JUCE package checks/module setup and juceaide may run before verification. The verifier
+checks source identity before product targets, not dependency CMake execution or dirty-tree content.
+Directory-entry checks reject dangling/unreadable metadata; explicit metadata-free archives retain
+their warning policy. Alternatives and executed boundary evidence: `worklogs/2026-11-04-juce-905-review.md`.

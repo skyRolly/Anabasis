@@ -1,0 +1,254 @@
+{
+  "record_scope": "Timestamped source-implementation CI evidence. Later documentation commits and live PR checks must be evaluated separately; cancelled/skipped are not passes.",
+  "captured_at": "2026-11-03T22:54:24.853Z",
+  "implementation_head": "bdb7ef21386a562d86eab9a4e742a11db24f05fe",
+  "workflow_run": 41710704478,
+  "attempt": 1,
+  "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478",
+  "jobs": [
+    {
+      "id": 126177693610,
+      "name": "docs",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478/job/126177693610",
+      "steps": []
+    },
+    {
+      "id": 126177694232,
+      "name": "preflight",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478/job/126177694232",
+      "steps": []
+    },
+    {
+      "id": 126177695557,
+      "name": "source-lint",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478/job/126177695557",
+      "steps": []
+    },
+    {
+      "id": 126177696348,
+      "name": "merge-check",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478/job/126177696348",
+      "steps": []
+    },
+    {
+      "id": 126177696673,
+      "name": "macos-review-selections",
+      "status": "completed",
+      "conclusion": "skipped",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478/job/126177696673",
+      "steps": []
+    },
+    {
+      "id": 126178243098,
+      "name": "linux",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478/job/126178243098",
+      "steps": []
+    },
+    {
+      "id": 126178243198,
+      "name": "linux-lto-clang",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478/job/126178243198",
+      "steps": []
+    },
+    {
+      "id": 126178243238,
+      "name": "linux-lto-tests",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478/job/126178243238",
+      "steps": []
+    },
+    {
+      "id": 126178243268,
+      "name": "windows",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478/job/126178243268",
+      "steps": []
+    },
+    {
+      "id": 126178243304,
+      "name": "sanitizers",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478/job/126178243304",
+      "steps": [
+        {
+          "name": "valgrind memcheck (both suites)",
+          "conclusion": "cancelled"
+        },
+        {
+          "name": "Compiler cache statistics",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Post Restore the compiler cache",
+          "conclusion": "skipped"
+        }
+      ]
+    },
+    {
+      "id": 126178243329,
+      "name": "macos-intel",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478/job/126178243329",
+      "steps": []
+    },
+    {
+      "id": 126178243384,
+      "name": "realtime",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478/job/126178243384",
+      "steps": []
+    },
+    {
+      "id": 126178243685,
+      "name": "macos",
+      "status": "completed",
+      "conclusion": "cancelled",
+      "url": "https://github.com/skyRolly/Anabasis/actions/runs/41710704478/job/126178243685",
+      "steps": [
+        {
+          "name": "pluginval AU (randomise x3 -- release gate)",
+          "conclusion": "cancelled"
+        },
+        {
+          "name": "Engine reproduction (no wrapper, no format, no host)",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Channel probe -- VST3, both slices",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Channel probe -- AU, both slices",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Remove the AU installed for validation",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Package macOS installer (.pkg)",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Installed macOS receipt liveness",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Install the real macOS package and inspect receipts",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Retain installed macOS receipt evidence",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Upload macOS installer",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Upload macOS plugins (VST3 + AU + Standalone)",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Upload macOS debug symbols (dSYMs, crash symbolication)",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Assert a validated dSYM was captured",
+          "conclusion": "skipped"
+        },
+        {
+          "name": "Post Restore the compiler cache",
+          "conclusion": "skipped"
+        }
+      ]
+    }
+  ],
+  "log_evidence": [
+    {
+      "job_id": 126178243098,
+      "name": "linux",
+      "available": true,
+      "lines": [
+        "2026-11-03T20:23:48.5597941Z -- Anabasis: verified JUCE source HEAD d60b7a78030661574a615b586d9325ba7a7fa7dd at /home/runner/work/Anabasis/Anabasis/build/_deps/juce-src",
+        "2026-11-03T20:33:32.4278857Z PASS: 795 checks, 0 failure(s)",
+        "2026-11-03T20:33:38.6649239Z PASS: 1638 checks, 0 failure(s)",
+        "2026-11-03T20:34:20.1979250Z pluginval: ALL 3 deterministic pass(es) succeeded for vst3 at strictness 10",
+        "2026-11-03T20:34:59.0300587Z pluginval: ALL 3 randomise pass(es) succeeded for vst3 at strictness 10"
+      ]
+    },
+    {
+      "job_id": 126178243268,
+      "name": "windows",
+      "available": true,
+      "lines": [
+        "2026-11-03T20:18:54.3801473Z -- Anabasis: verified JUCE source HEAD d60b7a78030661574a615b586d9325ba7a7fa7dd at D:/a/Anabasis/Anabasis/build/_deps/juce-src\r",
+        "2026-11-03T20:32:43.7493336Z PASS: 794 checks, 0 failure(s)\r",
+        "2026-11-03T20:32:51.9370591Z PASS: 1638 checks, 0 failure(s)\r",
+        "2026-11-03T20:33:41.3856482Z pluginval: ALL 3 deterministic pass(es) succeeded at strictness 10\r",
+        "2026-11-03T20:34:27.6618710Z pluginval: ALL 3 randomise pass(es) succeeded at strictness 10\r"
+      ]
+    },
+    {
+      "job_id": 126178243329,
+      "name": "macos-intel",
+      "available": true,
+      "lines": [
+        "2026-11-03T20:22:50.3623000Z -- Anabasis: verified JUCE source HEAD d60b7a78030661574a615b586d9325ba7a7fa7dd at /Users/runner/work/Anabasis/Anabasis/build/_deps/juce-src",
+        "2026-11-03T20:40:59.6605040Z PASS: 794 checks, 0 failure(s)",
+        "2026-11-03T20:41:12.0308710Z PASS: 1638 checks, 0 failure(s)",
+        "2026-11-03T20:43:54.3035230Z pluginval: ALL 3 deterministic pass(es) succeeded for vst3 at strictness 10",
+        "2026-11-03T20:46:14.6185770Z pluginval: ALL 3 randomise pass(es) succeeded for vst3 at strictness 10",
+        "2026-11-03T20:48:36.9932170Z pluginval: ALL 3 deterministic pass(es) succeeded for au at strictness 10",
+        "2026-11-03T20:51:04.3922170Z pluginval: ALL 3 randomise pass(es) succeeded for au at strictness 10"
+      ]
+    },
+    {
+      "job_id": 126178243198,
+      "name": "linux-lto-clang",
+      "available": true,
+      "lines": [
+        "2026-11-03T20:25:04.9988729Z -- Anabasis: verified JUCE source HEAD d60b7a78030661574a615b586d9325ba7a7fa7dd at /home/runner/work/Anabasis/Anabasis/build-lto/_deps/juce-src",
+        "2026-11-03T20:28:18.1291359Z PASS: 795 checks, 0 failure(s)",
+        "2026-11-03T20:28:22.9374766Z PASS: 1638 checks, 0 failure(s)"
+      ]
+    },
+    {
+      "job_id": 126178243238,
+      "name": "linux-lto-tests",
+      "available": true,
+      "lines": [
+        "2026-11-03T20:25:31.4572089Z -- Anabasis: verified JUCE source HEAD d60b7a78030661574a615b586d9325ba7a7fa7dd at /__w/Anabasis/Anabasis/build-lto/_deps/juce-src",
+        "2026-11-03T20:33:10.4043619Z PASS: 795 checks, 0 failure(s)",
+        "2026-11-03T20:33:17.0663961Z PASS: 1638 checks, 0 failure(s)"
+      ]
+    },
+    {
+      "job_id": 126178243384,
+      "name": "realtime",
+      "available": true,
+      "lines": [
+        "2026-11-03T20:26:59.0672526Z -- Anabasis: verified JUCE source HEAD d60b7a78030661574a615b586d9325ba7a7fa7dd at /home/runner/work/Anabasis/Anabasis/build-rt/_deps/juce-src",
+        "2026-11-03T20:28:09.2164768Z PASS: 790 checks, 0 failure(s)"
+      ]
+    }
+  ],
+  "retry_status": "Sanitizer retry completed successfully, including both memchecks (attempt 2, job 126258975334); original cancellation retained. Mac concurrent retry was refused while that workflow was active; final evidence-head Mac matrix remains required."
+}
