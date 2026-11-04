@@ -188,7 +188,7 @@ each newly produced CI artifact; older artifacts retain their own source hashes.
 
 
 JUCE 9.0.5 review reconciliation (recorded 2026-11-04 Asia/Shanghai): owner Level-5 listening
-and native/manual acceptance are **PASS — owner-attested** for the unmerged upgrade. Exact tested
+and native/manual acceptance are **PASS — owner-attested** for the integrated upgrade. Exact tested
 payload/source, execution date and environment details were not supplied. This acceptance is
-separate from historical releases and grants no merge/publication permission; current records:
+separate from historical releases. PR #60 has since merged; no publication is authorized. Current records:
 `worklogs/2026-11-04-juce-905-review.md`. No release object, product version or commercial decision changes.

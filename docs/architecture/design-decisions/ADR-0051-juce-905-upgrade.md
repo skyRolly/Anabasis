@@ -1,8 +1,13 @@
 # ADR-0051 — JUCE 9.0.4 → 9.0.5
 
+**Integration — 2026-11-04:** owner-authorized [PR #60](https://github.com/skyRolly/Anabasis/pull/60) merged as `4c305a44ecd0e4a1edf109c6b4ab85af814d081a`; its tree equals approved head `6c71646febb2828be5e6aa8265911fd8b1b6fc50`. ADR-0051 remains **Accepted**. `main` pins JUCE **9.0.5** at `d60b7a78030661574a615b586d9325ba7a7fa7dd`. Level-5 listening and native/manual acceptance are **PASS — owner-attested**; execution date, exact payload and environment were not supplied. No new release is authorized.
+
+The dated implementation and review snapshots below retain their original status at the time.
+
+
 **Current human evidence:** Level-5 listening and native/manual acceptance **PASS — owner-attested
 for JUCE 9.0.5**, recorded 2026-11-04 (Asia/Shanghai); exact tested payload/environment fields
-are not supplied. The architecture status below remains Accepted, and no merge/release is authorized.
+are not supplied. The architecture status remains Accepted; the PR has merged under the later owner authorization above. No release is authorized.
 
 **Status:** Accepted — 2026-11-04 (Asia/Shanghai), on the owner's explicit reply
 “approve ADR / dont merge PR” to the approval request for ADR-0051 and Anamorph ADR-0071.
