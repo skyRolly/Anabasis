@@ -8157,3 +8157,13 @@ snapshot through the repository map. Testing, attribution and ADR records descri
 source-head memcheck/AU-randomise cancellations and final-head CI remain explicit. Existing human
 attestations retain their version scope; new Level-5/native acceptance stays pending. No fixtures,
 tolerances, codec definitions, product versions, graph, latency or CI gates change.
+
+
+## JUCE 9.0.5 owner-review corrections
+
+Synchronize live handover/CI/build/compliance status with executed automated evidence and pending
+manual acceptance. Preserve 9.0.4 attestations under ADR-0047. Document explicit unversioned
+FetchContent archive overrides, strict Git/default pin checks and post-configuration provenance
+scope. Add archive/ancestor/broken-metadata regressions to the existing cache suite and retain
+execution evidence in `worklogs/juce905-review/review-followup.json`. Clarify normalized probe
+measurements without changing product parameters, state schema, DSP, formats or versions.

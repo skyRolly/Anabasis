@@ -260,3 +260,6 @@ and upstream-coordinate evidence; these ledgers do not establish manual acceptan
 The packet also retains `completed-baseline-ci.json`, `target-ci.json` / `target-ci-retry.json`, independent
 `session_probe.cpp` / `build_session_probe.py`, and numerical/ABI/component records in
 `implementation.json`. These are local validation evidence, not shared product modules.
+
+`worklogs/juce905-review/review-followup.json` records owner-review corrections, archive-override
+regressions, exact test/configuration evidence and final-head CI scope.

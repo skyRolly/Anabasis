@@ -1,8 +1,10 @@
 # CI_CD.md
 
-The [JUCE 9.0.5 review packet](../../worklogs/2026-11-04-juce-905-review.md) separates
-the captured 9.0.4 baseline CI from unexecuted target validation. Accepted ADR-0051
-changes the pin and cache checks while preserving workflow gates; source-bound target results are recorded separately.
+The [JUCE 9.0.5 review packet](../../worklogs/2026-11-04-juce-905-review.md) separates completed automated
+9.0.4 baseline and 9.0.5 target validation from **Pending Human Acceptance** for native DAW,
+listening and visual/installation checks. The [timestamped completed-target CI record](../../worklogs/juce905-review/review-followup.json)
+and worklog identify the tested heads; [PR checks](https://github.com/skyRolly/Anabasis/pull/60)
+record subsequent review-fix validation. Architecture approval for ADR-0051 does not complete Level-5 acceptance.
 
 Continuous integration / delivery. Source of truth: `.github/workflows/`.
 
@@ -852,3 +854,13 @@ outcomes remain separate; see `worklogs/2026-10-25-normal-validation.md` and
 `docs/architecture/design-decisions/ADR_INDEX.md`. No native result is inferred
 from approval or relabeled by this documentation-only correction. GUI/DAW,
 genuine older-installer upgrades and Icon Composer remain separate acceptance.
+
+
+## Source-provenance check scope
+
+`FetchContent_MakeAvailable(JUCE)` configures JUCE (including its helper tools) before
+`cmake/VerifyJuceSource.cmake` runs. The check verifies source identity before product targets
+are generated; it is **not a pre-execution trust gate for dependency CMake code**. Configure only
+trusted sources. Normal fetched checkouts must have a JUCE-root Git identity and immutable pins
+must match HEAD. Explicit archive overrides are permitted with an unverified-source warning;
+they do not establish release/CI pin provenance. See `BUILD.md` and `DEPENDENCY_POLICY.md`.

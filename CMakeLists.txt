@@ -118,7 +118,7 @@ else()
         GIT_TAG        ${ANABASIS_JUCE_TAG}
         GIT_SHALLOW    TRUE)
     FetchContent_MakeAvailable(JUCE)
-    include(cmake/VerifyJuceSource.cmake)
+    include(cmake/VerifyJuceSource.cmake) # Post-configuration provenance; not a pre-execution trust gate.
 endif()
 
 # ============================================================================

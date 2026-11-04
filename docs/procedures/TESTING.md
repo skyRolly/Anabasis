@@ -32,7 +32,8 @@ exploits or unrelated fuzz campaigns are part of these checks.
 
 ## JUCE cache migration regression (ADR-0047, extended by ADR-0051)
 
-Run `python3 tests/juce_cache_tests.py` with CMake, Ninja, Git and a C/C++ compiler available.
+Run the 14 cache/source-provenance tests with `python3 tests/juce_cache_tests.py`; CMake, Ninja,
+Git and a C/C++ compiler are required.
 The test configures the real top-level build with a local dependency stand-in and stops at
 that boundary: no JUCE download or compilation. It verifies fresh/repeated 9.0.5 selection,
 rejection of the 9.0.0/9.0.1/9.0.4 default pins (including mixed or partially reset fields), successful
@@ -1101,3 +1102,11 @@ matching custom SHA must be reported before the deliberately minimal fixture rea
 missing-JUCE-function error. Bypassing the real check fails the mismatch test. No framework
 download or product build is required for these controls. Normal CI configuration records actual
 source HEAD; explicit product local-path overrides retain intentional old/new comparisons.
+
+
+Explicit archive overrides are admitted with an unverified-identity warning, including without
+Git installed and under an unrelated Git parent. Normal fetched sources without Git identity
+and overrides with broken metadata are rejected. Archive fixtures reach a deliberate
+product-target boundary after the real verifier; a full real-archive configure is recorded in
+`worklogs/juce905-review/review-followup.json`. An archive is not official-pin evidence.
+The check follows JUCE configuration and does not prevent dependency CMake code from executing.

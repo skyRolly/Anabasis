@@ -199,3 +199,19 @@ Current namespace (ADR-0048): JUCE generates the base `tech.rolly.anabasis` for 
 Standalone/VST3/AU CFBundleIdentifier; pkg receipts separately use `.app/.vst3/.au`.
 Independent RTec/Anbs, VST3 class IDs and the Windows AppId are preserved. Verify actual
 outputs with `scripts/check-product-identity.py --self-test` then `--build-dir build`.
+
+
+## Explicit offline source-directory overrides
+
+CMake's existing `-DFETCHCONTENT_SOURCE_DIR_JUCE=/path/to/JUCE` override remains supported,
+including extracted source archives. A Git checkout rooted at that directory is checked against
+an immutable pin just like a fetched checkout. An archive without its own Git metadata is accepted
+for trusted offline/development use with an **unverified source identity** warning; no commit SHA
+is inferred from its version string or an enclosing repository's HEAD. Broken Git metadata is an
+error, and normal fetched sources cannot silently use the archive exception.
+
+The stale-cache checks still apply: reset both `ANABASIS_JUCE_TAG` and
+`ANABASIS_JUCE_VERSION` when upgrading an existing build. The separate
+`-DANABASIS_JUCE_PATH=/path/to/JUCE` escape hatch retains its intentional local-comparison
+behavior. Release/CI evidence for the default 9.0.5 pin must use a verifiable Git checkout.
+Verification follows JUCE's configuration; it is not a gate on executing untrusted CMake code.

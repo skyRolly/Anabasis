@@ -163,7 +163,7 @@ Equivalent current source and GCC 14 Release configurations use verified clean o
 checkouts and identical normalized flags across 209 compile commands. Both local suites pass
 795 DSP / 1,638 state checks at each pin. The existing channel probe has identical full output
 (33 scenarios, 112 comparisons, only four declared collapses); engine default/field reproduction
-outputs agree. A 10,531-byte old session re-saves byte-for-byte; both slots' 50 parameter bits,
+outputs agree. A 10,531-byte old session re-saves byte-for-byte; both slots' 50 normalized `getValue()` parameter bit patterns,
 metadata, six distinct render hashes and 502/541/1021-sample latencies agree at 44.1/48/96 kHz.
 Local strictness-10 pluginval passes both modes ×3. All eight configured consumers retain the
 codec exclusions; compiled objects and attribution were independently re-verified.
@@ -175,3 +175,22 @@ The local GCC-14 ABI remains equal but exceeds the unchanged shipping floor; shi
 establishes release ABI. See the timestamped ledger/worklog and live PR checks for final statuses.
 No production compatibility correction was necessary. Manual host/PDC/Level-5/native GUI acceptance
 remains **Pending Human Acceptance**. No merge, release or version change is authorized.
+
+
+## Owner review follow-up — 2026-11-04
+
+The source verifier must preserve explicit FetchContent archive overrides. Normal Git fetches
+and Git-backed source overrides retain immutable-HEAD enforcement; an archive without its own
+Git metadata is permitted as trusted, explicitly **unverified** development input, like the
+existing local-checkout escape hatch. It does not prove the default pin or licensing inventory.
+An enclosing repository's HEAD is never substituted. The check remains after JUCE configuration,
+before product targets: this is provenance validation, not an execution trust boundary. No
+FetchContent acquisition model, compiler/codec/format setting or product contract changes.
+
+Live handover/CI/build/compliance records distinguish prior 9.0.4 attestations from current
+9.0.5 automated evidence and pending Level-5/manual acceptance. Session-probe bit listings use
+normalized `getValue()`; byte-identical serialization and render hashes are separate checks.
+No independent unnormalized parameter measurement is claimed. The review follow-up requires
+fresh tests/CI. The 14-case cache/source suite passes on CMake 3.22.6 and 3.31.6, and a
+full real-archive configure passes with the expected unverified-identity warning. Source-head
+CI remains separately required. Evidence is in the worklog and `review-followup.json`; no merge is authorized.
