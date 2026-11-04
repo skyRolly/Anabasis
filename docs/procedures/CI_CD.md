@@ -1,10 +1,11 @@
 # CI_CD.md
 
-The [JUCE 9.0.5 review packet](../../worklogs/2026-11-04-juce-905-review.md) separates completed automated
-9.0.4 baseline and 9.0.5 target validation from **Pending Human Acceptance** for native DAW,
-listening and visual/installation checks. The [timestamped completed-target CI record](../../worklogs/juce905-review/review-followup.json)
-and worklog identify the tested heads; [PR checks](https://github.com/skyRolly/Anabasis/pull/60)
-record subsequent review-fix validation. Architecture approval for ADR-0051 does not complete Level-5 acceptance.
+The [JUCE 9.0.5 review packet](../../worklogs/2026-11-04-juce-905-review.md) separates source-bound automated
+validation from human evidence. Level-5 listening and native/manual acceptance are now **PASS —
+owner-attested for 9.0.5**, recorded 2026-11-04 (Asia/Shanghai); exact tested payload/environment
+fields were not supplied. The [reconciliation record](../../worklogs/juce905-review/acceptance-reconciliation.json)
+identifies prior tested heads, while [PR checks](https://github.com/skyRolly/Anabasis/pull/60)
+identify corrected-head CI. ADR-0051 remains Accepted; no merge/release authorization is granted.
 
 Continuous integration / delivery. Source of truth: `.github/workflows/`.
 
@@ -864,3 +865,10 @@ are generated; it is **not a pre-execution trust gate for dependency CMake code*
 trusted sources. Normal fetched checkouts must have a JUCE-root Git identity and immutable pins
 must match HEAD. Explicit archive overrides are permitted with an unverified-source warning;
 they do not establish release/CI pin provenance. See `BUILD.md` and `DEPENDENCY_POLICY.md`.
+
+
+Source-metadata review (2026-11-04, ADR-0051): retain the documented post-configuration
+ordering. JUCE package checks/module setup and juceaide may run before verification. The verifier
+checks source identity before product targets, not dependency CMake execution or dirty-tree content.
+Directory-entry checks reject dangling/unreadable metadata; explicit metadata-free archives retain
+their warning policy. Alternatives and executed boundary evidence: `worklogs/2026-11-04-juce-905-review.md`.

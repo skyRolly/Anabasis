@@ -215,3 +215,12 @@ The stale-cache checks still apply: reset both `ANABASIS_JUCE_TAG` and
 `-DANABASIS_JUCE_PATH=/path/to/JUCE` escape hatch retains its intentional local-comparison
 behavior. Release/CI evidence for the default 9.0.5 pin must use a verifiable Git checkout.
 Verification follows JUCE's configuration; it is not a gate on executing untrusted CMake code.
+
+
+### Damaged Git metadata (ADR-0051, 2026-11-04)
+
+An explicit archive qualifies only when the source has no `.git` directory entry. Dangling or
+unreadable entries are errors, not archives; valid worktree/git-directory links still verify HEAD.
+Missing Git tooling permits metadata-free trusted archive overrides, but cannot verify a checkout.
+The check still follows JUCE configuration and is not a pre-execution trust boundary. The 26-case
+suite covers these cases on CMake 3.22.6 and 3.31.6; see `worklogs/juce905-review/metadata-review.json`.

@@ -39,7 +39,7 @@ headless Linux machine, no IDE.
   Status row, re-counted from the suites' own printed output — and `docs/policies/TESTING_POLICY.md`
   for the gate, which is deliberately stated in one place).
 - **Decided and frozen from the first build:** the JUCE pin (**9.0.5** at commit `d60b7a7…`;
-  ADR-0047 upgrades 9.0.1 on the owner's directive and restores the shared pin with Anamorph)
+  ADR-0047 records 9.0.1 → 9.0.4; Accepted ADR-0051 records 9.0.4 → 9.0.5)
   and the
   plugin identity (**`RTec` / `Anbs` /
   `tech.rolly.anabasis`**) — both now written into `CMakeLists.txt` as ADR-0008 specifies.
@@ -116,7 +116,9 @@ To build without network (JUCE already on disk):
 
 The [JUCE 9.0.5 review packet](worklogs/2026-11-04-juce-905-review.md) supports
 [Accepted ADR-0051](docs/architecture/design-decisions/ADR-0051-juce-905-upgrade.md).
-It is investigation evidence outside the authority classes; the configured dependency is 9.0.5 under explicit owner Architecture Review approval; manual acceptance remains pending.
+It is investigation evidence outside the authority classes; the configured dependency is 9.0.5 under explicit owner Architecture Review approval; Level-5 listening and native/manual acceptance are now **PASS — owner-attested for 9.0.5**,
+recorded 2026-11-04 (Asia/Shanghai). Exact tested payload/environment details were not supplied.
+No merge or release is authorized.
 
 Ordinary validator acquisition provenance and offline limits are recorded in the
 [pluginval acquisition worklog](worklogs/2026-10-28-pluginval-acquisition.md), supporting evidence

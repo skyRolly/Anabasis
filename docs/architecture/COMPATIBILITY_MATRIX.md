@@ -1,8 +1,16 @@
 # COMPATIBILITY_MATRIX.md
 
+**JUCE 9.0.5 human acceptance: PASS — owner-attested**, recorded 2026-11-04
+(Asia/Shanghai). Level-5 listening and native/manual acceptance are complete for this upgrade;
+this is separate from the historical 9.0.4 approval. Architecture Review remains Accepted.
+Exact tested payload/environment details were not supplied; see the [reconciliation worklog](../../worklogs/2026-11-04-juce-905-review.md).
+No merge or release publication is authorized.
+
 JUCE 9.0.5 implementation is approved under ADR-0051 (owner: “approve ADR / dont merge PR”,
 2026-11-04). The upgrade branch selects `d60b7a78030661574a615b586d9325ba7a7fa7dd`;
-[validation and pending human acceptance](../../worklogs/2026-11-04-juce-905-review.md) are source-bound.
+[Automated validation and the new owner-attested human PASS](../../worklogs/2026-11-04-juce-905-review.md)
+are distinct evidence: automated results name tested sources; exact owner-tested payload binding
+was not supplied.
 Existing release/host attestations below retain their original dependency/artifact scope.
 
 What Anabasis is claimed to run on, at what confidence, with the evidence per claim — and,
