@@ -1,5 +1,10 @@
 # RollyTech Anabasis — Mastering Loudness Maximizer: Development Brief
 
+**Integration — 2026-11-04:** owner-authorized [PR #60](https://github.com/skyRolly/Anabasis/pull/60) merged as `4c305a44ecd0e4a1edf109c6b4ab85af814d081a`; its tree equals approved head `6c71646febb2828be5e6aa8265911fd8b1b6fc50`. ADR-0051 remains **Accepted**. `main` pins JUCE **9.0.5** at `d60b7a78030661574a615b586d9325ba7a7fa7dd`. Level-5 listening and native/manual acceptance are **PASS — owner-attested**; execution date, exact payload and environment were not supplied. No new release is authorized.
+
+The [upgrade worklog](../worklogs/2026-11-04-juce-905-review.md) records source-bound validation and post-merge CI. Earlier phase records remain historical.
+
+
 > **How to use:** hand this entire document to Claude Code as the task prompt.
 > **Repository access:** (1) Anamorph repo — read-only reference: `<Anamorph repo URL>`; (2) this plugin's new repo — working directory: `<Anabasis repo URL>`.
 > **Naming:** the plugin is named **Anabasis** (Greek, "an ascent / a going up" — sharing the *Ana-* root with Anamorph as a product family). If the name changes, do a global replace.
@@ -624,7 +629,7 @@ Beyond the inherited structure, Anabasis's Level-2/3 suites must additionally as
 | Area | Anamorph | Anabasis | Why |
 |---|---|---|---|
 | **C++ standard** | C++17 | **C++23** — §2.1 asked for C++20 plus a non-blocking C++23 canary, and that is what shipped from P1 through 0.1.6. **ADR-0030 (2026-08-22) ended it**: the baseline moved to 23 on the owner's directive, the `ANABASIS_CXX_STANDARD` seam and the canary workflow were removed, and OQ-006 is superseded. The two products are aligned again at 23. §2.1's other rule — no modules, and C++23 *library* features only behind feature-test macros and a first-party abstraction — is unchanged | §2.1; ADR-0030 |
-| **JUCE** | **9.0.5**, SHA-pinned | **9.0.5**, SHA-pinned at `d60b7a7…` — ADR-0051 selects the shared framework commit on the independent upgrade branches on the owner's upgrade directive. OQ-001 originally chose the sibling's 9.0.0 pin; ADR-0028 moved Anabasis to 9.0.1 in 2026-08. The current build explicitly excludes the newly enabled MP3/Opus/WebP codecs. This Part II summary follows the build; the original Part I specification is unchanged | §2; ADR-0051 |
+| **JUCE** | **9.0.5**, SHA-pinned | **9.0.5**, SHA-pinned at `d60b7a7…` — ADR-0051 selects the shared framework commit on the independently integrated main branches on the owner's upgrade directive. OQ-001 originally chose the sibling's 9.0.0 pin; ADR-0028 moved Anabasis to 9.0.1 in 2026-08. The current build explicitly excludes the newly enabled MP3/Opus/WebP codecs. This Part II summary follows the build; the original Part I specification is unchanged | §2; ADR-0051 |
 | **Signal chain** | Input → engine → Mix → Mono Maker → Output → Solo | Input Gain → EQ → Comp → Clipper/Sat → Limiter → Ceiling → Dither → Output | §3 |
 | **Oversampling scope** | wraps the nonlinear stages only | must additionally serve **true-peak detection at ≥ 4×** (BS.1770-4) | §4.3 |
 | **Simple/Advanced** | Advanced *adds* modules; Advanced-only modules default-bypass | Simple is a **macro layer over the same parameter model**; switching must not change the sound | §5.3 — a new policy, `MODE_AND_ADAPTATION_POLICY.md` |
@@ -654,7 +659,7 @@ of them** (§13).
 Two are now **resolved** and are therefore *decisions*, not choices to revisit: the JUCE pin
 (OQ-001 originally resolved it at **9.0.0**, commit `f8f8864…`; ADR-0028 moved it to 9.0.1,
 ADR-0047 moved it to 9.0.4 at `3fb5cbc…`, and **ADR-0051 selects 9.0.5 at `d60b7a7…`**
-on the independently reviewed upgrade branch; the pin remains a
+on the integrated main branch; the pin remains a
 decision under the Architecture Review Gate) and the plugin identity
 (**`RTec` / `Anbs` / `tech.rolly.anabasis`** — OQ-003; the vendor code spells RollyTech, and
 Anamorph moved to it in its 0.9.1 so the product line agrees from the start). Both must be written

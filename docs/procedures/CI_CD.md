@@ -5,7 +5,7 @@ validation from human evidence. Level-5 listening and native/manual acceptance a
 owner-attested for 9.0.5**, recorded 2026-11-04 (Asia/Shanghai); exact tested payload/environment
 fields were not supplied. The [reconciliation record](../../worklogs/juce905-review/acceptance-reconciliation.json)
 identifies prior tested heads, while [PR checks](https://github.com/skyRolly/Anabasis/pull/60)
-identify corrected-head CI. ADR-0051 remains Accepted; no merge/release authorization is granted.
+identify corrected-head CI. PR #60 merged as `4c305a44ecd0e4a1edf109c6b4ab85af814d081a`; ADR-0051 remains Accepted. No release is authorized. Post-merge CI links are in the review packet.
 
 Continuous integration / delivery. Source of truth: `.github/workflows/`.
 

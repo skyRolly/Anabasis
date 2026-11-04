@@ -7,7 +7,7 @@ authorization to merge. Manual audition remains owed under `DEPENDENCY_POLICY.md
 
 
 **Dependency-pin amendment — 2026-11-04:** owner-Accepted ADR-0051 advances the
-unmerged upgrade branch to JUCE 9.0.5 / `d60b7a78030661574a615b586d9325ba7a7fa7dd`.
+integrated main branch (PR #60) to JUCE 9.0.5 / `d60b7a78030661574a615b586d9325ba7a7fa7dd`.
 This record retains its historical 9.0.4 decision/evidence; other contracts remain in force.
 No current PR merge or new manual acceptance is inferred from the earlier approvals.
 
