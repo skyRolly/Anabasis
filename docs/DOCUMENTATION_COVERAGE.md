@@ -1,6 +1,6 @@
 # DOCUMENTATION_COVERAGE.md
 
-JUCE 9.0.5 integration status is reconciled across the ADR, dependency policy, handover, build/CI and acceptance records, and [upgrade worklog](../worklogs/2026-11-04-juce-905-review.md); prior review snapshots remain historical.
+JUCE 9.0.5 integration status is reconciled across the repository map, ADR, dependency policy, handover, build/CI and acceptance records, and [upgrade worklog](../worklogs/2026-11-04-juce-905-review.md); prior review snapshots remain historical.
 
 
 ## pluginval publication-race and replay review correction (2026-10-28)

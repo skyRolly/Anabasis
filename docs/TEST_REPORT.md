@@ -280,4 +280,4 @@ Level-5 listening and native/manual acceptance: **PASS — owner-attested for PR
 This paragraph records human evidence, not a new numerical measurement or a re-stamped environment
 for older figures above. Actual test execution date/time, tested source commit and payload SHA-256, machine/OS/CPU/architecture, DAW/version, plugin formats, device, sample rates/buffer sizes, programme/session identifiers and per-scenario observations were not supplied. The recording date does not establish the execution date.
 No repeat acceptance is requested; source-bound automated results remain independent. See
-`worklogs/2026-11-04-juce-905-review.md` and `worklogs/juce905-review/acceptance-reconciliation.json`. No merge/release authorized.
+`worklogs/2026-11-04-juce-905-review.md` and `worklogs/juce905-review/acceptance-reconciliation.json`. PR #60 subsequently merged under separate owner authorization; no release is authorized.

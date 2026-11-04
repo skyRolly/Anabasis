@@ -245,7 +245,7 @@ index is the decision-status and effectivity authority.
 
 ## JUCE 9.0.5 upgrade (2026-11-04)
 
-- `docs/architecture/design-decisions/ADR-0051-juce-905-upgrade.md` — Accepted decision under owner approval; implementation remains on its unmerged branch.
+- `docs/architecture/design-decisions/ADR-0051-juce-905-upgrade.md` — Accepted decision under owner approval; implementation merged into main in PR #60.
 - [`worklogs/2026-11-04-juce-905-review.md`](../worklogs/2026-11-04-juce-905-review.md) — investigation/review packet and native acceptance worksheet.
 - `worklogs/juce905-review/evidence.json` — source/acquisition/local-check evidence.
 - `worklogs/juce905-review/baseline-ci.json` — captured 9.0.4 baseline jobs/statuses, not target validation.
