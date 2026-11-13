@@ -1,5 +1,7 @@
 # REPOSITORY_MAP.md
 
+Developer decision record: [Accepted ADR-0052](architecture/design-decisions/ADR-0052-linux-shipping-ci-environment.md) covers the shipping Linux runner selection; supporting measurements are in [the rollout worklog](../worklogs/2026-11-13-linux-ci-abi-rollout.md).
+
 Directory and file map with per-component responsibilities. Entries marked **[P*n*]** are
 scaffolded but not yet populated — they land in the phase named
 (`docs/DEVELOPMENT_BRIEF.md` §11).

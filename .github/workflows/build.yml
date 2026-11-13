@@ -556,7 +556,7 @@ jobs:
   linux:
     needs: preflight
     if: needs.preflight.outputs.ready == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # ADR-0052: preserve the shipped Linux ABI contract.
     timeout-minutes: 40
     env:
       CCACHE_DIR: ${{ github.workspace }}/.ccache

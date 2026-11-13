@@ -1,5 +1,7 @@
 # BUILD.md
 
+The shipping Linux CI workflow uses `ubuntu-24.04` with the existing pinned Clang/lld, preserving the measured ABI ceilings (GLIBC 2.38, GLIBCXX 3.4.31, CXXABI 1.3.9). See [Accepted ADR-0052](../architecture/design-decisions/ADR-0052-linux-shipping-ci-environment.md) for the measured rollout failure and owner Architecture Review approval. Local builds and nonshipping CI runner labels are unchanged.
+
 JUCE 9.0.5 is under [Accepted ADR-0051](../architecture/design-decisions/ADR-0051-juce-905-upgrade.md).
 Defaults pin the exact 9.0.5 commit. The [review packet](../../worklogs/2026-11-04-juce-905-review.md)
 records acquisition, comparisons and remaining validation; owner approval is recorded in the ADR.
