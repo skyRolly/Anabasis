@@ -1,5 +1,7 @@
 # SOURCE_OF_TRUTH.md
 
+[Accepted ADR-0052](architecture/design-decisions/ADR-0052-linux-shipping-ci-environment.md) is the approved Linux CI decision; its [rollout worklog](../worklogs/2026-11-13-linux-ci-abi-rollout.md) is supporting raw evidence outside the authority chain.
+
 Defines documentation authority and conflict resolution for the Anabasis repository.
 When two sources disagree, the **higher** source in the list below wins, and the lower
 source must be corrected to match.

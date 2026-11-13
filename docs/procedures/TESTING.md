@@ -1,5 +1,7 @@
 # TESTING.md
 
+Linux shipping CI: [Accepted ADR-0052](../architecture/design-decisions/ADR-0052-linux-shipping-ci-environment.md) restores the previously passing Ubuntu 24.04 runner family for `linux`. Both stripped shipping formats must pass the unchanged ABI checker; both self-test suites, reproduction/probe gates, pluginval in both modes ×3, staging and warning gates must execute normally. The other Linux jobs retain their existing runner labels. The initial corrected workflow passed these gates; the final documentation head requires its own CI.
+
 The [JUCE 9.0.5 review packet](../../worklogs/2026-11-04-juce-905-review.md) records
 the executed old/new comparisons and remaining native/CI checklist. Linux GCC 14 session renders
 are bit-identical; complete channel/engine probe outputs agree. Source-head CI cancellations and

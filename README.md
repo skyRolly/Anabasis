@@ -114,6 +114,8 @@ To build without network (JUCE already on disk):
 
 ## Documentation
 
+Developer decision record: [Accepted ADR-0052](docs/architecture/design-decisions/ADR-0052-linux-shipping-ci-environment.md) documents the measured Linux CI environment correction and owner approval.
+
 The [JUCE 9.0.5 review packet](worklogs/2026-11-04-juce-905-review.md) supports
 [Accepted ADR-0051](docs/architecture/design-decisions/ADR-0051-juce-905-upgrade.md).
 It is investigation evidence outside the authority classes; the configured dependency is 9.0.5 under explicit owner Architecture Review approval; Level-5 listening and native/manual acceptance are now **PASS — owner-attested for 9.0.5**,

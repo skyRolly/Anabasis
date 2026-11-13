@@ -1,5 +1,9 @@
 # CI_CD.md
 
+## Linux shipping runner rollout correction (candidate, 2026-11-13)
+
+[Accepted ADR-0052](../architecture/design-decisions/ADR-0052-linux-shipping-ci-environment.md) selects `ubuntu-24.04` for the shipping `linux` job only, after Ubuntu 26.04 caused both actual shipping formats to require GLIBC 2.43 instead of the declared 2.38. The [investigation](../../worklogs/2026-11-13-linux-ci-abi-rollout.md) records the original passing and failing runs and the corrected workflow's verified success. Clang/lld 22, GCC, JUCE, ABI ceilings, packaging, pluginval, and all other jobs remain unchanged. Owner Architecture Review is cleared. The initial corrected workflow passed the complete hosted gates; final documentation-head CI remains required.
+
 The [JUCE 9.0.5 review packet](../../worklogs/2026-11-04-juce-905-review.md) separates source-bound automated
 validation from human evidence. Level-5 listening and native/manual acceptance are now **PASS —
 owner-attested for 9.0.5**, recorded 2026-11-04 (Asia/Shanghai); exact tested payload/environment
@@ -113,7 +117,7 @@ upgrade evidence and remaining manual validation are in
 
 | Job | Runner | Builds | pluginval |
 |---|---|---|---|
-| **linux** | `ubuntu-latest`, **pinned Clang** (ADR-0032) | VST3 + Standalone (+ tests + bench + probe) — **the shipped Linux artifact**; runs the portability compile canary, both reproductions against the bundle it just built, the ABI floor assertion, and (last, after the uploads) the zero-first-party-warning gate | both modes ×3 — **blocking** |
+| **linux** | `ubuntu-24.04`, **pinned Clang** (ADR-0032; Accepted ADR-0052) | VST3 + Standalone (+ tests + bench + probe) — **the shipped Linux artifact**; runs the portability compile canary, both reproductions against the bundle it just built, the ABI floor assertion, and (last, after the uploads) the zero-first-party-warning gate | both modes ×3 — **blocking** |
 | **windows** | `windows-latest` (MSVC, multi-config) | VST3 + Standalone (+ tests) | both modes ×3 — **blocking** |
 | **macos** | `macos-latest` (Apple Silicon — macOS 26 today) | universal VST3 + **AU** + Standalone (+ tests) | both modes ×3 — **blocking** |
 | **docs** | `ubuntu-latest` | nothing — runs `scripts/check-docs.py --self-test` then the full corpus | n/a |

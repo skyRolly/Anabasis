@@ -1,5 +1,9 @@
 # DOCUMENTATION_COVERAGE.md
 
+## Linux shipping CI runner correction — 2026-11-13 (candidate)
+
+Register Accepted ADR-0052, its supporting worklog and developer navigation. Reconcile the shipping runner selection in BUILD, CI_CD, TESTING and DEPENDENCY_POLICY with the one-job workflow change. The existing ABI checker, product source, compatibility claims, test gates and release rules remain unchanged. Owner Architecture Review is cleared; the previously tested workflow correction passed, and the final documentation head requires its own CI.
+
 JUCE 9.0.5 integration status is reconciled across the repository map, ADR, dependency policy, handover, build/CI and acceptance records, and [upgrade worklog](../worklogs/2026-11-04-juce-905-review.md); prior review snapshots remain historical.
 
 
